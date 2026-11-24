@@ -1,10 +1,10 @@
 export class AgentContextService {
-  // figures: Integrated sessions where html_render is on. Claude Code defers MCP
+  // figures: sessions where html_render is on. Claude Code defers MCP
   // tools to a bare name, so without this line agents reach for the host's
   // own charting (artifacts, image files) and never find html_render.
   // memory: renders a shared-memory snapshot within a byte limit.
   build(projectId: string, { figures = false, memory }: { figures?: boolean; memory?: MemorySnapshot } = {}): string {
-    return withMemory(`Patterm hosts native agent CLIs through PTYs.
+    return withMemory(`Patterm hosts native agent CLIs.
 
 Project: ${projectId}
 

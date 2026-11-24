@@ -29,6 +29,7 @@ use crate::protocol::{write_frame, FRAME_TERMINAL_DAMAGE, FRAME_TERMINAL_LIFECYC
 
 const TERMINAL_FRAME_VERSION: u16 = 3;
 const DEFAULT_SCROLLING_HISTORY: usize = 4_000;
+#[cfg(test)]
 const AGENT_SUBMIT_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_QUEUED_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_QUEUED_INPUT_CHUNKS: usize = 1024;
@@ -422,14 +423,7 @@ impl TerminalManager {
             text = format!("\x1b[200~{text}\x1b[201~");
         }
 
-        // Codex treats immediate Enter after raw text as part of a paste burst.
-        // Bracketed paste has an explicit end marker and can submit immediately.
-        let delay = if submit && session.kind == "agent" && !bracketed_paste {
-            AGENT_SUBMIT_SETTLE_DELAY
-        } else {
-            Duration::ZERO
-        };
-        session.queue_input(text.into_bytes(), submit, delay)?;
+        session.queue_input(text.into_bytes(), submit, Duration::ZERO)?;
 
         Ok(serde_json::json!({ "ok": true }))
     }

@@ -7,7 +7,7 @@ const { botMentionables, mentionLaunchers, mentionableAgents, mentionableBots, m
 
 function session(id, processId, fields = {}) {
   return {
-    id, processId, parentId: null, ptyProcessId: null, worktreeId: null, harness: 'claude', interfaceMode: 'integrated',
+    id, processId, parentId: null, worktreeId: null, harness: 'claude',
     sessionRole: 'orchestrator', resumeStatus: 'found', activity: 'idle', lastTitle: null, displayName: null,
     model: null, reasoning: null, startedAt: '2026-10-01T10:00:00.000Z', exitedAt: null, ...fields
   };
@@ -20,12 +20,12 @@ test('mentionable agents are the other live agents, subagents after their roots'
     session('s_child', 'process_3', { parentId: 's_root', lastTitle: 'Review: PR #16' }),
     session('s_exited', 'process_4', { displayName: 'Done', exitedAt: '2026-10-01T11:00:00.000Z' }),
     session('s_unbacked', null, { displayName: 'No process' }),
-    session('s_tui', 'process_5', { interfaceMode: 'tui', ptyProcessId: 'pty_5', displayName: 'Terminal agent' }),
+    session('s_other', 'process_5', { displayName: 'Other agent' }),
     session('s_my_child', 'process_6', { parentId: 's_self', displayName: 'My reviewer' })
   ];
   const agents = mentionableAgents(sessions, 'process_2');
   assert.deepEqual(agents.map((agent) => agent.processId), ['process_1', 'process_3', 'process_6', 'process_5'], 'the agent being messaged, ended agents, and agents without a process are left out; its subagents keep their place');
-  assert.deepEqual(agents.map((agent) => agent.name), ['Orchestrator', 'Review: PR #16', 'My reviewer', 'Terminal agent']);
+  assert.deepEqual(agents.map((agent) => agent.name), ['Orchestrator', 'Review: PR #16', 'My reviewer', 'Other agent']);
   assert.deepEqual(agents.map((agent) => agent.parent), [null, 'Orchestrator', 'Me', null], 'subagents name their parent');
   assert.deepEqual(mentionableAgents([session('s_a', 'process_7'), session('s_b', 'process_8', { harness: 'codex' })], 'process_99').map((agent) => agent.name), ['claude', 'codex'], 'untitled agents fall back to their harness');
 });
@@ -115,7 +115,7 @@ test('launchers offer presets, then harnesses, for installed harnesses', () => {
   const installed = (harness, status = 'available') => ({ id: harness, harness, executablePath: '', version: null, status, discoveredAt: '', lastCheckedAt: '' });
   const preset = (id, harness, name) => ({ id, harness, name, model: null, reasoning: null });
   const launchers = mentionLaunchers(
-    [installed('claude'), installed('codex'), installed('opencode', 'missing'), installed('rawpty')],
+    [installed('claude'), installed('codex'), installed('opencode', 'missing')],
     [preset('p1', 'claude', 'Smartypants'), preset('p2', 'claude', 'Fast'), preset('p3', 'codex', 'fast'), preset('p4', 'opencode', 'Deep')]
   );
   assert.deepEqual(launchers.map((launcher) => [launcher.kind, launcher.name, launcher.token]), [

@@ -29,10 +29,10 @@ function main(): void {
     const db = database.connection;
     const at = new Date(0).toISOString();
     db.prepare('insert into projects (id, name, path, created_at, updated_at) values (?, ?, ?, ?, ?)').run('project_a', 'Alpha', directory, at, at);
-    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, pty_process_id, created_at, updated_at)
-      values ('root', 'project_a', 'agent', 'root', 'running', 'idle', 'pty_root', ?, ?)`).run(at, at);
+    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at)
+      values ('root', 'project_a', 'agent', 'root', 'running', 'idle', ?, ?)`).run(at, at);
     db.prepare(`insert into sessions (id, project_id, process_id, harness, session_role, interface_mode, started_at)
-      values ('session_root', 'project_a', 'root', 'claude', 'orchestrator', 'tui', ?)`).run(at);
+      values ('session_root', 'project_a', 'root', 'claude', 'orchestrator', 'integrated', ?)`).run(at);
 
     let changes = 0;
     const raised: RaiseNotificationInput[] = [];
@@ -49,14 +49,14 @@ function main(): void {
     snoozes.activity('root', 'working', 'thinking');
     assert.ok(snooze()?.snoozedAt);
 
-    // The turn ending wakes it, by PTY id too, and the reminder stays.
-    snoozes.activity('pty_root', 'thinking', 'idle');
+    // The turn ending wakes it, and the reminder stays.
+    snoozes.activity('root', 'thinking', 'idle');
     assert.deepEqual(snooze(), { snoozedAt: null, reminder: 'Check the CI run.' });
-    // Waking announces itself with the reminder. A TUI agent has no
-    // turn-finished notice to replace, so nothing is held for one.
+    // Waking announces itself with the reminder and replaces the turn-finished notice once.
     assert.equal(raised.length, 1);
     assert.equal(raised[0]!.processId, 'root');
     assert.equal(raised[0]!.body, 'Woke from snooze: Check the CI run.');
+    assert.equal(snoozes.announcedWake('root'), true);
     assert.equal(snoozes.announcedWake('root'), false);
     assert.deepEqual(snoozes.dismissReminder({ process_id: 'root' }), { dismissed: true });
     assert.equal(snooze(), null);
@@ -72,20 +72,17 @@ function main(): void {
     snoozes.snooze({ process_id: 'root', reminder: 'Merge it' });
     snoozes.activity('root', 'unknown', 'idle');
     assert.ok(snooze()?.snoozedAt);
-    snoozes.userInput('pty_root');
+    snoozes.userInput('root');
     assert.deepEqual(snooze(), { snoozedAt: null, reminder: 'Merge it' });
     assert.equal(raised.length, 1, 'the user woke it, so nothing is announced');
 
-    // An Integrated agent's wake replaces its turn-finished notice, once.
-    db.prepare(`update sessions set interface_mode = 'integrated' where id = 'session_root'`).run();
+    // Each snooze's wake alerts on its own rather than updating the last one.
     snoozes.snooze({ process_id: 'root' });
     snoozes.activity('root', 'working', 'idle');
     assert.equal(raised.at(-1)?.body, 'Woke from snooze');
-    // Each snooze's wake alerts on its own rather than updating the last one.
     assert.notEqual(raised.at(-1)?.dedupeKey, raised[0]!.dedupeKey);
     assert.equal(snoozes.announcedWake('root'), true);
     assert.equal(snoozes.announcedWake('root'), false);
-    db.prepare(`update sessions set interface_mode = 'tui' where id = 'session_root'`).run();
 
     // A reminder can't be dismissed while still asleep; waking by hand drops it.
     snoozes.snooze({ process_id: 'root', reminder: 'Later' });

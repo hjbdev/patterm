@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { Client as LegacyClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport as LegacyTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -26,7 +26,6 @@ async function main(): Promise<void> {
   let catalogue = descriptors;
   const calls: Array<{ tool: string; args: unknown; version: number }> = [];
   const sockets = new Set<net.Socket>();
-  const opened: Array<{ url: string; identity: string }> = [];
   let receiveInterrupted!: (socket: net.Socket) => void;
   const received = new Promise<net.Socket>((resolve) => { receiveInterrupted = resolve; });
   let execTarget: { command: string; args: string[]; env: Record<string, string> } | null = null;
@@ -40,13 +39,9 @@ async function main(): Promise<void> {
     socket.on('data', (chunk) => {
       buffer += chunk;
       if (!buffer.includes('\n')) return;
-      const request = JSON.parse(buffer.split('\n')[0]!) as { op?: string; tool?: string; args?: unknown; version: number; url?: string; identity?: string };
+      const request = JSON.parse(buffer.split('\n')[0]!) as { op?: string; tool?: string; args?: unknown; version: number; identity?: string };
       assert.equal(request.version, 2, 'new shims identify direct public requests');
       if (request.op === 'catalog') socket.end(`${JSON.stringify({ result: catalogue })}\n`);
-      else if (request.op === 'open-url') {
-        opened.push({ url: request.url!, identity: request.identity! });
-        socket.end(`${JSON.stringify(request.url!.startsWith('file:') ? { error: 'Patterm does not open file: links' } : { result: { opened: true } })}\n`);
-      }
       else if (request.op === 'mcp-exec') socket.end(`${JSON.stringify({ result: execTarget })}\n`);
       else {
         calls.push({ tool: request.tool!, args: request.args, version: request.version });
@@ -83,20 +78,6 @@ async function main(): Promise<void> {
     const missing = await modern.callTool({ name: 'todo_create', arguments: {} });
     assert.equal(missing.isError, true, 'advertised schemas validate before forwarding');
     assert.equal(calls.some(({ tool, args }) => tool === 'todo_create' && !Object.keys(args as object).length), false);
-
-    // The shim doubles as xdg-open in agent terminals.
-    const openEnv = { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'mcp_opener' };
-    const runOpener = (url: string) => new Promise<{ status: number | null; stderr: string }>((resolve) => {
-      execFile(process.execPath, [executable, '--open', url], { env: openEnv, timeout: 5_000 }, (error, _stdout, stderr) => {
-        resolve({ status: error ? (typeof error.code === 'number' ? error.code : null) : 0, stderr });
-      });
-    });
-    const open = await runOpener('https://example.com/pulls/87');
-    assert.equal(open.status, 0, open.stderr);
-    assert.deepEqual(opened, [{ url: 'https://example.com/pulls/87', identity: 'mcp_opener' }]);
-    const refused = await runOpener('file:///etc/passwd');
-    assert.equal(refused.status, 1, 'a refused open fails so the CLI can fall back');
-    assert.match(refused.stderr, /^xdg-open: Patterm does not open file: links/);
 
     // --mcp-exec starts a server with environment Patterm holds. On Windows a
     // batch file runs through cmd.exe, and closing stdin ends the server's

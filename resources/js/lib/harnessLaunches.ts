@@ -1,13 +1,11 @@
 import { shallowReactive } from 'vue';
 import { harnessLabel } from './harnessLabels';
-import type { AgentInterface } from '../types';
 
 export interface HarnessLaunchInput {
   projectId: string;
   targetProjectId: string;
   harness: string;
   preset?: string;
-  interfaceMode?: AgentInterface;
   host?: string;
   // Sent as the agent's first message once it is ready.
   initialPrompt?: string;
@@ -41,7 +39,6 @@ function start(input: HarnessLaunchInput, call: (args: Record<string, unknown>) 
     harness: launch.input.harness,
     project_id: launch.input.targetProjectId,
     ...(launch.input.preset ? { preset: launch.input.preset } : {}),
-    ...(launch.input.interfaceMode ? { interface_mode: launch.input.interfaceMode } : {}),
     ...(launch.input.initialPrompt ? { initial_prompt: launch.input.initialPrompt } : {})
   })).then((result) => {
     const sessionId = (result as { session_id?: unknown } | null)?.session_id;

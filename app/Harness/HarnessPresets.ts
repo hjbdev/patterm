@@ -3,8 +3,7 @@ import type { HarnessId } from './HarnessProvider';
 import { FACE_COLORS, FACE_EYES, FACE_FINISHES, FACE_HATS, FACE_IDLES, FACE_MARKINGS, FACE_MOUTHS, FACE_SHAPES } from './ProfileLook';
 
 // Named model/reasoning presets a user configures per agent harness. Presets are
-// resolved to provider flags at launch time (see HarnessLauncher). `rawpty` has
-// no model surface, so presets only cover agent CLIs.
+// resolved to provider flags at launch time (see HarnessLauncher).
 export const presetHarnessInput = z.enum(['claude', 'codex', 'opencode', 'agy']);
 export type PresetHarness = z.infer<typeof presetHarnessInput>;
 
@@ -173,14 +172,11 @@ export function resolveHarnessLaunchSelection(input: ResolveHarnessLaunchInput):
 
   let preset: HarnessPreset | null = null;
   if (presetRef) {
-    const harnessScope = harnessRef && harnessRef !== 'rawpty' ? harnessRef : null;
-    const idMatch = settings.presets.find((candidate) => candidate.id === presetRef && (!harnessScope || candidate.harness === harnessScope));
+    const idMatch = settings.presets.find((candidate) => candidate.id === presetRef && (!harnessRef || candidate.harness === harnessRef));
     if (idMatch) {
       preset = idMatch;
     } else if (harnessRef) {
-      // An explicit harness (including rawpty, which has no presets) scopes the
-      // name lookup; it never falls back to another harness.
-      preset = harnessScope ? findPresetByRef(settings, presetRef, harnessScope) : null;
+      preset = findPresetByRef(settings, presetRef, harnessRef);
     } else {
       const matches = findPresetsByName(settings, presetRef);
       if (matches.length > 1) {
@@ -189,7 +185,7 @@ export function resolveHarnessLaunchSelection(input: ResolveHarnessLaunchInput):
       preset = matches[0] ?? null;
     }
     if (!preset) {
-      throw new Error(`unknown preset '${presetRef}'. Available presets: ${availablePresetNames(settings, harnessScope)}`);
+      throw new Error(`unknown preset '${presetRef}'. Available presets: ${availablePresetNames(settings, harnessRef)}`);
     }
   }
 
@@ -220,18 +216,16 @@ export function resolveHarnessLaunchSelection(input: ResolveHarnessLaunchInput):
     };
   }
 
-  if (harness !== 'rawpty') {
-    const fallback = defaultPresetFor(settings, harness);
-    if (fallback) {
-      return {
-        harness,
-        model: fallback.model,
-        reasoning: fallback.reasoning,
-        serviceTier: explicitServiceTier ?? fallback.serviceTier,
-        presetId: fallback.id,
-        presetName: fallback.name
-      };
-    }
+  const fallback = defaultPresetFor(settings, harness);
+  if (fallback) {
+    return {
+      harness,
+      model: fallback.model,
+      reasoning: fallback.reasoning,
+      serviceTier: explicitServiceTier ?? fallback.serviceTier,
+      presetId: fallback.id,
+      presetName: fallback.name
+    };
   }
 
   return { harness, model: null, reasoning: null, serviceTier: explicitServiceTier, presetId: null, presetName: null };

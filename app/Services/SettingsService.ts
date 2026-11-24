@@ -72,12 +72,9 @@ export const EMPTY_SIDEBAR_STATE: SidebarState = {
 const SIDEBAR_STATE_KEY = 'ui.sidebar.expanded.v1';
 const APPEARANCE_SETTINGS_KEY = 'ui.appearance.v1';
 const WORKSPACE_LAYOUT_KEY = 'ui.workspace.layout.v1';
-const AGENT_INTERFACE_KEY = 'agents.interface.v1';
 const AGENT_FIGURES_KEY = 'agents.figures.v1';
 const NOTIFICATION_SETTINGS_KEY = 'notifications.v1';
 
-export const agentInterfaceInput = z.enum(['tui', 'integrated']);
-export type AgentInterface = z.infer<typeof agentInterfaceInput>;
 // The assistant's settings from before it became a bot. They seed its bot
 // entry the first time bots are read; nothing writes them any more.
 const legacyAssistantSettingsInput = z.object({
@@ -236,19 +233,7 @@ export class SettingsService {
     return layout;
   }
 
-  agentInterface(): AgentInterface {
-    const row = this.database.connection.prepare('select value from settings where key = ?').get(AGENT_INTERFACE_KEY) as { value: string } | undefined;
-    const parsed = agentInterfaceInput.safeParse(row?.value);
-    return parsed.success ? parsed.data : 'integrated';
-  }
-
-  updateAgentInterface(input: unknown): AgentInterface {
-    const value = agentInterfaceInput.parse(input);
-    this.write(AGENT_INTERFACE_KEY, value);
-    return value;
-  }
-
-  // Whether agents may show HTML pages in their Integrated replies with html_render.
+  // Whether agents may show HTML pages in their replies with html_render.
   figuresEnabled(): boolean {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(AGENT_FIGURES_KEY) as { value: string } | undefined;
     return row?.value !== 'off';
@@ -311,7 +296,6 @@ export class SettingsService {
     const sections: Array<[string, unknown, unknown]> = [
       ['appearance', this.appearanceSettings(), DEFAULT_APPEARANCE_SETTINGS],
       ['workspace_layout', this.workspaceLayout(), DEFAULT_WORKSPACE_LAYOUT],
-      ['agent_interface', this.agentInterface(), 'integrated'],
       ['figures', this.figuresEnabled(), true],
       ['auto_summaries', this.autoSummarySettings(), autoSummarySettingsInput.parse({})],
       ['notifications', this.notificationSettings(), notificationSettingsInput.parse({})],

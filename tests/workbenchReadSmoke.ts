@@ -136,18 +136,20 @@ async function main(): Promise<void> {
 
     // MCP registry: direct public tools and read tools route through the repository.
     const terminalRequests: Array<{ method: string; params: unknown }> = [];
+    const integratedPrompts: Array<{ process_id: string; text: string }> = [];
     const fakeTerminal = {
       isAvailable: () => false,
       request: async (method: string, params: unknown) => {
         terminalRequests.push({ method, params });
+        const targetId = (params as { process_id?: string } | undefined)?.process_id ?? 'pty_shell';
         if (method === 'terminal.process.output') {
-          return { process_id: 'proc_identity', status: 'running', screen: 'server http://localhost:5173 ready', lines: ['server http://localhost:5173 ready'], rows: 1, cols: 80 };
+          return { process_id: targetId, status: 'running', screen: 'server http://localhost:5173 ready', lines: ['server http://localhost:5173 ready'], rows: 1, cols: 80 };
         }
         if (method === 'terminal.process.search') {
           return { matches: [{ row: 0, col: 7, length: 21 }] };
         }
         if (method === 'terminal.process.status') {
-          return { process_id: 'proc_identity', status: 'running', rows: 1, cols: 80 };
+          return { process_id: targetId, status: 'running', rows: 1, cols: 80 };
         }
         return { ok: true };
       }
@@ -160,6 +162,14 @@ async function main(): Promise<void> {
       notifications: { userInput: (processId: string) => { handledNotifications.push(processId); } } as unknown as NotificationActions,
       database,
       terminal: fakeTerminal,
+      integrated: {
+        prompt: async (processId: string, text: string | { text: string }) => {
+          integratedPrompts.push({ process_id: processId, text: typeof text === 'string' ? text : text.text });
+          return { delivery: 'accepted' };
+        },
+        stop: async () => undefined,
+        conversation: async () => ({})
+      } as unknown as Parameters<typeof createTestMcpRegistry>[0]['integrated'],
       timeline: registryTimeline,
       workbench: repo,
       historyImportQueue: {
@@ -402,40 +412,50 @@ async function main(): Promise<void> {
     );
     const outputHelp = registry.help('get_process_output');
     assert.match(outputHelp.usageNotes?.join('\n') ?? '', /not a durable transcript or final-answer transport/, 'output help documents rendered viewport semantics');
-    const inputResult = (await registry.call('send_input', { process_id: 'proc_identity', kind: 'key', key: 'ctrl-c', tail_mode: 'grid' })) as {
+    database.connection
+      .prepare(
+        `insert into processes (id, project_id, kind, name, status, activity, pty_process_id, created_at, updated_at)
+         values ('proc_shell', ?, 'command', 'dev server', 'running', 'idle', 'pty_shell', ?, ?)`
+      )
+      .run(projectSnapshot.project.id, mcpNow, mcpNow);
+    const inputResult = (await registry.call('send_input', { process_id: 'proc_shell', kind: 'key', key: 'ctrl-c', tail_mode: 'grid' })) as {
       ok: boolean;
       tail: { content: string };
     };
     assert.equal(inputResult.ok, true);
     assert.match(inputResult.tail.content, /localhost:5173/);
-    await registry.call('send_input', { process_id: 'proc_identity', kind: 'key', key: 'enter' });
-    await registry.call('send_input', { process_id: 'proc_identity', kind: 'key', key: 'ctrl+u' });
+    await registry.call('send_input', { process_id: 'proc_shell', kind: 'key', key: 'enter' });
+    await registry.call('send_input', { process_id: 'proc_shell', kind: 'key', key: 'ctrl+u' });
     const inputRequests = terminalRequests.filter((request) => request.method === 'terminal.process.input');
     assert.equal((inputRequests.at(-2)?.params as { text?: string }).text, '\r', 'enter sends carriage return');
-    assert.equal((inputRequests.at(-1)?.params as { text?: string }).text, '\u0015', 'ctrl+u clears agent composer');
-    assert.equal(handledNotifications.at(-1), 'proc_identity', 'send_input answers the target\'s open requests');
+    assert.equal((inputRequests.at(-1)?.params as { text?: string }).text, '\u0015', 'ctrl+u clears terminal input');
+    assert.equal(handledNotifications.at(-1), 'proc_shell', 'send_input answers the target\'s open requests');
     await registry.call('send_input', { process_id: 'proc_identity', kind: 'text', text: 'submitted claude text', submit: true });
-    assert.deepEqual(terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params, {
+    assert.deepEqual(integratedPrompts.at(-1), {
       process_id: 'proc_identity',
-      kind: 'paste',
-      text: 'submitted claude text',
-      submit: true
+      text: 'submitted claude text'
     });
-    const ports = (await registry.call('get_process_ports', { process_id: 'proc_identity' })) as { ports: Array<{ port: number }> };
+    const ports = (await registry.call('get_process_ports', { process_id: 'proc_shell' })) as { ports: Array<{ port: number }> };
     assert.equal(ports.ports[0]?.port, 5173, 'get_process_ports extracts URL-form ports');
-    const timerInputCount = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const waitForPromptCount = async (expected: number, label: string): Promise<void> => {
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        if (integratedPrompts.length >= expected) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.fail(label);
+    };
+    const timerInputCount = integratedPrompts.length;
     const timer = (await registry.call('timer_set', { seconds: 0, body: 'timer fired' }, identityContext)) as { timer_id: string };
     assert.ok(timer.timer_id, 'timer_set returns a timer id');
-    await waitForTerminalInputCount(terminalRequests, timerInputCount + 1, 'timer_set sends its body to the owning process');
-    assert.deepEqual(terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params, {
+    await waitForPromptCount(timerInputCount + 1, 'timer_set sends its body to the owning process');
+    assert.deepEqual(integratedPrompts.at(-1), {
       process_id: 'proc_identity',
-      kind: 'paste',
-      text: `[Patterm timer ${timer.timer_id}: time elapsed]\ntimer fired`,
-      submit: true
+      text: `[Patterm timer ${timer.timer_id}: time elapsed]\ntimer fired`
     }, 'timer_set sends its body under a Patterm header, so it never reads as the user');
     const reminder = await registry.callPublic('timer_set', { seconds: 0, label: 'reminder' }, identityContext) as { timer_id: string };
-    await waitForTerminalInputCount(terminalRequests, timerInputCount + 2, 'timer_set defaults to a useful callback message');
-    assert.equal((terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { text: string }).text, `[Patterm timer ${reminder.timer_id} (reminder): time elapsed]`);
+    await waitForPromptCount(timerInputCount + 2, 'timer_set defaults to a useful callback message');
+    assert.equal(integratedPrompts.at(-1)?.text, `[Patterm timer ${reminder.timer_id} (reminder): time elapsed]`);
 
     database.connection
       .prepare(
@@ -443,7 +463,7 @@ async function main(): Promise<void> {
          values ('proc_fresh_idle', ?, 'agent', 'fresh idle agent', 'running', 'idle', ?, ?)`
       )
       .run(projectSnapshot.project.id, mcpNow, mcpNow);
-    const freshIdleInputCount = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const freshIdleInputCount = integratedPrompts.length;
     const freshIdleTimer = (await registry.call(
       'timer_fire_when_idle_all',
       { watched: ['proc_fresh_idle'], body: 'fresh idle fired' },
@@ -453,7 +473,7 @@ async function main(): Promise<void> {
     assert.equal(freshIdleTimer.status, 'pending');
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(
-      terminalRequests.filter((request) => request.method === 'terminal.process.input').length,
+      integratedPrompts.length,
       freshIdleInputCount,
       'idle_all does not fire immediately for a freshly spawned process that has not worked yet'
     );
@@ -465,7 +485,7 @@ async function main(): Promise<void> {
          values ('proc_report_wait', ?, 'agent', 'report wait agent', 'running', 'idle', ?, ?)`
       )
       .run(projectSnapshot.project.id, mcpNow, mcpNow);
-    const reportedInputCount = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const reportedInputCount = integratedPrompts.length;
     const reportedTimer = (await registry.call(
       'timer_fire_when_reported_all',
       { watched: ['proc_report_wait'], body: 'reported all fired' },
@@ -475,7 +495,7 @@ async function main(): Promise<void> {
     assert.equal(reportedTimer.status, 'pending');
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(
-      terminalRequests.filter((request) => request.method === 'terminal.process.input').length,
+      integratedPrompts.length,
       reportedInputCount,
       'reported_all does not fire merely because a child is terminal-idle'
     );
@@ -486,9 +506,9 @@ async function main(): Promise<void> {
       actor_type: 'agent',
       metadata: { body: 'done' }
     });
-    await waitForTerminalInputCount(terminalRequests, reportedInputCount + 1, 'reported_all fires after the child reports');
+    await waitForPromptCount(reportedInputCount + 1, 'reported_all fires after the child reports');
     {
-      const callback = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { process_id: string; text: string };
+      const callback = integratedPrompts.at(-1)!;
       assert.equal(callback.process_id, 'proc_identity');
       assert.match(callback.text, /^\[Patterm timer timer_\w+: condition met\]\n- proc_report_wait \"report wait agent\": reported completed at \S+: done\nRead full results with get_conversation_output\.\nreported all fired$/, 'timer callbacks say why they fired and what each watched process did');
     }
@@ -499,7 +519,7 @@ async function main(): Promise<void> {
          values ('proc_report_stopped', ?, 'agent', 'stopped report agent', 'running', 'working', ?, ?)`
       )
       .run(projectSnapshot.project.id, mcpNow, mcpNow);
-    const stoppedReportInputCount = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const stoppedReportInputCount = integratedPrompts.length;
     const stoppedReportTimer = (await registry.call(
       'timer_fire_when_reported_all',
       { watched: ['proc_report_stopped'], body: 'reported stop fired' },
@@ -507,15 +527,15 @@ async function main(): Promise<void> {
     )) as { timer_id: string; status: string; waiting_on: string[] };
     assert.ok(stoppedReportTimer.timer_id, 'reported_all returns a timer id for stopped fallback');
     database.connection.prepare(`update processes set status = 'stopped' where id = 'proc_report_stopped'`).run();
-    await waitForTerminalInputCount(terminalRequests, stoppedReportInputCount + 1, 'reported_all fires if a watched child stops without reporting');
+    await waitForPromptCount(stoppedReportInputCount + 1, 'reported_all fires if a watched child stops without reporting');
     {
-      const callback = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { process_id: string; text: string };
+      const callback = integratedPrompts.at(-1)!;
       assert.equal(callback.process_id, 'proc_identity');
       assert.match(callback.text, /^\[Patterm timer timer_\w+: condition met\]\n- proc_report_stopped \"stopped report agent\": stopped without reporting\nreported stop fired$/, 'timer callbacks say why they fired and what each watched process did');
     }
 
     database.connection.prepare(`update processes set activity = 'working' where id = 'proc_identity'`).run();
-    const idleAnyInputCount = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const idleAnyInputCount = integratedPrompts.length;
     const idleAnyTimer = (await registry.call(
       'timer_fire_when_idle_any',
       { watched: ['proc_identity'], body: 'idle any fired' },
@@ -526,14 +546,14 @@ async function main(): Promise<void> {
     assert.deepEqual(idleAnyTimer.waiting_on, ['proc_identity']);
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(
-      terminalRequests.filter((request) => request.method === 'terminal.process.input').length,
+      integratedPrompts.length,
       idleAnyInputCount,
       'idle_any does not fire while a watched process is still working'
     );
     database.connection.prepare(`update processes set activity = 'idle' where id = 'proc_identity'`).run();
-    await waitForTerminalInputCount(terminalRequests, idleAnyInputCount + 1, 'idle_any fires when watched process activity becomes idle');
+    await waitForPromptCount(idleAnyInputCount + 1, 'idle_any fires when watched process activity becomes idle');
     {
-      const callback = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { process_id: string; text: string };
+      const callback = integratedPrompts.at(-1)!;
       assert.equal(callback.process_id, 'proc_identity');
       assert.match(callback.text, /^\[Patterm timer timer_\w+: condition met\]\n- proc_identity \"[^\"]+\": idle \(its turn ended\)\nidle any fired$/, 'timer callbacks say why they fired and what each watched process did');
     }
@@ -546,7 +566,7 @@ async function main(): Promise<void> {
                  ('proc_idle_all_b', ?, 'agent', 'idle all b', 'running', 'working', ?, ?)`
       )
       .run(projectSnapshot.project.id, mcpNow, idleObservedAt, projectSnapshot.project.id, mcpNow, mcpNow);
-    const idleAllInputCount = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const idleAllInputCount = integratedPrompts.length;
     const idleAllTimer = (await registry.call(
       'timer_fire_when_idle_all',
       { watched: ['proc_idle_all_a', 'proc_idle_all_b'], body: 'idle all fired' },
@@ -557,14 +577,14 @@ async function main(): Promise<void> {
     assert.deepEqual(idleAllTimer.waiting_on, ['proc_idle_all_a', 'proc_idle_all_b']);
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(
-      terminalRequests.filter((request) => request.method === 'terminal.process.input').length,
+      integratedPrompts.length,
       idleAllInputCount,
       'idle_all waits until every watched running process is idle'
     );
     database.connection.prepare(`update processes set activity = 'idle' where id = 'proc_idle_all_b'`).run();
-    await waitForTerminalInputCount(terminalRequests, idleAllInputCount + 1, 'idle_all fires once every watched process is idle');
+    await waitForPromptCount(idleAllInputCount + 1, 'idle_all fires once every watched process is idle');
     {
-      const callback = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { process_id: string; text: string };
+      const callback = integratedPrompts.at(-1)!;
       assert.equal(callback.process_id, 'proc_identity');
       assert.match(callback.text, /^\[Patterm timer timer_\w+: condition met\]\n- proc_idle_all_a \"idle all a\": idle \(its turn ended\)\n- proc_idle_all_b \"idle all b\": idle \(its turn ended\)\nidle all fired$/, 'timer callbacks say why they fired and what each watched process did');
     }
@@ -582,15 +602,11 @@ async function main(): Promise<void> {
     // and workspace routines.
     const agentNames = publicNames.filter((name) => !name.startsWith('assistant_project_') && !name.startsWith('memory_review_'));
     assert.deepEqual(catalog.result.map(({ name }) => name), agentNames, 'the shim receives the canonical public catalogue');
-    const tuiCatalog = (await callOverSocket(socketPath, { id: 1, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name) && name !== 'bot_stay_quiet'), 'TUI agents are not offered figures or bot-only tools');
-    const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'html_render', args: {}, identity: 'identity_test' })) as { error: string };
-    assert.match(tuiFigure.error, /only in Integrated mode/, 'TUI agents cannot save figures');
     database.connection.prepare(`update sessions set interface_mode = 'integrated' where mcp_identity = 'identity_test'`).run();
     const integratedCatalog = (await callOverSocket(socketPath, { id: 3, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.ok(integratedCatalog.result.some(({ name }) => name === 'html_render'), 'Integrated agents are offered figures');
+    assert.ok(integratedCatalog.result.some(({ name }) => name === 'html_render'), 'agents are offered figures');
+    assert.ok(!integratedCatalog.result.some(({ name }) => name === 'bot_stay_quiet'), 'non-bot agents are not offered bot-only tools');
     assert.ok(!publicNames.includes('html_preview'), 'only the desktop app, which can draw pages off screen, offers previews');
-    database.connection.prepare(`update sessions set interface_mode = 'tui' where mcp_identity = 'identity_test'`).run();
     const directContext = (await callOverSocket(socketPath, { id: 4, version: 2, tool: 'get_project_status', args: {}, identity: 'identity_test' })) as {
       result: { current_process_id: string };
     };
@@ -607,7 +623,7 @@ async function main(): Promise<void> {
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [shimPath], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'identity_test' }, stderr: 'pipe' }));
       const listed = await client.listTools();
-      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name) && name !== 'bot_stay_quiet'), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
+      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames.filter((name) => name !== 'bot_stay_quiet'), 'the catalogue an agent lists is valid over modern MCP tools/list');
       assert.match(JSON.stringify(await client.callTool({ name: 'list_processes', arguments: {} })), /proc_identity/, 'new clients call the backend directly with caller identity');
       assert.equal((await client.callTool({ name: 'spawn_agent', arguments: {} })).isError, true, 'agent launch validates its cross-field requirement before forwarding');
       assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo_create' } })), /title/, 'help reads the public catalogue');
@@ -666,17 +682,6 @@ function callOverSocket(socketPath: string, request: unknown): Promise<unknown> 
     });
     client.on('error', reject);
   });
-}
-
-async function waitForTerminalInputCount(terminalRequests: Array<{ method: string; params: unknown }>, expected: number, message: string): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
-    if (terminalRequests.filter((request) => request.method === 'terminal.process.input').length >= expected) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  assert.fail(message);
 }
 
 main().catch((error) => {

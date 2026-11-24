@@ -22,7 +22,7 @@ export interface CommandRunResult {
   // A workspace search target, such as a conversation in the history page.
   target?: { project_id: string | null; tab: string | null; terminal_process_id: string | null; conversation_id?: string | null; conversation_message_id?: string | null };
   // A launch choice to change, such as the preset.
-  field?: 'harness' | 'presetId' | 'worktreeId' | 'interfaceMode';
+  field?: 'harness' | 'presetId' | 'worktreeId';
 }
 
 export interface CommandDescriptor {

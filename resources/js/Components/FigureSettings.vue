@@ -1,6 +1,6 @@
 <template>
   <SettingsPanel title="Figures">
-    <template #description>Integrated agents can show charts, tables, diagrams, mockups, and questions in their replies as HTML pages, with html_render. TUI agents are not offered it. Each page runs in a sandboxed frame that cannot reach Patterm or your files.</template>
+    <template #description>Agents can show charts, tables, diagrams, mockups, and questions in their replies as HTML pages, with html_render. Each page runs in a sandboxed frame that cannot reach Patterm or your files.</template>
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
     <SettingsSection title="Agents" scope="figures">
       <SettingsRow label="Figures in replies" description="Turning this off removes html_render and html_preview from agents. Pages already in conversations still show." html-for="figures-enabled" save-key="figures.enabled" toggle>

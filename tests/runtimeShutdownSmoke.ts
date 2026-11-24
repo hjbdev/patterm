@@ -40,8 +40,7 @@ test('an exit captured after startup inventory is replayed after subscribing to 
   new ReconcileRuntimeAction(fixture.database).execute([{
     process_id: 'pty_fixture', status: 'running', exit_code: null, activity: 'working', title: 'Fixture'
   }]);
-  assert.equal(fixture.process().status, 'running');
-  assert.equal(fixture.session().exited_at, null);
+  assert.equal(fixture.command().status, 'running');
 
   let subscribed = false;
   let notifications = 0;
@@ -57,16 +56,13 @@ test('an exit captured after startup inventory is replayed after subscribing to 
   }
   const launcher = { relaunch: () => assert.fail('a process without auto-restart must stay exited') } as unknown as ProcessLauncher;
   const reconciler = new RuntimeReconciler(
-    fixture.database, new TimelineService(fixture.database), launcher, null, source,
-    () => { notifications++; }, null, null, capturedFrames()
+    fixture.database, new TimelineService(fixture.database), launcher, source,
+    () => { notifications++; }, capturedFrames()
   );
   t.after(() => reconciler.dispose());
-  assert.equal(fixture.process().status, 'failed');
-  assert.equal(fixture.process().exit_code, 41);
-  assert.ok(fixture.process().exited_at);
-  assert.equal(fixture.session().exit_code, 41);
-  assert.ok(fixture.session().exited_at, 'the session cannot remain live after a buffered process exit');
-  assert.equal(fixture.session().resume_id, 'ses_fixture');
+  assert.equal(fixture.command().status, 'failed');
+  assert.equal(fixture.command().exit_code, 41);
+  assert.ok(fixture.command().exited_at);
   assert.ok(notifications > 0, 'replayed exits refresh the workbench');
 });
 
@@ -76,12 +72,13 @@ for (const failure of ['terminal', 'opencode'] as const) {
     let fail = true;
     const counts = { begin: 0, coordination: 0, opencode: 0, terminal: 0 };
     const originalProcess = fixture.process();
+    const originalCommand = fixture.command();
     const originalSession = fixture.session();
     const terminal = {
       beginShutdown: () => { counts.begin++; },
       shutdown: async () => {
         counts.terminal++;
-        assert.deepEqual(fixture.process(), originalProcess, 'retain the PTY handle until all shutdown steps succeed');
+        assert.deepEqual(fixture.command(), originalCommand, 'retain the PTY handle until all shutdown steps succeed');
         assert.equal(timers.listMcp().length, 0, 'cancel timers before stopping hosts');
         if (fail && failure === 'terminal') throw new Error('Simulated host stop failure');
       }
@@ -106,6 +103,7 @@ for (const failure of ['terminal', 'opencode'] as const) {
       return true;
     });
     assert.deepEqual(fixture.process(), originalProcess);
+    assert.deepEqual(fixture.command(), originalCommand);
     assert.deepEqual(fixture.session(), originalSession);
     assert.deepEqual(counts, { begin: 1, coordination: 1, opencode: 1, terminal: 1 }, 'other cleanup steps still run after a failure');
     assert.equal(fixture.timerCount(), 0, 'failed Quit still removes durable timers');
@@ -115,8 +113,10 @@ for (const failure of ['terminal', 'opencode'] as const) {
     await action.execute();
     assert.deepEqual(counts, { begin: 2, coordination: 2, opencode: 2, terminal: 2 }, 'retry reattempts native interruption and host shutdown');
     assert.equal(fixture.process().status, 'exited');
-    assert.equal(fixture.process().pty_process_id, null);
+    assert.equal(fixture.command().status, 'exited');
+    assert.equal(fixture.command().pty_process_id, null);
     assert.ok(fixture.process().exited_at);
+    assert.ok(fixture.command().exited_at);
     assert.ok(fixture.session().exited_at);
     assert.equal(fixture.session().resume_id, 'ses_fixture', 'successful shutdown keeps native resume metadata');
     assert.equal(fixture.timerCount(), 0);
@@ -133,9 +133,10 @@ function setup(t: TestContext) {
   database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)')
     .run('project', 'Shutdown fixture', directory, now, now);
   database.connection.prepare(`insert into processes (id,project_id,kind,name,status,activity,pty_process_id,created_at,updated_at)
-    values ('process_fixture', 'project', 'agent', 'Fixture', 'running', 'working', 'pty_fixture', ?, ?)`).run(now, now);
-  database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor)
-    values ('session_fixture', 'project', 'process_fixture', 'opencode', 'identity_fixture', 'ses_fixture', ?, 'orchestrator', 'found', 'user')`).run(now);
+    values ('process_fixture', 'project', 'agent', 'Fixture', 'running', 'working', null, ?, ?),
+           ('process_command', 'project', 'command', 'Shell', 'running', 'working', 'pty_fixture', ?, ?)`).run(now, now, now, now);
+  database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor)
+    values ('session_fixture', 'project', 'process_fixture', 'opencode', 'integrated', 'identity_fixture', 'ses_fixture', ?, 'orchestrator', 'found', 'user')`).run(now);
   t.after(() => {
     database.dispose();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -143,6 +144,9 @@ function setup(t: TestContext) {
   return {
     database,
     process: () => database.connection.prepare('select status, pty_process_id, exit_code, exited_at from processes where id = ?').get('process_fixture') as {
+      status: string; pty_process_id: string | null; exit_code: number | null; exited_at: string | null;
+    },
+    command: () => database.connection.prepare('select status, pty_process_id, exit_code, exited_at from processes where id = ?').get('process_command') as {
       status: string; pty_process_id: string | null; exit_code: number | null; exited_at: string | null;
     },
     session: () => database.connection.prepare('select exited_at, exit_code, resume_id, mcp_identity from sessions where id = ?').get('session_fixture') as {

@@ -7,7 +7,7 @@ import type { ProcessRecord, ProjectWorkbench, SessionRecord } from '../resource
 
 function session(id: string, processId: string, title: string, exitedAt: string | null = null): SessionRecord {
   return {
-    id, parentId: null, ptyProcessId: `pty-${id}`, processId, worktreeId: null, harness: 'codex', interfaceMode: 'integrated',
+    id, parentId: null, processId, worktreeId: null, harness: 'codex',
     sessionRole: 'orchestrator', resumeStatus: 'unknown', activity: 'idle', lastTitle: title, displayName: null,
     model: null, reasoning: null, startedAt: '2026-10-03T10:00:00Z', exitedAt
   };

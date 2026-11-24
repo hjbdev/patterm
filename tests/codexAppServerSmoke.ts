@@ -770,19 +770,19 @@ if (socketPath) {
   reconnected.disconnect();
   const restartedCodex = new CodexAppServerService(database, runtimeDirectory);
   const restartedAgents = new IntegratedAgentService(database, { codex: restartedCodex });
-  assert.deepEqual(await restartedAgents.reconcile(), { checked: 1, failed: 0, unreachable: 0 }, 'a restarted server reattaches to a live Codex host');
+  assert.deepEqual(await restartedAgents.reconcile(), { checked: 1, failed: 0, unreachable: 0, failedProcessIds: [] }, 'a restarted server reattaches to a live Codex host');
   await new Promise((resolve) => setTimeout(resolve, 300));
   restartedAgents.dispose();
   restartedCodex.disconnect();
   const unreadable = Object.assign(Object.create(reconnected) as CodexAppServerService, { conversation: async () => { throw new Error('read failed'); } });
   const unreadableAgents = new IntegratedAgentService(database, { codex: unreadable });
-  assert.deepEqual(await unreadableAgents.reconcile(), { checked: 1, failed: 0, unreachable: 1 }, 'a live host is never marked failed');
+  assert.deepEqual(await unreadableAgents.reconcile(), { checked: 1, failed: 0, unreachable: 1, failedProcessIds: [] }, 'a live host is never marked failed');
   await new Promise((resolve) => setTimeout(resolve, 300));
   unreadableAgents.dispose();
   assert.equal((database.connection.prepare(`select status from processes where id = 'process_test'`).get() as { status: string }).status, 'running');
   await reconnected.stop('process_test');
   const reconciliation = await new IntegratedAgentService(database, { codex: new CodexAppServerService(database, runtimeDirectory) }).reconcile();
-  assert.deepEqual(reconciliation, { checked: 1, failed: 1, unreachable: 0 });
+  assert.deepEqual(reconciliation, { checked: 1, failed: 1, unreachable: 0, failedProcessIds: ['process_test'] });
   assert.equal((database.connection.prepare(`select status from processes where id = 'process_test'`).get() as { status: string }).status, 'failed');
 
   // Ambiguous, delayed, and definitive delivery evidence on fresh sessions.

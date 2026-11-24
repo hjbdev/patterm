@@ -4,7 +4,7 @@ import { harnessLabel } from './harnesses';
 import { baseName } from './serverPath';
 import { timerLabel, timerRemaining } from './timers';
 import type { CommandDescriptor } from './commandPalette';
-import type { AgentInterface, ConversationRecord, ProjectWorkbench, TimerRecord, WorktreeRecord } from '../types';
+import type { ConversationRecord, ProjectWorkbench, TimerRecord, WorktreeRecord } from '../types';
 
 // Rows the palette builds from conversations, timers, workspace search, and the
 // launch choices, so every layout shares the same commands.
@@ -23,7 +23,6 @@ export interface LaunchChoice {
   harness: string;
   presetId: string | null;
   worktreeId: string | null;
-  interfaceMode: AgentInterface;
   prompt: string;
 }
 
@@ -50,9 +49,7 @@ export function resumableConversations(conversations: readonly ConversationRecor
     && (HISTORY_PROVIDERS as readonly string[]).includes(conversation.provider)));
 }
 
-// Each conversation resumes in the saved interface; its page offers the other.
-export function conversationRows(conversations: readonly ConversationRecord[], now = Date.now(), defaultInterface: AgentInterface = 'integrated'): CommandDescriptor[] {
-  const interfaces: AgentInterface[] = defaultInterface === 'tui' ? ['tui', 'integrated'] : ['integrated', 'tui'];
+export function conversationRows(conversations: readonly ConversationRecord[], now = Date.now()): CommandDescriptor[] {
   return conversations.map((conversation) => {
     const title = conversation.title?.trim() || 'Untitled conversation';
     const id = `history:resume:${conversation.id}`;
@@ -66,7 +63,7 @@ export function conversationRows(conversations: readonly ConversationRecord[], n
       kind: 'backend',
       primary: 'Resume',
       actions: [
-        ...interfaces.map((mode) => ({ id, label: `Resume as ${interfaceLabel(mode)}`, group: 'conversation', kind: 'backend', params: { interface_mode: mode } } satisfies CommandDescriptor)),
+        { id, label: 'Resume conversation', group: 'conversation', kind: 'backend' },
         {
           id: `history:open:${conversation.id}`,
           label: 'Open in conversation history',
@@ -155,18 +152,12 @@ export function worktreeLabel(worktree: WorktreeRecord | null | undefined): stri
   return worktree.branch ?? baseName(worktree.worktreePath) ?? worktree.id;
 }
 
-// Named as in the launch menu's toggle.
-export function interfaceLabel(mode: AgentInterface): string {
-  return mode === 'integrated' ? 'Integrated' : 'TUI';
-}
-
 // The input sent to spawn:agent for a launch.
 export function launchParams(choice: LaunchChoice): Record<string, unknown> {
   const prompt = choice.prompt.trim();
   return {
     ...(choice.presetId ? { preset: choice.presetId } : {}),
     ...(choice.worktreeId ? { worktree_id: choice.worktreeId } : {}),
-    interface_mode: choice.interfaceMode,
     ...(prompt ? { initial_prompt: prompt } : {})
   };
 }
@@ -175,5 +166,5 @@ export function launchParams(choice: LaunchChoice): Record<string, unknown> {
 export function launchSummary(choice: LaunchChoice, presets: readonly HarnessPreset[], worktrees: readonly WorktreeRecord[]): string {
   const preset = presets.find((candidate) => candidate.id === choice.presetId);
   const worktree = worktrees.find((candidate) => candidate.id === choice.worktreeId);
-  return [harnessLabel(choice.harness), presetLabel(preset), worktree ? worktreeLabel(worktree) : '', interfaceLabel(choice.interfaceMode)].filter(Boolean).join(' · ');
+  return [harnessLabel(choice.harness), presetLabel(preset), worktree ? worktreeLabel(worktree) : ''].filter(Boolean).join(' · ');
 }

@@ -47,13 +47,13 @@ test('launch tabs open before native readiness; independent completions preserve
   const stopSidebarWatch = new Function('watch', 'sidebar', 'selectedLaunch', 'sidebarLayout', `return ${watchSource}`)(watch,
     { page: ref(null), tabs: ref([]) }, selectedLaunch, sidebarLayout);
   async function settle(index, sessionId, projectId = 'p1') {
-    projects.find(project => project.project.id === projectId).projectSessions.push({ id: sessionId, interfaceMode: 'integrated' });
-    native[index].resolve({ session_id: sessionId, pty_process_id: null });
+    projects.find(project => project.project.id === projectId).projectSessions.push({ id: sessionId });
+    native[index].resolve({ session_id: sessionId });
     await tick(); await tick(); await nextTick();
   }
   try {
     await fixture.useWorkbench().refresh();
-    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'opencode', interfaceMode: 'tui' });
+    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'opencode' });
     assert.equal(store.launches[0].state, 'starting', 'Starting tab is present synchronously');
     await tick();
     const firstId = store.launches[0].id;
@@ -64,7 +64,7 @@ test('launch tabs open before native readiness; independent completions preserve
     assert.equal(fixture.lastProjectLocation('p1').name, 'project', 'Temporary routes do not become saved project locations');
 
     sidebarLayout.drawerOpen = true;
-    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', preset: 'fast', interfaceMode: 'integrated' });
+    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', preset: 'fast' });
     await tick();
     const secondId = store.launches[1].id;
     assert.equal(calls.length, 2, 'Claude RPC starts while OpenCode remains pending');
@@ -108,7 +108,7 @@ test('launch tabs open before native readiness; independent completions preserve
     assert.equal(store.launches[0].state, 'ready', 'Refresh failure cannot reclassify a successful launch');
     assert.equal(calls.length, 7);
     failRefresh = false;
-    projects[0].projectSessions.push({ id: 'successful-offline', interfaceMode: 'integrated' });
+    projects[0].projectSessions.push({ id: 'successful-offline' });
     await fixture.useWorkbench().refresh(); await tick();
     assert.equal(store.launches.length, 0, 'A later snapshot retires a completed temporary launch');
     projects[0].projectSessions = projects[0].projectSessions.filter(session => session.id !== 'successful-offline');
@@ -127,11 +127,11 @@ test('launch tabs open before native readiness; independent completions preserve
     const handoffId = router.currentRoute.value.params.launchId;
     refreshGate = deferred();
     native[8].resolve({ session_id: 'handoff' }); await tick();
-    fixture.useWorkbench().projects.value[0].projectSessions.push({ id: 'handoff', interfaceMode: 'integrated' });
+    fixture.useWorkbench().projects.value[0].projectSessions.push({ id: 'handoff' });
     await tick();
     assert.equal(store.launches[0].id, handoffId, 'Observed sessions retain the selected placeholder during handoff');
     assert.equal(router.currentRoute.value.params.launchId, handoffId);
-    projects[0].projectSessions.push({ id: 'handoff', interfaceMode: 'integrated' });
+    projects[0].projectSessions.push({ id: 'handoff' });
     refreshGate.resolve(); refreshGate = null;
     await tick(); await tick();
     assert.equal(router.currentRoute.value.params.sessionId, 'handoff');
@@ -150,7 +150,7 @@ test('a launch view that cannot load still opens the agent, unless the user move
     plugins: [{ name: 'page-stubs', setup(builder) { builder.onLoad({ filter: /\.vue$/ }, (args) => ({ contents: args.path.endsWith('HarnessLaunchPage.vue')
       ? 'throw new Error("Failed to fetch dynamically imported module")' : 'export default {}', loader: 'js' })); } }] });
   const native = [];
-  const projects = [{ project: { id: 'p1' }, projectSessions: [{ id: 'current', interfaceMode: 'integrated' }], processes: [] }];
+  const projects = [{ project: { id: 'p1' }, projectSessions: [{ id: 'current' }], processes: [] }];
   globalThis.window = { patterm: {
     workbench: async () => ({ projects: structuredClone(projects) }),
     call: () => { const pending = deferred(); native.push(pending); return pending.promise; }
@@ -163,13 +163,13 @@ test('a launch view that cannot load still opens the agent, unless the user move
   const app = renderer.createApp({ setup() { ({ launchHarness } = fixture.useHarnessLaunch()); return () => null; } });
   app.use(router).mount({});
   async function settle(index, sessionId) {
-    projects[0].projectSessions.push({ id: sessionId, interfaceMode: 'integrated' });
+    projects[0].projectSessions.push({ id: sessionId });
     native[index].resolve({ session_id: sessionId });
     await tick(); await tick(); await tick();
   }
   try {
     await fixture.useWorkbench().refresh();
-    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', interfaceMode: 'integrated' });
+    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude' });
     await tick();
     assert.equal(router.currentRoute.value.params.sessionId, 'current', 'The launch view failed to open');
     await settle(0, 'spawned');
@@ -177,7 +177,7 @@ test('a launch view that cannot load still opens the agent, unless the user move
     router.back(); await tick(); await tick();
     assert.equal(router.currentRoute.value.params.sessionId, 'current', 'Back returns to where the launch started');
 
-    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', interfaceMode: 'integrated' });
+    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude' });
     await tick();
     await router.push('/projects/p1/todos');
     await settle(1, 'later');
@@ -195,15 +195,15 @@ test('menu and empty-state handlers submit every launch with click-time argument
     const js = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     return new Function(...Object.keys(values), `${js};return launchHarness;`)(...Object.values(values));
   }
-  const props = { projectId: 'p1' }, targetProjectId = { value: 'p1' }, interfaceMode = { value: 'tui' };
-  const menuLaunch = handler(menu, { interfaceMode, menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
+  const props = { projectId: 'p1' }, targetProjectId = { value: 'p1' };
+  const menuLaunch = handler(menu, { menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
   menuLaunch('opencode', null, { projectId: props.projectId, targetProjectId: targetProjectId.value, host: null });
   menuLaunch('claude', 'fast', { projectId: 'p1', targetProjectId: 'p1:remote', host: 'remote' });
   // Tab's first message travels with the launch; blank ones don't.
   menuLaunch('codex', 'smarty', { projectId: 'p1', targetProjectId: 'p1', host: null }, '  Review PR 126  ');
   menuLaunch('codex', null, { projectId: 'p1', targetProjectId: 'p1', host: null }, '   ');
-  props.projectId = 'p2'; targetProjectId.value = 'p2'; interfaceMode.value = 'integrated';
-  assert.deepEqual(calls.map(input => [input.harness, input.projectId, input.interfaceMode]), [['opencode', 'p1', 'tui'], ['claude', 'p1', 'tui'], ['codex', 'p1', 'tui'], ['codex', 'p1', 'tui']]);
+  props.projectId = 'p2'; targetProjectId.value = 'p2';
+  assert.deepEqual(calls.map(input => [input.harness, input.projectId]), [['opencode', 'p1'], ['claude', 'p1'], ['codex', 'p1'], ['codex', 'p1']]);
   // Another host keeps its presets, so the launch there drops the local one.
   assert.equal(calls[1].preset, undefined);
   assert.equal(calls[1].host, 'remote');

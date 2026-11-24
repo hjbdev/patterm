@@ -101,7 +101,6 @@ import { RuntimeReconciler } from './Services/RuntimeReconciler';
 import { SearchService } from './Services/SearchService';
 import { SettingsService } from './Services/SettingsService';
 import { ShellEnvironmentService } from './Services/ShellEnvironmentService';
-import { SummaryService } from './Services/SummaryService';
 import { TerminalService, type TerminalLifecycleFrame } from './Services/TerminalService';
 import { TimerService } from './Services/TimerService';
 import { RoutineService } from './Services/RoutineService';
@@ -114,7 +113,6 @@ import type { ChangeTopic } from './Services/ChangeTopics';
 import { createMcpRegistry, type McpToolRegistry } from './MCP/createMcpRegistry';
 import { McpSocketServer } from './MCP/McpSocketServer';
 import { LaunchingMcpIdentities, McpHelperAccess } from './MCP/McpHelperAccess';
-import { OpenExternalUrlAction } from './Actions/OpenExternalUrlAction';
 import { TerminalClientRequestService, type TerminalClientRequest } from './Services/TerminalClientRequestService';
 import { NotificationService, type NotificationChange, type NotificationRecord } from './Services/NotificationService';
 import { NotificationDelivery } from './Services/NotificationDelivery';
@@ -129,7 +127,6 @@ import { McpServerRegistry } from './Services/McpServerRegistry';
 import { codexMcpStartupNotice } from './Harness/McpDelivery';
 import { McpOAuthService } from './Services/McpOAuthService';
 import { McpServerImportService } from './Services/McpServerImportService';
-import { NativeOAuthCallbackService } from './Services/NativeOAuthCallbackService';
 import { McpServerActions } from './Actions/McpServerActions';
 import { registerMcpServerTools } from './MCP/registerMcpServerTools';
 import { registerUpdateTools } from './MCP/registerUpdateTools';
@@ -510,15 +507,10 @@ async function createApplicationResources(
   defer(() => sync.dispose());
   // Clients learn that the terminal core went away through the next patch.
   defer(terminal.onExit(notifyWorkbenchChanged));
-  const harnessDiscovery = new HarnessDiscoveryService(harnessProviders, {
-    env: resolvedEnv,
-    // Windows ignores a $SHELL inherited from Git Bash or MSYS; raw terminals use PowerShell.
-    ...(resolvedEnv.SHELL && process.platform !== 'win32' ? { shell: resolvedEnv.SHELL } : {})
-  });
+  const harnessDiscovery = new HarnessDiscoveryService(harnessProviders, { env: resolvedEnv });
   const git = new GitService();
   const worktreeService = new WorktreeService({ database, timeline, workbench, git });
   const diffService = new DiffService({ worktrees: worktreeService, git });
-  const summaryService = new SummaryService(database, timeline, searchService);
   const historyDiscovery = new ProviderHistoryDiscoveryService(undefined, quietReplies);
   const historySourceService = new AgentHistorySourceService(database, historyDiscovery);
   const historyImportService = new AgentHistoryImportService(database, historyDiscovery, timeline, undefined, database, historySourceService);
@@ -656,8 +648,7 @@ async function createApplicationResources(
     const server = mcpServerRegistry.forHarness('codex').find((entry) => entry.name === failure.server);
     if (server) raiseNotification({ processId, source: 'runtime', kind: 'failure', ...codexMcpStartupNotice(server, failure.error), dedupeKey: `mcp-startup:${server.name}` });
   }));
-  const nativeOAuthCallbacks = new NativeOAuthCallbackService();
-  const mcpServers = new McpServerActions(mcpServerRegistry, mcpOAuth, new McpServerImportService(mcpServerRegistry, { env: resolvedEnv }), nativeOAuthCallbacks, {
+  const mcpServers = new McpServerActions(mcpServerRegistry, mcpOAuth, new McpServerImportService(mcpServerRegistry, { env: resolvedEnv }), {
     redirectsToOrigin: Boolean(options.publicOrigin),
     env: resolvedEnv,
     onChanged: () => notifyChanged(['mcp-servers'])
@@ -685,12 +676,10 @@ async function createApplicationResources(
     mcpHttpProxyUrl: mcpHttpProxy.url,
     launchingIdentities,
     assistantMemory,
-    openCodeServer,
     integrated,
     settings,
     database,
     timeline,
-    terminal,
     workbench,
     providers: harnessProviders,
     nodePath,
@@ -698,7 +687,6 @@ async function createApplicationResources(
     nativeMcpPath: autoNativeMcpPath,
     socketPath,
     runtimeDir: harnessRuntimeDir,
-    inheritedPath: resolvedEnv.PATH,
     search: searchService,
     debugLog,
     presetSettings: settings
@@ -965,21 +953,16 @@ async function createApplicationResources(
   });
   peers.start();
 
-  // Live PTY-exit handling (mark sessions/processes exited, auto-restart)
-  // publishes a workbench patch to clients.
+  // Live PTY-exit handling for shell and command processes publishes a
+  // workbench patch to clients.
   const reconciler = new RuntimeReconciler(
     database,
     timeline,
     processLauncher,
-    summaryService,
     terminal,
     notifyChanged,
-    historyImportQueue,
-    searchService,
     startupFrames.values(),
-    (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` }),
-    (processId, previous, activity) => snoozes.activity(processId, previous, activity),
-    (processId) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Exited without reporting', dedupeKey: 'child:exited_without_report' })
+    (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` })
   );
   stopBuffering();
   startupFrames.clear();
@@ -993,14 +976,8 @@ async function createApplicationResources(
       raiseNotification({ processId: frame.processId, source: 'terminal', kind: frame.source === 'bell' ? 'bell' : 'attention', title: frame.title, body: frame.body });
     }
   }));
-  const openExternalUrl = new OpenExternalUrlAction(database, clientRequests);
   const mcpSocket = new McpSocketServer(socketPath, mcp, notifyChanged,
     (token, sessionId) => openCodeServer.resolveIdentity(token, sessionId),
-    (input) => {
-      const opened = openExternalUrl.execute(input);
-      if (typeof input.url === 'string') nativeOAuthCallbacks.observe(input.url);
-      return opened;
-    },
     mcpServerHandlers);
   mcpSocketServer = mcpSocket;
   defer(() => { mcpSocketServer = null; mcpSocket.stop(); });
@@ -1017,8 +994,8 @@ async function createApplicationResources(
   timers.activate();
   routines.activate();
   projectSnoozes.activate();
-  for (const processId of reconciled.unreportedChildExits) {
-    raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Exited without reporting', dedupeKey: 'child:exited_without_report' });
+  for (const processId of integratedReconciled.failedProcessIds) {
+    raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Agent host stopped unexpectedly', dedupeKey: 'failure' });
   }
   debugLog.write('mcp', 'socket.listening', { address: mcpSocket.address, elapsed_ms: Date.now() - mcpStartedAt });
   debugLog.write('startup', 'critical.ready', { elapsed_ms: Date.now() - startupStartedAt });

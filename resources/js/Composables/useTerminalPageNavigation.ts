@@ -6,7 +6,6 @@ export function useTerminalPageNavigation() {
   const navigation = useWorkbenchNavigation();
   const { route, router, activeProject } = navigation;
   const activeAgentId = computed(() => navigation.selectedAgent.value && navigation.selectedAgent.value.processStatus !== 'closed'
-    && (!navigation.selectedAgent.value.exitedAt || navigation.selectedAgent.value.interfaceMode === 'integrated')
     ? navigation.selectedAgent.value.id : null);
   watch([() => route.fullPath, navigation.activeTerminalId, activeAgentId], ([path, terminalId, agentId], [previousPath, previousTerminalId, previousAgentId]) => {
     // Only follow an exit on the page being viewed, not an invalid saved link.

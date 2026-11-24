@@ -1483,11 +1483,12 @@ export class IntegratedAgentService {
     if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every Integrated agent');
   }
 
-  async reconcile(): Promise<{ checked: number; failed: number; unreachable: number }> {
+  async reconcile(): Promise<{ checked: number; failed: number; unreachable: number; failedProcessIds: string[] }> {
     const rows = this.database.connection.prepare(`
       select process_id, harness, resume_id from sessions
       where interface_mode = 'integrated' and exited_at is null and process_id is not null
     `).all() as Array<{ process_id: string; harness: string; resume_id: string | null }>;
+    const failedProcessIds: string[] = [];
     const results = await Promise.all(rows.map(async (row): Promise<'ok' | 'failed' | 'unreachable'> => {
       const unsupported = !presetHarnessInput.safeParse(row.harness).success;
       if (
@@ -1516,14 +1517,16 @@ export class IntegratedAgentService {
         }
       }
       const now = new Date().toISOString();
-      this.database.connection.prepare(`update processes set status = 'failed', exited_at = coalesce(exited_at, ?), updated_at = ? where id = ?`).run(now, now, row.process_id);
+      const updated = this.database.connection.prepare(`update processes set status = 'failed', exited_at = coalesce(exited_at, ?), updated_at = ? where id = ? and status = 'running'`).run(now, now, row.process_id).changes;
       this.database.connection.prepare(`update sessions set exited_at = coalesce(exited_at, ?) where process_id = ?`).run(now, row.process_id);
+      if (updated > 0 && !unsupported) failedProcessIds.push(row.process_id);
       return 'failed';
     }));
     return {
       checked: rows.length,
       failed: results.filter((result) => result === 'failed').length,
-      unreachable: results.filter((result) => result === 'unreachable').length
+      unreachable: results.filter((result) => result === 'unreachable').length,
+      failedProcessIds
     };
   }
 

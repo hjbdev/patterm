@@ -119,7 +119,6 @@ async function main(): Promise<void> {
     assert.equal(memoryPushSupported('codex'), true);
     assert.equal(memoryPushSupported('claude', 'linux'), true);
     assert.equal(memoryPushSupported('claude', 'win32'), false, 'Claude\'s hook needs a POSIX shell');
-    assert.equal(memoryPushSupported('rawpty'), false);
 
     // Claude's hook prints what the host left exactly once, from a path with
     // spaces and quotes.

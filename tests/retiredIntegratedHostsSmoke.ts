@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)').run('project', 'Test', directory, now, now);
     add('upgrade');
     await host('upgrade');
-    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 1, unreachable: 0 });
+    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 1, unreachable: 0, failedProcessIds: [] });
     assert.equal(state('upgrade').status, 'failed');
     assert.ok(state('upgrade').exited_at);
     assert.deepEqual(requests, ['upgrade:stop']);
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
     add('child', 'amp', 'parent');
     await host('child');
     const terminal = { request: async () => { throw new Error('Integrated hosts never use PTY stop'); } } as unknown as TerminalService;
-    await new CloseProcessAction(database, terminal, undefined, service).execute('parent');
+    await new CloseProcessAction(database, terminal, service).execute('parent');
     assert.equal(state('child').status, 'closed');
     assert.equal(state('parent').status, 'closed');
     assert.equal(stopSupported, 1, 'a retired child no longer blocks closing its supported parent');
@@ -113,7 +113,7 @@ async function main(): Promise<void> {
     add('refusing');
     await host('refusing');
     refuse = true;
-    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 0, unreachable: 1 });
+    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 0, unreachable: 1, failedProcessIds: [] });
     assert.equal(state('refusing').status, 'running', 'a host that refused cleanup is not marked stopped');
     await assert.rejects(service.stop('refusing'), /Could not stop unsupported Integrated hosts/);
     await assert.rejects(service.stopAll(), /Could not stop every Integrated agent/);

@@ -117,8 +117,13 @@ async function main(): Promise<void> {
     const bots = { allows: (botId: string | null, projectId: string) => botId === 'ops' && projectId === 'p' };
 
     let liveSnapshot: Record<string, unknown> = snapshot(liveRows);
+    const integratedPrompts: Array<{ processId: string; text: string }> = [];
     const integrated = {
-      prompt: async (_processId: string, input: string | { text: string }) => (typeof input === 'string' ? input : input.text).includes('maybe') ? { delivery: 'uncertain', message_id: null } : {},
+      prompt: async (processId: string, input: string | { text: string }) => {
+        const text = typeof input === 'string' ? input : input.text;
+        integratedPrompts.push({ processId, text });
+        return text.includes('maybe') ? { delivery: 'uncertain', message_id: null } : {};
+      },
       conversation: async (processId: string) => processId === 'proc-oc' ? openCodeSnapshot : liveSnapshot,
       olderMessages: async (_processId: string, cursor: string) => {
         if (cursor === 'native-1') return { messages: { data: nativeRows }, cursor: 'archive:1' };
@@ -212,15 +217,15 @@ async function main(): Promise<void> {
     assert.equal(pending.status, 'watching');
     const listed = (await registry.callPublic('timer_list', {}, worker) as Array<{ timer_id: string; kind: string; pattern?: string; owner_process_id: string }>).find((timer) => timer.timer_id === pending.timer_id);
     assert.deepEqual([listed?.kind, listed?.pattern, listed?.owner_process_id], ['output', 'ready on', 'proc-tui']);
-    const inputsBefore = terminalInputs.length;
+    const inputsBefore = integratedPrompts.length;
     ptyOutput.set('pty-serve', 'compiling\nready on http://localhost:5173');
-    for (let attempt = 0; attempt < 40 && terminalInputs.length === inputsBefore; attempt += 1) await wait(50);
-    assert.equal(terminalInputs.length, inputsBefore + 1, 'the watch calls its owner back');
-    assert.match(String(terminalInputs.at(-1)?.text), /^\[Patterm wait_for_pattern timer_\w+: matched\]\n- proc-serve "serve": printed "ready on": ready on http:\/\/localhost:5173\n.*\nopen the app$/);
+    for (let attempt = 0; attempt < 40 && integratedPrompts.length === inputsBefore; attempt += 1) await wait(50);
+    assert.equal(integratedPrompts.length, inputsBefore + 1, 'the watch calls its owner back');
+    assert.match(String(integratedPrompts.at(-1)?.text), /^\[Patterm wait_for_pattern timer_\w+: matched\]\n- proc-serve "serve": printed "ready on": ready on http:\/\/localhost:5173\n.*\nopen the app$/);
     const cancelled = await watch({ process_id: 'proc-serve', pattern: 'never printed' });
     await registry.callPublic('timer_cancel', { timer_id: cancelled.timer_id }, worker);
     await wait(1200);
-    assert.equal(terminalInputs.length, inputsBefore + 1, 'a cancelled watch sends nothing');
+    assert.equal(integratedPrompts.length, inputsBefore + 1, 'a cancelled watch sends nothing');
     db.prepare(`delete from processes where id in ('proc-dry-run', 'proc-serve')`).run();
 
     // The first page: newest text rows, the latest answer, state, and report.
@@ -410,9 +415,9 @@ async function main(): Promise<void> {
     await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Helper done.' }, { identity: 'mcp-ops-helper' });
     assert.deepEqual(delivered.at(-1), { from: 'proc-ops-helper', message: 'Helper done.', bot: 'ops' }, 'the parent alias goes through the relay');
     await assert.rejects(registry.callPublic('send_message', { target_process_id: 'parent', message: 'x'.repeat(8 * 1024 + 1) }, { identity: 'mcp-ops-helper' }), /limited to 8 KB/);
-    const typed = terminalInputs.length;
+    const typed = integratedPrompts.length;
     await assert.rejects(registry.callPublic('send_message', { target_process_id: 'parent', message: 'Out of purview.' }, { identity: 'mcp-ops-stray' }), /outside the current caller scope/);
-    assert.deepEqual([delivered.length, terminalInputs.length], [relayed + 1, typed], 'a refused message reaches neither the relay nor the terminal');
+    assert.deepEqual([delivered.length, integratedPrompts.length], [relayed + 1, typed], 'a refused message reaches neither the relay nor the agent');
 
     // The assistant's own children reach it through "parent" under the same rules.
     const viaParent = await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Child update.' }, { identity: 'mcp-helper' }) as { event_id: string };
@@ -424,7 +429,7 @@ async function main(): Promise<void> {
     assert.deepEqual([maybe.ok, maybe.delivery], [false, 'uncertain'], 'an uncertain delivery to an agent is not reported as sent');
     assert.equal(JSON.parse((db.prepare(`select metadata from timeline_events where id = ?`).get(maybe.event_id) as { metadata: string }).metadata).delivery, 'uncertain');
     const asked = await registry.callPublic('send_message', { target_process_id: 'proc-other', message: 'What changed?' }, assistantIdentity) as { event_id: string };
-    assert.match(String(terminalInputs.at(-1)?.text), /^\[message from proc-assistant\]\nWhat changed\?\n\n\(Reply with send_message target_process_id "assistant"\.\)$/);
+    assert.match(String(integratedPrompts.at(-1)?.text), /^\[message from proc-assistant\]\nWhat changed\?\n\n\(Reply with send_message target_process_id "assistant"\.\)$/);
     assert.ok(asked.event_id);
 
     // A reply answers the assistant's report timer in the same message,
@@ -432,15 +437,15 @@ async function main(): Promise<void> {
     // does not answer it.
     const timer = await registry.callPublic('timer_fire_when_reported_any', { watched: ['proc-other'], body: 'Check the answer.' }, assistantIdentity) as { timer_id: string };
     await wait(20);
-    const before = terminalInputs.length;
+    const before = integratedPrompts.length;
     await registry.callPublic('send_message', { target_process_id: 'assistant', message: 'uncertain reply' }, { identity: 'mcp-other' });
     await wait(700);
-    assert.equal(terminalInputs.length, before, 'an uncertain delivery is not a reply');
+    assert.equal(integratedPrompts.length, before, 'an uncertain delivery is not a reply');
     await registry.callPublic('send_message', { target_process_id: 'assistant', message: 'The schema changed.' }, { identity: 'mcp-other' });
     assert.equal(delivered.at(-1)?.from, 'proc-other');
     assert.match(delivered.at(-1)!.message, new RegExp(`^The schema changed\\.\\n\\n\\[Patterm timer ${timer.timer_id}: condition met\\]\\n- proc-other "other": sent you a message at \\S+: The schema changed\\.\\nCheck the answer\\.$`));
     await wait(700);
-    assert.equal(terminalInputs.length, before, 'no separate callback repeats the reply');
+    assert.equal(integratedPrompts.length, before, 'no separate callback repeats the reply');
     assert.ok(!(await registry.callPublic('timer_list', {}, assistantIdentity) as Array<{ timer_id: string }>).some((entry) => entry.timer_id === timer.timer_id));
     console.log('agent results smoke passed');
   } finally {

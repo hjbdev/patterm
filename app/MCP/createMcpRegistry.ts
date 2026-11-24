@@ -107,7 +107,7 @@ interface RegistryServices {
   figureTemplates?: FigureTemplateService;
   // Draws pages off screen for html_preview; only the desktop app has one.
   pagePreviewer?: PagePreviewer;
-  settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface' | 'figuresEnabled' | 'updateFiguresEnabled'>;
+  settings?: Pick<SettingsService, 'figuresEnabled' | 'updateFiguresEnabled'>;
   harnessPresets?: HarnessPresetService;
   modelCatalog?: HarnessModelCatalogService;
   // Hidden Integrated tools are called only by the UI, so their prompts count
@@ -150,7 +150,7 @@ const assistantFocusItemsInput = z.object({
   offset: z.number().int().min(0).default(0)
 }).strict();
 const spawnAgentInput = z.object({
-  agent: z.enum(['claude', 'codex', 'opencode', 'agy', 'rawpty']).optional(),
+  agent: z.enum(['claude', 'codex', 'opencode', 'agy']).optional(),
   conversation_id: z.string().min(1).optional(),
   preset: z.string().trim().min(1).max(160).optional(),
   model: z.string().trim().min(1).max(160).optional(),
@@ -347,7 +347,6 @@ const terminalProcessScroll = z.object({
 const historyResumeInput = z.object({
   conversation_id: z.string().min(1),
   project_id: z.string().min(1).optional(),
-  interface_mode: z.enum(['tui', 'integrated']).optional(),
   replace_process_id: z.string().min(1).optional()
 });
 const restartAgentSessionInput = z.object({ process_id: z.string().min(1), project_id: z.string().min(1).optional(), force: z.boolean().optional() });
@@ -536,7 +535,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       description: 'Spawn a new Patterm-managed sub-agent, optionally with a configured model preset, or resume an imported conversation by conversation_id.',
       inputSchema: { type: 'object', anyOf: [{ required: ['agent'] }, { required: ['preset'] }, { required: ['conversation_id'] }] },
       usageNotes: [
-        'Pass agent (claude, codex, opencode, agy, or rawpty), a preset, or a conversation_id. harness_list shows which agents are installed.',
+        'Pass agent (claude, codex, opencode, or agy), a preset, or a conversation_id. harness_list shows which agents are installed.',
         'Any agent can spawn child agents, including a sub-agent splitting up its own delegated task. The new agent is your child: it reports to you, and closing you closes it.',
         'Spawn only for work within your current task. A delegated sub-agent must not start unrelated work; ask your parent or the user first.',
         'Do not use this to replace an unavailable host-native subagent; continue planning directly unless the user explicitly requests Patterm delegation.',
@@ -615,14 +614,6 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       if (!image) throw new Error('This image is no longer stored');
       return image;
     }
-  );
-  registry.register(
-    { name: 'settings_agent_interface_get', namespace: 'settings', description: 'Read the saved interface for new agent conversations.', hidden: true, changes: [], inputSchema: { type: 'object' } },
-    () => ({ interface_mode: requireSettings(services).agentInterface() })
-  );
-  registry.register(
-    { name: 'settings_agent_interface_update', namespace: 'settings', description: 'Save the interface for later agent conversations.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['interface_mode'] } },
-    (args) => ({ interface_mode: requireSettings(services).updateAgentInterface(z.object({ interface_mode: z.enum(['tui', 'integrated']) }).parse(args).interface_mode) })
   );
   registry.register(
     { name: 'settings_figures_get', namespace: 'settings', description: 'Read whether agents can save figures for their replies.', hidden: true, changes: [], inputSchema: { type: 'object' } },
@@ -1466,12 +1457,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     );
   };
   const renderFigure = new RenderHtmlFigureAction(services.transcriptImages, services.figureVideos, services.figureTemplates);
-  const figureUnavailable = (tool: string) => (context: McpCallContext): string | null => {
-    if (services.settings?.figuresEnabled() === false) return `${tool} is turned off in Patterm settings. Answer in text instead.`;
-    // Only Integrated transcripts draw pages. OpenCode's shared helpers
-    // carry no identity and serve only Integrated sessions.
-    const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
-    return session && session.interface_mode !== 'integrated' ? `${tool} works only in Integrated mode. Answer in text instead.` : null;
+  const figureUnavailable = (tool: string) => (): string | null => {
+    return services.settings?.figuresEnabled() === false ? `${tool} is turned off in Patterm settings. Answer in text instead.` : null;
   };
   const html = { type: 'string', description: `A complete, self-contained HTML document, up to ${MAX_FIGURE_HTML_CHARS} characters. Inline <style> and <script>; CDN scripts load. Local images in <img src> or CSS url(), and local MP4 (H.264) or WebM videos in <video src> or <source src> (up to ${MAX_FIGURE_VIDEO_BYTES / 1024 / 1024} MB each; add controls), must be in your working directory.` };
   registry.register({
@@ -1950,7 +1937,6 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       return resumeConversationAgent.execute({
         conversation_id: input.conversation_id,
         project_id: projectId,
-        interface_mode: input.interface_mode,
         ...(input.replace_process_id ? { replace_process_id: processFor(context, input.replace_process_id) } : {})
       });
     }
@@ -2260,7 +2246,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     {
       name: 'harness_list',
       namespace: 'harness',
-      description: 'List discovered agent-harness installations (claude, codex, opencode, agy, rawpty) with status and version.',
+      description: 'List discovered agent-harness installations (claude, codex, opencode, agy) with status and version.',
       inputSchema: { type: 'object' }
     },
     () => ({ harnesses: services.workbench.listHarnesses() })

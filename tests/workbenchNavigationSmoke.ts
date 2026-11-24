@@ -8,7 +8,7 @@ const projects: ProjectWorkbench[] = [{
 }];
 const liveProject: ProjectWorkbench = {
   ...projects[0]!,
-  projectSessions: [{ id: 'session-a', processId: 'proc-a', ptyProcessId: 'pty-a', exitedAt: null } as ProjectWorkbench['projectSessions'][number]],
+  projectSessions: [{ id: 'session-a', processId: 'proc-a', exitedAt: null } as ProjectWorkbench['projectSessions'][number]],
   processes: []
 };
 rememberProjectLocation({ name: 'agent', fullPath: '/projects/project-a/agents/session-a', params: { projectId: 'project-a', sessionId: 'session-a' } });

@@ -21,11 +21,9 @@ function session(id: string, parentId: string | null = null): SessionRecord {
   return {
     id,
     parentId,
-    ptyProcessId: `pty-${id}`,
     processId: `process-${id}`,
     worktreeId: null,
     harness: 'claude',
-    interfaceMode: 'tui',
     sessionRole: parentId ? 'child' : 'orchestrator',
     resumeStatus: 'unknown',
     activity: 'idle',

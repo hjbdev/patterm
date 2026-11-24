@@ -738,19 +738,6 @@ fn attach_auth(
 
 // --- One-shot modes ---
 
-fn run_open_url(cfg: &EnvConfig, args: &[String]) -> Result<()> {
-    if args.len() != 1 {
-        bail!("usage: xdg-open <url>");
-    }
-    let sock = PersistentSocket::new(cfg.socket_path.clone(), None);
-    let mut req = Map::new();
-    req.insert("op".to_string(), json!("open-url"));
-    req.insert("url".to_string(), json!(&args[0]));
-    attach_auth(&mut req, cfg, false, false, None)?;
-    sock.request(req)?;
-    Ok(())
-}
-
 fn run_print_headers(cfg: &EnvConfig, op: &str, args: &[String]) -> Result<()> {
     let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let sock = PersistentSocket::new(cfg.socket_path.clone(), None);
@@ -1562,7 +1549,6 @@ fn main() {
     let rest = if args.len() > 1 { &args[1..] } else { &[] };
 
     let res = match mode {
-        "--open" => run_open_url(&cfg, rest),
         "--mcp-headers" => run_print_headers(&cfg, "mcp-headers", rest),
         "--mcp-proxy-headers" => run_print_headers(&cfg, "mcp-proxy-headers", rest),
         "--mcp-exec" => run_mcp_exec(&cfg, rest),
@@ -1572,10 +1558,6 @@ fn main() {
 
     if let Err(err) = res {
         let label = match mode {
-            "--open" => {
-                eprintln!("xdg-open: {err}");
-                process::exit(1);
-            }
             "--mcp-headers" | "--mcp-proxy-headers" | "--mcp-exec" | "--mcp-bridge" => &mode[2..],
             _ => "shim",
         };

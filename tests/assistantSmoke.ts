@@ -182,7 +182,6 @@ async function main(): Promise<void> {
     assert.equal(concurrent.process_id, 'proc-assistant-1');
     assert.equal(launches[0]!.input.harness, 'codex');
     assert.equal(launches[0]!.input.session_role, 'assistant');
-    assert.equal(launches[0]!.input.interface_mode, 'integrated');
     assert.equal(launches[0]!.input.model, 'gpt-fast');
     assert.equal(launches[0]!.input.project_id, ASSISTANT_PROJECT_ID);
     assert.ok(fs.existsSync(path.join(dir, 'assistant')));

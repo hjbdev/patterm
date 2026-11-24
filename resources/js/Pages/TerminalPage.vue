@@ -1,18 +1,17 @@
 <template>
-  <div ref="workspace" class="relative flex h-full min-h-0 flex-col bg-background" :class="activeTerminalId && !phoneLayout && !selectedAgent ? 'py-6' : ''">
-    <PhoneAgentHeader v-if="phoneLayout && activeProject && (route.name === 'agent' || route.name === 'process')" :project-id="activeProject.project.id" :session="selectedAgent" :process="selectedProcess" :active-worktree-id="diffWorktree?.id ?? null" :folded="keyboardOpen && Boolean(activeTerminalId) && !integratedAgent" @peek="openPeek" @open-worktree="openWorktree" />
+  <div ref="workspace" class="relative flex h-full min-h-0 flex-col bg-background" :class="activeTerminalId && !phoneLayout ? 'py-6' : ''">
+    <PhoneAgentHeader v-if="phoneLayout && activeProject && (route.name === 'agent' || route.name === 'process')" :project-id="activeProject.project.id" :session="selectedAgent" :process="selectedProcess" :active-worktree-id="diffWorktree?.id ?? null" :folded="keyboardOpen && Boolean(activeTerminalId)" @peek="openPeek" @open-worktree="openWorktree" />
     <PhoneServerCard v-if="phoneLayout && activeProject && route.name === 'process' && selectedProcess" v-show="!keyboardOpen" :project-id="activeProject.project.id" :process="selectedProcess" />
     <!-- The row spans the page, so an open peek meets its edge at full height;
          a terminal keeps its own width, centred beside it. -->
     <div v-if="activeTerminalId || integratedAgent" class="relative flex min-h-0 w-full flex-1 bg-background">
       <div
         class="relative mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col"
-        :class="activeTerminalId && selectedAgent && !phoneLayout && 'pb-6'"
         :style="activeTerminalId ? { maxWidth: 'var(--patterm-terminal-max-width, 960px)' } : undefined"
       >
-        <!-- The agent's context, above its conversation or terminal and lined up with it. -->
-        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" :inner="integratedAgent ? 'max-w-[var(--patterm-conversation-max-width,50rem)]' : '!px-0'" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" @open-worktree="openWorktree" />
-        <div class="relative min-h-0 flex-1" :class="!phoneLayout && selectedAgent && activeTerminalId && !integratedAgent && 'mt-3'">
+        <!-- The agent's context, above its conversation and lined up with it. -->
+        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" inner="max-w-[var(--patterm-conversation-max-width,50rem)]" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" @open-worktree="openWorktree" />
+        <div class="relative min-h-0 flex-1">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
         <IntegratedConversation v-if="pageActive && integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-bots="mentionBots" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
@@ -20,21 +19,6 @@
         <TerminalPane v-show="!integratedAgent" ref="terminalPane" title="Terminal" :process-id="!pageActive || integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
         </div>
         <TerminalKeyRow v-if="keyboardOpen && activeTerminalId && !integratedAgent" :ctrl-held="terminalPane?.ctrlHeld ?? false" @key="terminalPane?.pressKey($event)" />
-        <!-- TUI agents have no composer; their snooze and close request sit under the terminal. -->
-        <SnoozeCard
-          v-if="activeTerminalId && !integratedAgent && selectedAgent?.processId && selectedAgent.snooze && !selectedAgent.exitedAt"
-          :process-id="selectedAgent.processId"
-          :snooze="selectedAgent.snooze"
-          class="mt-3 w-full"
-        />
-        <CloseRequestCard
-          v-if="activeTerminalId && !integratedAgent && selectedAgent?.processId && selectedAgent.closeRequest && !selectedAgent.exitedAt"
-          :key="`${selectedAgent.processId}:${selectedAgent.closeRequest.requestedAt}`"
-          :process-id="selectedAgent.processId"
-          :request="selectedAgent.closeRequest"
-          :subagents="closeSubagents"
-          class="mt-3 w-full"
-        />
       </div>
       <aside v-if="docked && peek && selectedAgent" ref="panel" tabindex="-1" role="complementary" :aria-label="peekLabel" class="relative z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :style="{ width: `${paneWidth}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close">
         <div role="separator" tabindex="0" aria-label="Resize peek" aria-orientation="vertical" :aria-valuenow="paneWidth" :aria-valuemin="PEEK_WIDTH.min" :aria-valuemax="PEEK_WIDTH.max" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(paneWidth + 20)" @keydown.right.prevent="setWidth(paneWidth - 20)" />
@@ -70,8 +54,6 @@ import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount,
 defineOptions({ name: 'TerminalPage' });
 import AgentEmptyState from '../Components/AgentEmptyState.vue';
 import { allAgents } from '../lib/allAgents';
-import SnoozeCard from '../Components/SnoozeCard.vue';
-import CloseRequestCard from '../Components/CloseRequestCard.vue';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import TerminalPane from '../Components/TerminalPane.vue';
 import TerminalKeyRow from '../Components/TerminalKeyRow.vue';
@@ -103,7 +85,7 @@ const terminalPane = ref<InstanceType<typeof TerminalPane> | null>(null);
 const keyboardOpen = useSoftKeyboard();
 const integratedAgent = computed(() => {
   const agent = selectedAgent.value;
-  return agent?.interfaceMode === 'integrated' && agent.processId
+  return agent?.processId
     ? { processId: agent.processId, exited: Boolean(agent.exitedAt) }
     : null;
 });

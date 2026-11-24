@@ -264,7 +264,6 @@ test('workspace routines run in the internal project with cross-project reach', 
   const launch = fixture.launches[0]!;
   assert.equal(launch.project_id, 'project_assistant');
   assert.equal(launch.session_role, 'routine');
-  assert.equal(launch.interface_mode, 'integrated');
   assert.ok(launch.cwd && fs.existsSync(launch.cwd));
 });
 

@@ -47,7 +47,6 @@ async function main(): Promise<void> {
   try {
     const discovery = new HarnessDiscoveryService(harnessProviders, {
       env: isWindows ? { PATH: binDir, PATHEXT: '.COM;.EXE;.BAT;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot } : { PATH: binDir },
-      shell: '/bin/sh',
       versionTimeoutMs: 4000
     });
 
@@ -59,14 +58,11 @@ async function main(): Promise<void> {
     assert.equal(claude?.version, '1.2.3', 'claude version parsed from banner');
     assert.ok(claude?.executablePath?.endsWith(path.join('bin', isWindows ? 'claude.cmd' : 'claude')), 'claude path points at the fixture');
     assert.ok(discovered.every((row) => (row.harness as string) !== 'amp'), 'Amp is not discovered even when installed');
+    assert.ok(discovered.every((row) => (row.harness as string) !== 'rawpty'), 'rawpty is no longer discovered');
 
     assert.equal(byId.get('codex')?.status, 'missing', 'absent codex is missing');
     assert.equal(byId.get('opencode')?.status, 'missing', 'absent opencode is missing');
-
-    const rawpty = byId.get('rawpty');
-    assert.equal(rawpty?.status, 'available', 'raw terminal is always available');
-    assert.equal(rawpty?.executablePath, '/bin/sh', 'raw terminal reports the configured shell');
-    assert.equal(rawpty?.version, null, 'raw terminal has no version');
+    assert.equal(byId.get('agy')?.status, 'missing', 'absent agy is missing');
 
     // Persistence: the action upserts one row per harness and is idempotent.
     const database = new DatabaseService(tempDir);
@@ -113,9 +109,10 @@ async function main(): Promise<void> {
     });
 
     const viaList = (await registry.call('harness_list', {})) as { harnesses: Array<{ harness: string }> };
-    assert.ok(viaList.harnesses.some((row) => row.harness === 'rawpty'), 'harness.list surfaces rawpty');
+    assert.ok(!viaList.harnesses.some((row) => row.harness === 'rawpty'), 'harness_list no longer surfaces rawpty');
     assert.ok(!viaList.harnesses.some((row) => row.harness === 'amp'), 'harness_list hides stale Amp installations');
     await assert.rejects(registry.call('spawn_agent', { agent: 'amp' }), /Invalid enum value/);
+    await assert.rejects(registry.call('spawn_agent', { agent: 'rawpty' }), /Invalid enum value/);
 
     const viaDiscover = (await registry.call('harness_discover', {})) as { harnesses: Array<{ harness: string }> };
     assert.equal(viaDiscover.harnesses.length, harnessProviders.length, 'harness.discover re-runs discovery');

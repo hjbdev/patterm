@@ -111,7 +111,7 @@ export class StatusLabelActions {
     return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.status, processes.status_label_id, processes.status_label_set_by, sessions.id as session_id
       from processes
       left join sessions on sessions.process_id = processes.id
-      where processes.id = ? or processes.pty_process_id = ?
-      order by processes.status = 'running' desc, sessions.started_at desc limit 1`).get(processId, processId) as AgentProcess | undefined) ?? null;
+      where processes.id = ?
+      order by processes.status = 'running' desc, sessions.started_at desc limit 1`).get(processId) as AgentProcess | undefined) ?? null;
   }
 }

@@ -134,18 +134,11 @@ fn queued_submissions_preserve_input_order_and_stop_cancels_them() {
 }
 
 #[test]
-fn raw_agent_input_waits_but_bracketed_paste_submits_immediately() {
+fn paste_submits_immediately_with_or_without_bracketed_paste() {
     use alacritty_terminal::vte::ansi::Processor;
     let (mut manager, id) = fixture();
-    manager.session(&id).unwrap().kind = "agent".into();
     manager.write_input(serde_json::json!({ "process_id": id, "kind": "paste", "text": "raw fallback", "submit": true })).unwrap();
-    assert_eq!(
-        manager.session(&id).unwrap().pending_input.len(),
-        1,
-        "paste without terminal support still needs raw-input settling"
-    );
-    manager.session(&id).unwrap().pending_input.clear();
-    manager.session(&id).unwrap().input_deadline = None;
+    assert!(manager.session(&id).unwrap().pending_input.is_empty());
     let mut parser: Processor = Processor::new();
     parser.advance(
         &mut *manager.session(&id).unwrap().terminal.lock(),

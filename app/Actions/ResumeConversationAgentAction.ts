@@ -16,7 +16,6 @@ export const resumeConversationAgentInput = z.object({
   parent_process_id: z.string().min(1).nullable().default(null),
   name: z.string().optional(),
   initial_prompt: z.string().optional(),
-  interface_mode: z.enum(['tui', 'integrated']).optional(),
   replace_process_id: z.string().min(1).optional()
 });
 
@@ -77,8 +76,7 @@ export class ResumeConversationAgentAction {
         parent_process_id: input.parent_process_id,
         session_role: input.parent_process_id ? 'child' : 'orchestrator',
         name: input.name?.trim() || conversation.title?.trim() || undefined,
-        initial_prompt: input.initial_prompt,
-        interface_mode: input.interface_mode ?? this.savedInterface(conversation.sessionId)
+        initial_prompt: input.initial_prompt
       },
       { resume_id: resumeId, conversation_id: conversation.id }
     );
@@ -94,7 +92,7 @@ export class ResumeConversationAgentAction {
     return { ...launched, replaced_process_id: replace };
   }
 
-  // Only a running, empty Integrated session in the same project is replaced.
+  // Only a running, empty agent session in the same project is replaced.
   // Anything else stays open beside the resumed conversation.
   private async replaceable(processId: string, projectId: string): Promise<boolean> {
     if (!this.replacement) return false;
@@ -109,12 +107,6 @@ export class ResumeConversationAgentAction {
     } catch {
       return false;
     }
-  }
-
-  private savedInterface(sessionId: string | null): 'tui' | 'integrated' | undefined {
-    if (!sessionId) return undefined;
-    const row = this.database.connection.prepare('select interface_mode from sessions where id = ?').get(sessionId) as { interface_mode: string } | undefined;
-    return row?.interface_mode === 'tui' || row?.interface_mode === 'integrated' ? row.interface_mode : undefined;
   }
 
   private runningProcess(provider: string, resumeId: string): string | null {

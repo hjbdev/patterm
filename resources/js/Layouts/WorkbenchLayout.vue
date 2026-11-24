@@ -470,8 +470,7 @@ const commandContext = computed(() => ({
 function selectAgentSession(session: SessionRecord): void {
   const projectId = ownerProjectId(session.id);
   if (!projectId || session.processStatus === 'closed') return;
-  if (session.interfaceMode === 'integrated') void router.push({ name: 'agent', params: { projectId, sessionId: session.id } });
-  else if (!session.exitedAt && session.ptyProcessId) selectTerminal(projectId, session.ptyProcessId);
+  void router.push({ name: 'agent', params: { projectId, sessionId: session.id } });
 }
 
 function selectAgentProcess(process: ProcessRecord): void {

@@ -152,8 +152,7 @@ export class RestartAgentSessionAction {
           ...target,
           actor_id: 'user',
           // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
-          name: source.display_name ?? undefined,
-          interface_mode: 'integrated'
+          name: source.display_name ?? undefined
         }, {
           resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id, reconnect_mcp: true,
           // A live native report wins even if saving its latest change failed.

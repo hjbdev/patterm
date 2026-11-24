@@ -474,8 +474,6 @@ export class RoutineService {
       worktree_id: row.worktree_id,
       actor_id: null,
       session_role: workspace ? 'routine' : 'orchestrator',
-      // Workspace runs have no project tab, so they open as Integrated conversations on the Routines page.
-      ...(workspace ? { interface_mode: 'integrated' as const } : {}),
       name: row.name,
       initial_prompt: runInstructions(row, scheduledFor, prompt, priorRuns)
     };

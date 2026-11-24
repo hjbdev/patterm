@@ -24,7 +24,6 @@ interface ProcessContext {
   parent_process_id: string | null;
   parent_running: number;
   status: string;
-  integrated: number;
   name: string;
   close_requested_at: string | null;
   close_request_summary: string | null;
@@ -67,9 +66,8 @@ export class CloseRequestActions {
     this.database.connection.prepare(`update processes set close_requested_at = ?, close_request_summary = ? where id = ?`).run(at, summary, process.id);
     this.timeline.append({ event_type: 'agent.close_requested', project_id: process.project_id, session_id: process.session_id, process_id: process.id, actor_type: 'agent', metadata: { summary } });
     this.onChanged();
-    // An Integrated agent is still mid-turn; it announces the request when the
+    // Agents call request_close mid-turn; the request is announced when the
     // turn ends, in place of the turn-finished notice.
-    if (!process.integrated) await this.announce(process.id);
     return { status: 'requested' };
   }
 
@@ -108,13 +106,13 @@ export class CloseRequestActions {
   }
 
   private process(processId: string): ProcessContext | null {
-    return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.parent_process_id, processes.status, sessions.interface_mode = 'integrated' as integrated,
+    return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.parent_process_id, processes.status,
         processes.close_requested_at, processes.close_request_summary,
         coalesce(sessions.title, processes.name) as name, sessions.id as session_id,
         exists(select 1 from processes parent where parent.id = processes.parent_process_id and parent.status = 'running') as parent_running
       from processes
       left join sessions on sessions.process_id = processes.id
-      where processes.id = ? or processes.pty_process_id = ?
-      order by processes.status = 'running' desc, sessions.started_at desc limit 1`).get(processId, processId) as ProcessContext | undefined) ?? null;
+      where processes.id = ?
+      order by processes.status = 'running' desc, sessions.started_at desc limit 1`).get(processId) as ProcessContext | undefined) ?? null;
   }
 }

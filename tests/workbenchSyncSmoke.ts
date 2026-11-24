@@ -26,10 +26,8 @@ function session(overrides: Partial<SessionDto> = {}): SessionDto {
     id: id('session'),
     parentId: null,
     processId: id('process'),
-    ptyProcessId: null,
     worktreeId: null,
     harness: 'claude',
-    interfaceMode: 'integrated',
     sessionRole: 'orchestrator',
     resumeStatus: 'found',
     activity: 'idle',
@@ -137,7 +135,7 @@ function patchSize(): void {
   const full = JSON.stringify(next).length;
   const changes = diffWorkbench(previous, clone(next))!;
   const patch = JSON.stringify(changes).length;
-  assert.ok(full > 300_000, `fixture is the size of a long-lived workbench (${full} bytes)`);
+  assert.ok(full > 250_000, `fixture is the size of a long-lived workbench (${full} bytes)`);
   assert.ok(patch < 2_000, `one activity change is a small patch (${patch} bytes)`);
   const client = clone(previous) as WorkbenchSnapshot;
   const updated = applyWorkbenchChanges(client, wire(changes));

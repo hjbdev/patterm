@@ -219,11 +219,8 @@ async function main(): Promise<void> {
     assert.equal((await service.raise({ processId: 'orphan', source: 'runtime', kind: 'failure', body: 'Enabled again' })).status, 'raised');
     service.resolve({ process_id: 'child' });
 
-    // Bells collapse into one record and default to in-app only for agents.
-    const bell = await service.raise({ processId: 'root', source: 'terminal', kind: 'bell' });
-    assert.equal((bell as { notification: NotificationRecord }).notification.delivery, 'in_app');
-    assert.equal((await service.raise({ processId: 'root', source: 'terminal', kind: 'bell' })).status, 'updated');
-    // Plain process bells are off; their OSC notifications become messages.
+    // Terminal bells are suppressed for agents (no TUI agent terminals) and off by default for plain processes.
+    assert.equal((await service.raise({ processId: 'root', source: 'terminal', kind: 'bell' })).status, 'suppressed');
     assert.equal((await service.raise({ processId: 'shell', source: 'terminal', kind: 'bell' })).status, 'suppressed');
     const build = await service.raise({ processId: 'shell', source: 'terminal', kind: 'attention', body: 'Build finished' });
     const buildRecord = (build as { notification: NotificationRecord }).notification;
@@ -470,7 +467,7 @@ async function main(): Promise<void> {
     await service.raise({ processId: 'root', source: 'mcp', kind: 'attention', title: 'Still open', dedupeKey: null });
     const terminal = { request: async () => ({ ok: true, status: 'stopped' }) } as unknown as TerminalService;
     const before = changes.length;
-    await new CloseProcessAction(database, terminal, undefined, undefined, service).execute('root');
+    await new CloseProcessAction(database, terminal, undefined, service).execute('root');
     assert.equal(service.list({ process_id: 'root' }).total, 0);
     assert.ok(changes.slice(before).some((change) => change.type === 'resolved'));
   } finally {

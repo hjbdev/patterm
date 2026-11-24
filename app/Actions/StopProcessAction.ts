@@ -2,19 +2,17 @@ import type { DatabaseService } from '../Services/DatabaseService';
 import { SessionContextService } from '../Services/SessionContextService';
 import type { TerminalService } from '../Services/TerminalService';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
-import type { OpenCodeServerService } from '../Services/OpenCodeServerService';
 
 interface ProcessRow {
   id: string;
   pty_process_id: string | null;
-  integrated: number;
+  kind: string;
 }
 
 export class StopProcessAction {
   constructor(
     private readonly database: DatabaseService,
     private readonly terminal: TerminalService,
-    private readonly openCode?: Pick<OpenCodeServerService, 'interrupt'>,
     private readonly integrated?: Pick<IntegratedAgentService, 'stop'>,
     // An Integrated agent has no terminal exit to announce its stop.
     private readonly onChanged?: () => void
@@ -26,10 +24,10 @@ export class StopProcessAction {
       return { ok: true, status: 'missing' };
     }
 
-    if (process.integrated) await this.integrated?.stop(process.id);
-    else await this.openCode?.interrupt(process.id);
-    const result = process.integrated ? null : await this.terminal.request('terminal.process.stop', { process_id: process.pty_process_id ?? process.id });
-    const status = !process.integrated && stopStatus(result) === 'exited' ? 'exited' : 'stopped';
+    const isAgent = process.kind === 'agent';
+    if (isAgent) await this.integrated?.stop(process.id);
+    const result = isAgent ? null : await this.terminal.request('terminal.process.stop', { process_id: process.pty_process_id ?? process.id });
+    const status = !isAgent && stopStatus(result) === 'exited' ? 'exited' : 'stopped';
     const now = new Date().toISOString();
     const db = this.database.connection;
 
@@ -43,8 +41,7 @@ export class StopProcessAction {
 
   private resolveProcess(processId: string): ProcessRow | null {
     const process = this.database.connection
-      .prepare(`select processes.id, processes.pty_process_id,
-        exists(select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated') as integrated
+      .prepare(`select processes.id, processes.pty_process_id, processes.kind
         from processes where processes.id = ? or processes.pty_process_id = ? order by processes.status = 'running' desc limit 1`)
       .get(processId, processId) as ProcessRow | undefined;
 

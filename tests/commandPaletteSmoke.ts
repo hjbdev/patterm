@@ -39,7 +39,7 @@ const context = { active_project_id: 'p', active_terminal_id: null, active_tab: 
 const available = rendererCommands(context.active_project_id);
 
 const session = (id: string, extra: Record<string, unknown> = {}) => ({
-  id, parentId: null, processId: `${id}_process`, ptyProcessId: null, worktreeId: null, harness: 'claude', interfaceMode: 'integrated',
+  id, parentId: null, processId: `${id}_process`, worktreeId: null, harness: 'claude',
   sessionRole: 'orchestrator', resumeStatus: 'found', activity: 'idle', lastTitle: null, displayName: id, model: null, reasoning: null,
   startedAt: '2026-10-01T00:00:00.000Z', exitedAt: null, ...extra
 });
@@ -48,7 +48,7 @@ const integratedProject = {
   projectSessions: [
     session('root', { activity: 'working' }),
     session('child', { parentId: 'root', harness: 'codex' }),
-    session('terminal', { interfaceMode: 'tui', ptyProcessId: 'pty_terminal' })
+    session('reviewer', { harness: 'opencode' })
   ],
   processes: [
     { id: 'server', name: 'dev server', kind: 'command', parentProcessId: 'child_process', ptyProcessId: 'pty_server', status: 'running', activity: 'idle' },
@@ -92,12 +92,15 @@ async function main() {
 
   const reusedHandleProject = {
     ...project,
-    processes: [{ id: 'old_preview', name: 'Old preview', ptyProcessId: 'proc_1', status: 'exited' }],
-    projectSessions: [{ id: 'live_session', processId: 'live_agent', ptyProcessId: 'proc_1', displayName: 'Live agent', exitedAt: null }]
+    processes: [
+      { id: 'old_preview', name: 'Old preview', kind: 'command', ptyProcessId: 'proc_1', status: 'exited' },
+      { id: 'live_shell', name: 'Live shell', kind: 'terminal', ptyProcessId: 'proc_1', status: 'running' }
+    ],
+    projectSessions: []
   };
   const reusedHandleApplication = { ...application, currentWorkbench: () => ({ projects: [reusedHandleProject], harnesses: [] }) } as unknown as typeof application;
   const focusedCommands = (await listCommandPaletteCommands(reusedHandleApplication, { ...context, active_terminal_id: 'proc_1' })).commands;
-  assert.ok(focusedCommands.some(command => command.id === 'process:close:live_agent'), 'Close targets the live agent rather than an old terminal with the same PTY handle');
+  assert.ok(focusedCommands.some(command => command.id === 'process:close:live_shell'), 'Close targets the live terminal rather than an old process with the same PTY handle');
   assert.ok(!focusedCommands.some(command => command.id === 'process:close:old_preview'));
 
   // Integrated agents have no terminal: the routed session identifies them.
@@ -113,7 +116,7 @@ async function main() {
   assert.equal(close?.label, 'Close agent');
   assert.match(close?.confirmation ?? '', /1 subagent and 1 process: child, dev server/, 'Closing names what else it closes');
   assert.ok(!listed.some(item => item.id === 'navigate:agent:p:root'), 'The current agent is not listed to switch to');
-  for (const id of ['navigate:agent:p:child', 'navigate:agent:p:terminal', 'navigate:agent:q:elsewhere']) {
+  for (const id of ['navigate:agent:p:child', 'navigate:agent:p:reviewer', 'navigate:agent:q:elsewhere']) {
     assert.ok(listed.some(item => item.id === id), `${id} is listed while an Integrated agent is open`);
   }
   assert.equal(listed.find(item => item.id === 'navigate:agent:p:child')?.hint, 'Subagent of root');
@@ -147,8 +150,8 @@ async function main() {
 
   // Launch choices, resuming, and timers go through the same tools as the rest of the UI.
   calls.length = 0;
-  await runCommandPaletteCommand(recording, { id: 'spawn:agent:codex', context: integratedContext, input: { preset: 'fast', worktree_id: 'w', interface_mode: 'tui', initial_prompt: ' Fix the tests ', name: 'ignored', model: 'ignored' } });
-  assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'codex', project_id: 'p', preset: 'fast', worktree_id: 'w', initial_prompt: 'Fix the tests', interface_mode: 'tui' } }]);
+  await runCommandPaletteCommand(recording, { id: 'spawn:agent:codex', context: integratedContext, input: { preset: 'fast', worktree_id: 'w', initial_prompt: ' Fix the tests ', name: 'ignored', model: 'ignored' } });
+  assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'codex', project_id: 'p', preset: 'fast', worktree_id: 'w', initial_prompt: 'Fix the tests' } }]);
   // Each preset of an installed agent gets a row, found by typing its name.
   const presetSettings = {
     presets: [
@@ -162,7 +165,7 @@ async function main() {
   };
   const withPresets = {
     ...recording,
-    currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: ['claude', 'codex', 'rawpty'].map(harness => ({ harness, status: 'available' })) }),
+    currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: ['claude', 'codex'].map(harness => ({ harness, status: 'available' })) }),
     settings: { harnessPresets: () => presetSettings }
   } as unknown as typeof application;
   const spawnRows = (await listCommandPaletteCommands(withPresets, integratedContext)).commands.filter(item => item.id.startsWith('spawn:agent:') || item.id.startsWith('spawn:preset:'));
@@ -179,8 +182,8 @@ async function main() {
   assert.ok(!rankedCommands(presetRows as CommandDescriptor[], '').length, 'Preset rows stay out of the opening list');
   assert.equal(rankedCommands(presetRows as CommandDescriptor[], '', ['spawn:preset:claude_opus'])[0]?.command.id, 'spawn:preset:claude_opus', 'A preset run before shows under Recent');
   calls.length = 0;
-  await runCommandPaletteCommand(withPresets, { id: 'spawn:preset:claude_opus', context: integratedContext, input: { preset: 'other', interface_mode: 'tui' } });
-  assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'claude', project_id: 'p', preset: 'claude_opus', interface_mode: 'tui' } }]);
+  await runCommandPaletteCommand(withPresets, { id: 'spawn:preset:claude_opus', context: integratedContext, input: { preset: 'other' } });
+  assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'claude', project_id: 'p', preset: 'claude_opus' } }]);
   await assert.rejects(runCommandPaletteCommand(withPresets, { id: 'spawn:preset:gone', context: integratedContext }), /no longer exists/);
   // A paired host keeps its own presets, so its projects get none of these.
   const remoteProject = { ...project, project: { ...project.project, id: 'remote:p', host: 'remote' } };
@@ -190,8 +193,8 @@ async function main() {
   assert.ok(!remoteSpawns.some(item => item.id.startsWith('spawn:preset:') || item.aliases), 'No local preset rows or aliases for a paired host project');
   await assert.rejects(runCommandPaletteCommand(remotePresets, { id: 'spawn:preset:claude_opus', context: remoteContext }), /this host/);
   calls.length = 0;
-  await runCommandPaletteCommand(recording, { id: 'history:resume:conversation_1', context: integratedContext, input: { interface_mode: 'integrated', replace_process_id: 'root_process' } });
-  assert.deepEqual(calls, [{ name: 'history_resume', args: { conversation_id: 'conversation_1', project_id: 'p', interface_mode: 'integrated', replace_process_id: 'root_process' } }]);
+  await runCommandPaletteCommand(recording, { id: 'history:resume:conversation_1', context: integratedContext, input: { replace_process_id: 'root_process' } });
+  assert.deepEqual(calls, [{ name: 'history_resume', args: { conversation_id: 'conversation_1', project_id: 'p', replace_process_id: 'root_process' } }]);
   calls.length = 0;
   for (const action of ['cancel', 'pause', 'resume']) await runCommandPaletteCommand(recording, { id: `timer:${action}:timer_1`, context: integratedContext });
   assert.deepEqual(calls.map(call => call.name), ['timer_cancel', 'timer_pause', 'timer_resume']);

@@ -230,7 +230,7 @@ export function prefetchSession(projectId: string, session: SessionRecord, tier:
   // A paired host's agent, as in `workstation:process_7`, is never read ahead:
   // an older host would treat transcript_only as an ordinary read, which can
   // change the agent's activity or deliver its held prompts.
-  if (session.interfaceMode !== 'integrated' || !processId || processId.includes(':')) return;
+  if (!processId || processId.includes(':')) return;
   const allowed = () => transcriptAllowed(processId, projectId === prefetchState.activeProjectId, tier);
   if (allowed()) {
     enqueue({ key: `transcript\0${processId}`, tier: tier === Tier.Intent ? Tier.Intent : Tier.Transcript, notBefore, eligible: () => live() && allowed(), run: () => readTranscript(processId) });
@@ -256,7 +256,7 @@ export function prefetchProject(projectId: string, tier: Tier, delay = 0, transc
   let remaining = transcriptBudget;
   for (let index = sessions.length - 1; index >= 0 && remaining > 0; index--) {
     const candidate = sessions[index]!;
-    if (candidate.interfaceMode === 'integrated' && candidate.processId && !candidate.processId.includes(':')) {
+    if (candidate.processId && !candidate.processId.includes(':')) {
       transcriptIds.add(candidate.id);
       remaining -= 1;
     }

@@ -5,8 +5,11 @@ import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 import { nativePath, pathsMatch, storedPath } from '../Platform/PathIdentity';
 import { defaultShell, shellArgv } from '../Platform/Shell';
 import type { DatabaseService } from './DatabaseService';
-import type { SpawnSink } from './HarnessLauncher';
 import type { TimelineService } from './TimelineService';
+
+export interface SpawnSink {
+  request(method: string, params: unknown): Promise<unknown>;
+}
 
 export const processCreateInput = z.object({
   project_id: z.string().min(1),

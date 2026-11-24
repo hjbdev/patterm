@@ -7,9 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { ReconcileRuntimeAction } from '../app/Actions/ReconcileRuntimeAction';
 import { StopProcessAction } from '../app/Actions/StopProcessAction';
-import { ProcessLauncher } from '../app/Services/ProcessLauncher';
+import { ProcessLauncher, type SpawnSink } from '../app/Services/ProcessLauncher';
 import { RuntimeReconciler, type LifecycleSource } from '../app/Services/RuntimeReconciler';
-import type { SpawnSink } from '../app/Services/HarnessLauncher';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TimelineService } from '../app/Services/TimelineService';
@@ -132,18 +131,17 @@ async function main(): Promise<void> {
       }
     };
     let changedCount = 0;
-    const unreportedChildExits: string[] = [];
-    const reconciler = new RuntimeReconciler(database, timeline, launcher, null, lifecycleSource, () => {
+    const failedProcesses: Array<{ processId: string; exitCode: number }> = [];
+    const reconciler = new RuntimeReconciler(database, timeline, launcher, lifecycleSource, () => {
       changedCount += 1;
-    }, null, null, [], () => {}, () => {}, (processId) => {
-      unreportedChildExits.push(processId);
+    }, [], (processId, exitCode) => {
+      failedProcesses.push({ processId, exitCode });
     });
     for (const listener of lifecycleListeners) {
       listener({ type: 'terminal-lifecycle', processId: created.pty_process_id, event: 'activity', activity: 'working' });
     }
     const activeProcess = repo.snapshot().projects[0]?.processes.find((process) => process.id === created.process_id);
     assert.equal(activeProcess?.activity, 'working', 'activity frame updates process snapshot');
-    assert.ok((database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at, 'PTY working frame sets turn_started_at');
     assert.equal(activeProcess?.command, 'npm run dev', 'process snapshot exposes editable command text');
     assert.equal(activeProcess?.cwd, projectPath, 'process snapshot exposes editable cwd');
     assert.deepEqual(activeProcess?.argv, [SHELL, ...shellArgs('npm run dev')], 'process snapshot exposes stored argv');
@@ -157,9 +155,9 @@ async function main(): Promise<void> {
         }, 'transient DB locks from background import do not crash lifecycle reconciliation');
       });
       await waitFor(() => {
-        const row = database.connection.prepare(`select activity, turn_started_at from processes where id = ?`).get(created.process_id) as { activity: string; turn_started_at: string | null } | undefined;
-        return row?.activity === 'idle' && row.turn_started_at === null;
-      }, 'locked activity frame is applied after the DB lock clears and clears turn_started_at');
+        const row = database.connection.prepare(`select activity from processes where id = ?`).get(created.process_id) as { activity: string } | undefined;
+        return row?.activity === 'idle';
+      }, 'locked activity frame is applied after the DB lock clears');
 
       withWriterLock(database.dbPath, () => {
         for (const listener of lifecycleListeners) {
@@ -173,65 +171,29 @@ async function main(): Promise<void> {
     } finally {
       database.connection.exec('pragma busy_timeout = 5000');
     }
-    database.connection
-      .prepare(
-        `insert into sessions (id, project_id, session_role, resume_status, started_at, process_id)
-         values (?, ?, 'orchestrator', 'unknown', ?, ?)`
-      )
-      .run('session_activity', projectId, now, created.process_id);
-    const activeSession = repo.snapshot().projects[0]?.projectSessions.find((session) => session.id === 'session_activity');
-    assert.equal(activeSession?.activity, 'idle', 'session activity is derived from the linked process');
     assert.ok(changedCount >= 1, 'activity change notifies renderer refresh');
-    const titleChangesBefore = changedCount;
-    for (const title of ['⠏ Investigating', '⠹ Investigating', '⠸ Investigating', 'Investigating']) {
-      for (const listener of lifecycleListeners) {
-        listener({ type: 'terminal-lifecycle', processId: created.pty_process_id, event: 'title', title });
-      }
-    }
-    assert.equal(changedCount - titleChangesBefore, 1, 'spinner changes do not invalidate the workbench');
-    assert.equal(repo.snapshot().projects[0]?.projectSessions.find(session => session.id === 'session_activity')?.lastTitle, 'Investigating');
-    for (const listener of lifecycleListeners) {
-      listener({ type: 'terminal-lifecycle', processId: created.pty_process_id, event: 'title', title: 'Reviewing results' });
-    }
-    assert.equal(changedCount - titleChangesBefore, 2, 'meaningful title changes still refresh the workbench');
     const failedWorktreeProcess = database.connection
       .prepare(`select status, exit_code, exited_at from processes where id = ?`)
       .get(inWorktree.process_id) as { status: string; exit_code: number | null; exited_at: string | null };
     assert.equal(failedWorktreeProcess.status, 'failed', 'non-zero process exits are marked failed');
     assert.equal(failedWorktreeProcess.exit_code, 127, 'process exit code is stored');
     assert.ok(failedWorktreeProcess.exited_at, 'process exit timestamp is stored');
-    // A child agent that exits cleanly without reporting notifies its parent,
-    // while a child that already reported stays quiet.
-    database.connection.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, pty_process_id, created_at, updated_at)
-      values ('child_unreported', ?, ?, 'agent', 'Unreported child', 'running', 'pty_child_unreported', ?, ?),
-             ('child_reported', ?, ?, 'agent', 'Reported child', 'running', 'pty_child_reported', ?, ?)`)
-      .run(projectId, created.process_id, now, now, projectId, created.process_id, now, now);
-    timeline.append({ event_type: 'agent.reported', project_id: projectId, process_id: 'child_reported', actor_type: 'agent', metadata: { status: 'completed', body: 'done' } });
-    for (const listener of lifecycleListeners) {
-      listener({ type: 'terminal-lifecycle', processId: 'pty_child_unreported', event: 'exit', exitCode: 0 });
-      listener({ type: 'terminal-lifecycle', processId: 'pty_child_reported', event: 'exit', exitCode: 0 });
-    }
-    assert.deepEqual(unreportedChildExits, ['child_unreported'], 'clean exit without report notifies parent');
-    // Startup inventory reconciliation also detects clean unreported child exits.
-    database.connection.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, pty_process_id, created_at, updated_at)
-      values ('child_startup_unreported', ?, ?, 'agent', 'Startup child', 'running', 'pty_child_startup', ?, ?)`)
-      .run(projectId, created.process_id, now, now);
-    database.connection.prepare(`update processes set activity = 'working', turn_started_at = ? where id = ?`).run(now, created.process_id);
-    const startupReconciled = new ReconcileRuntimeAction(database).execute([
-      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'idle', title: 'dev' },
-      { process_id: 'pty_child_startup', status: 'exited', exit_code: 0, activity: 'idle', title: 'Startup child' }
-    ]);
-    assert.ok(startupReconciled.unreportedChildExits.includes('child_startup_unreported'), 'startup reconciliation reports unreported clean child exits');
-    assert.equal((database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at, null, 'startup reconciliation clears turn_started_at when a PTY is idle');
-    // Upgrade path: a persisted idle PTY with a stale turn_started_at that is
-    // now working gets a fresh turn_started_at instead of reusing the old one.
-    const staleTurnStart = '2026-01-01T00:00:00.000Z';
-    database.connection.prepare(`update processes set activity = 'idle', turn_started_at = ? where id = ?`).run(staleTurnStart, created.process_id);
+    assert.deepEqual(failedProcesses, [{ processId: inWorktree.process_id, exitCode: 127 }], 'non-zero process exit notifies failure listener');
+
+    // Startup inventory reconciliation reconnects live non-agent PTYs and reaps legacy TUI agent rows.
+    database.connection.prepare(`insert into processes (id, project_id, kind, name, status, pty_process_id, created_at, updated_at)
+      values ('legacy_tui_agent', ?, 'agent', 'Legacy TUI', 'running', 'pty_legacy_tui', ?, ?)`)
+      .run(projectId, now, now);
+    database.connection.prepare(`insert into sessions (id, project_id, session_role, interface_mode, resume_status, started_at, process_id)
+      values ('session_legacy_tui', ?, 'orchestrator', 'tui', 'unknown', ?, 'legacy_tui_agent')`)
+      .run(projectId, now);
     new ReconcileRuntimeAction(database).execute([
-      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' }
+      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' },
+      { process_id: 'pty_legacy_tui', status: 'running', exit_code: null, activity: 'idle', title: 'Legacy TUI' }
     ]);
-    const refreshedTurn = (database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at;
-    assert.ok(refreshedTurn && refreshedTurn !== staleTurnStart, 'idle-to-working reconnect seeds a fresh turn_started_at');
+    assert.equal((database.connection.prepare(`select activity from processes where id = ?`).get(created.process_id) as { activity: string }).activity, 'working', 'live command PTY reconnects and syncs activity');
+    assert.equal((database.connection.prepare(`select status from processes where id = 'legacy_tui_agent'`).get() as { status: string }).status, 'exited', 'legacy TUI agent process is reaped on startup');
+    assert.ok((database.connection.prepare(`select exited_at from sessions where id = 'session_legacy_tui'`).get() as { exited_at: string | null }).exited_at, 'legacy TUI agent session is marked exited on startup');
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.
@@ -295,8 +257,6 @@ async function main(): Promise<void> {
     };
     assert.equal(stoppedRow.status, 'stopped', 'stop action persists stopped process status');
     assert.ok(stoppedRow.exited_at, 'stop action stores a stopped timestamp');
-    const stoppedSession = database.connection.prepare(`select exited_at from sessions where id = 'session_activity'`).get() as { exited_at: string | null };
-    assert.ok(stoppedSession.exited_at, 'stop action marks linked sessions exited');
 
     const failedReplacement = new ProcessLauncher({ database, timeline, workbench: repo, terminal: {
       request: async () => { throw new Error('replacement spawn failed'); }
@@ -347,11 +307,11 @@ async function main(): Promise<void> {
       database.connection.exec('drop trigger fail_process_update');
     }
 
-    // Startup reconciliation marks leftover running rows dead.
+    // Startup reconciliation marks leftover running processes and legacy TUI sessions dead.
     database.connection
       .prepare(
-        `insert into sessions (id, project_id, session_role, resume_status, started_at, process_id)
-         values (?, ?, 'orchestrator', 'unknown', ?, 'proc_99')`
+        `insert into sessions (id, project_id, session_role, interface_mode, resume_status, started_at, process_id)
+         values (?, ?, 'orchestrator', 'tui', 'unknown', ?, 'proc_99')`
       )
       .run(`session_${randomUUID()}`, projectId, now);
     const reconciled = new ReconcileRuntimeAction(database).execute();

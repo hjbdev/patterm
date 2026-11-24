@@ -12,7 +12,7 @@ import {
   type LaunchChoice,
   type WorkspaceSearchResult
 } from '../lib/paletteSources';
-import type { AgentInterface, ConversationRecord } from '../types';
+import type { ConversationRecord } from '../types';
 
 const RECENT_CONVERSATIONS = 20;
 const SEARCH_LIMIT = 8;
@@ -29,8 +29,7 @@ interface PresetSettings {
 export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<string | null>; query: Ref<string>; searchEnabled: Ref<boolean> }) {
   const { projects, harnesses } = useWorkbench();
   const presetSettings = ref<PresetSettings>({ presets: [], defaultPresetIdByHarness: {} });
-  const savedInterface = ref<AgentInterface>('integrated');
-  const launch = reactive<LaunchChoice>({ harness: '', presetId: null, worktreeId: null, interfaceMode: 'integrated', prompt: '' });
+  const launch = reactive<LaunchChoice>({ harness: '', presetId: null, worktreeId: null, prompt: '' });
   const launchHarnesses = computed(() => launchableHarnesses(harnesses.value));
   const launchPresets = computed(() => presetsFor(launch.harness));
   const launchWorktrees = computed(() => projects.value.find((project) => project.project.id === options.projectId.value)?.worktrees ?? []);
@@ -121,27 +120,21 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
   }
 
   // Each opening starts from the defaults: the agent launched last (or Claude
-  // Code), its default preset, the project directory, and the saved interface.
+  // Code), its default preset, and the project directory.
   function resetLaunch(): void {
     const available = launchHarnesses.value.map((item) => item.harness);
     const harness = [lastHarness(), 'claude', available[0]].find((candidate): candidate is string => Boolean(candidate && available.includes(candidate))) ?? '';
     launch.harness = harness;
     launch.presetId = defaultPreset(harness);
     launch.worktreeId = null;
-    launch.interfaceMode = savedInterface.value;
     launch.prompt = '';
   }
 
   async function loadLaunchSettings(): Promise<void> {
-    const [presets, interfaceSetting] = await Promise.allSettled([
-      harnessPresets<PresetSettings>(),
-      topicCall<{ interface_mode?: unknown }>('settings', 'settings_agent_interface_get', {})
-    ]);
-    if (presets.status === 'fulfilled' && presets.value) presetSettings.value = presets.value;
-    if (interfaceSetting.status === 'fulfilled') {
-      const mode = interfaceSetting.value?.interface_mode;
-      if (mode === 'tui' || mode === 'integrated') savedInterface.value = mode;
-    }
+    try {
+      const presets = await harnessPresets<PresetSettings>();
+      if (presets) presetSettings.value = presets;
+    } catch { /* Presets are optional. */ }
     resetLaunch();
   }
 
@@ -173,7 +166,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
     }
   }
 
-  const conversationCommands = computed(() => options.open.value ? conversationRows(resumableConversations(conversations.value, options.projectId.value), now.value, savedInterface.value) : []);
+  const conversationCommands = computed(() => options.open.value ? conversationRows(resumableConversations(conversations.value, options.projectId.value), now.value) : []);
   const timerCommands = computed(() => options.open.value ? timerRows(timers.value, now.value, options.projectId.value) : []);
   // Live agents are already listed, so search adds only what the list lacks.
   const liveSessionIds = computed(() => options.open.value ? new Set(projects.value.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt).map((session) => session.id))) : new Set<string>());

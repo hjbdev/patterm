@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Integrated mode is now the sole way Patterm runs coding agents (Claude Code,
+  Codex, OpenCode, and Antigravity). User shells and command processes continue
+  to run in the built-in PTY terminal.
+- Bumped the paired-host peer protocol version to 2 and removed `interfaceMode`
+  and `ptyProcessId` from agent session snapshots.
+
+### Removed
+
+- Retired TUI/PTY agent launching, the `rawpty` harness, the Terminal/Integrated
+  interface mode toggle and `agents.interface.v1` setting, the OpenCode TUI
+  theme sync, the TUI `xdg-open` / `--open` URL opener and native OAuth callback
+  replay, the legacy TUI summary fallback, and TUI agent notification channels
+  (`agent_terminal`, `agent_bells`).
+
 ### Added
 
 - Conversation display settings under Settings › Appearance: a 12–22 px font size

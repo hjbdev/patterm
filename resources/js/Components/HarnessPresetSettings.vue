@@ -93,7 +93,7 @@ import type { ProfileLook } from '../lib/faces';
 import { DEFAULT_MODEL, PROFILE_HARNESSES, emptyModelCatalog, fieldsFrom, modelsFor, settingsFrom, settingsSummary, type ModelCatalog, type ProfileFieldsState, type ProfileHarness } from '../lib/profileFields';
 
 type PresetHarness = ProfileHarness;
-type Harness = PresetHarness | 'rawpty';
+type Harness = PresetHarness;
 
 interface HarnessPreset {
   id: string;
