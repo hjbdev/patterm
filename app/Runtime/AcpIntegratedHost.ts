@@ -222,10 +222,10 @@ function stopBackground(): void {
       // finishTools reaches only rows still in the transcript.
       runningTools.clear();
       finishCancellation();
-      state(); publish({ kind: 'pending' });
+      state(); publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
     }, CANCEL_TIMEOUT_MS);
   }
-  state(); publish({ kind: 'pending' });
+  state(); publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
 }
 // Commands that outlive their turn, such as dev servers. Listing them as
 // tasks keeps an idle agent from hibernating (which would kill them) and
@@ -256,6 +256,10 @@ function backgroundTasks(): Row[] {
     const status = command.stopRequested || stoppedToolIds.has(id) ? 'stopped' : state?.status === 'failed' ? 'failed' : 'completed';
     return { id, label: command.label, kind: 'local_bash', status, stoppable: false };
   });
+}
+function runningTaskCount(): number {
+  return [...(subagents?.tasks() ?? []), ...backgroundTasks()]
+    .filter((task) => task.status === 'running' || task.status === 'pending').length;
 }
 function noteModelActivity(): void {
   if (loaded && !failed && !stopping) usage.lastModelActivityAt = new Date().toISOString();
@@ -292,7 +296,7 @@ function fail(error: Error, fatal = true): void {
   failed = fatal;
   permissions.clear();
   finishTools(error.message);
-  status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
+  status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail, backgroundTasks: runningTaskCount() });
 }
 function finishTools(reason: string, pendingOnly = false): void {
   for (const message of [...messages]) {
@@ -722,7 +726,7 @@ function receive(frame: Row): void {
         else backgroundActivity();
         // Running tools are tasks: observers re-read the count that keeps
         // idle hibernation from killing a daemon.
-        if (runningTools.size !== tracked) publish({ kind: 'pending' });
+        if (runningTools.size !== tracked) publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
         state();
       }
       const rawText = !output && (replacesContent || !previous?.text) && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
@@ -835,7 +839,7 @@ async function start(): Promise<void> {
     ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),
     onMessage: upsertSubagentMessage,
     onSubagentDetached: removeSubagentMessages,
-    onTasksChanged: () => publish({ kind: 'pending' })
+    onTasksChanged: () => publish({ kind: 'pending', backgroundTasks: runningTaskCount() })
   });
   for (const row of messages) {
     if (row.kind === 'tool' && row.tool) {
@@ -962,7 +966,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
       publish({ kind: 'turn_boundary', detail: lastTurnBoundaryAt });
     }
     // Background command tasks can't be stopped during a turn.
-    if (runningTools.size) publish({ kind: 'pending' });
+    if (runningTools.size) publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
     // The result arrives only at turn end. Keep the host socket responsive to
     // permissions and cancellation instead of awaiting it in this handler.
     const turn = rpc('session/prompt', { sessionId, prompt: params.prompt }, 0);
@@ -985,7 +989,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
       }
       active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
       subagents?.syncNow();
-      setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending' }); } });
+      setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending', backgroundTasks: runningTaskCount() }); } });
       saveSettings();
     }, (error: Error) => {
       active = false; userEcho = null; promptAnchorId = null;
@@ -1076,7 +1080,7 @@ const server = net.createServer((socket) => {
       const respond = (result: unknown, error?: unknown) => {
         if (!socket.destroyed) socket.write(`${JSON.stringify({ id: request.id, ...(error ? { error: error instanceof Error ? error.message : String(error) } : { result }) })}\n`);
       };
-      if (request.method === 'subscribe') { subscribers.add(socket); respond({ revision }); publish({ kind: 'pending' }); }
+      if (request.method === 'subscribe') { subscribers.add(socket); respond({ revision }); publish({ kind: 'pending', backgroundTasks: runningTaskCount() }); }
       else void handle(String(request.method), request.params ?? {}).then((result) => respond(result), (error) => respond(null, error));
     }
   });

@@ -8,7 +8,7 @@
         <!-- Runs on under the composer's top padding when nothing sits
              between them, so text fades out at the card's edge. -->
         <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
-          <ConversationTranscript ref="transcriptRef" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
+          <ConversationTranscript ref="transcriptRef" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :project-id="projectId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
       </div>
       <section v-if="recoveryError || ended || restartNeedsServer" class="mx-auto mb-3 w-full max-w-[var(--patterm-conversation-max-width,50rem)] shrink-0 px-4" aria-label="Agent recovery">

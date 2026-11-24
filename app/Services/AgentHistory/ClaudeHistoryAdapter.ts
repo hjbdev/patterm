@@ -6,7 +6,7 @@ import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedI
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v14';
+  readonly parserVersion = 'claude-jsonl-v15';
 
   constructor(private readonly quietReplies?: string) {}
 
@@ -138,7 +138,7 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
           toolOutputSummary: item.toolOutputSummary,
           providerCreatedAt: createdAt,
           tokenCount: null,
-          metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl',
+          metadata: { type: item.contentType === 'thinking' ? 'reasoning' : type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl',
             ...(nativeMessageId && text === QUIET_REPLY ? { nativeMessageId } : {}), ...(queued ? { queued: true } : {}) }
         });
       }
@@ -275,7 +275,12 @@ function extractClaudeContent(content: unknown, rowType: string, row: Record<str
     if (!block || typeof block !== 'object') return;
     const record = block as Record<string, unknown>;
     const contentType = stringValue(record.type);
-    if (contentType === 'thinking' || contentType === 'redacted_thinking') return;
+    if (contentType === 'redacted_thinking') return;
+    if (contentType === 'thinking') {
+      const thinking = stringValue(record.thinking) ?? '';
+      if (thinking.trim()) out.push(messageItem(index, 'message', contentType, thinking));
+      return;
+    }
     if (contentType === 'text') {
       const text = textFromUnknown(record.text);
       if (text.trim()) out.push(messageItem(index, 'message', contentType, text));

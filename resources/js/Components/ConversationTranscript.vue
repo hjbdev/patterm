@@ -42,7 +42,7 @@
                     <div class="flex w-full flex-col items-end gap-2 transition-opacity duration-200 motion-reduce:transition-none" :class="item.row.message.delivery?.state === 'sending' || item.row.message.delivery?.state === 'queued' || item.row.message.delivery?.state === 'uncertain' || item.row.message.delivery?.state === 'undelivered' ? 'opacity-50' : ''">
                     <div v-if="item.attachments.length" class="flex max-w-[min(82%,64ch)] flex-wrap justify-end gap-2">
                       <template v-for="(attachment, index) in item.attachments" :key="`${item.row.id}:attachment:${index}`">
-                      <TranscriptImage v-if="attachment.image && attachment.sha256" :image="{ sha256: attachment.sha256, name: attachment.name }" :gallery="item.attachmentImages" :max-height="200" :max-width="320" />
+                      <TranscriptImage v-if="attachment.image && attachment.sha256" :image="{ sha256: attachment.sha256, name: attachment.name }" :project-id="item.row.message.archived ? (projectId || undefined) : undefined" :gallery="item.attachmentImages" :max-height="200" :max-width="320" />
                       <div
                         v-else
                         class="flex max-w-56 items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-xs"
@@ -117,16 +117,16 @@
                     />
                   </button>
                   <div v-if="!item.open && item.groupImages.length" class="conversation-breakout-images mt-1 flex flex-wrap gap-2">
-                    <TranscriptImage v-for="image in item.groupImages" :key="image.sha256" :image="image" :gallery="item.groupImages" breakout />
+                    <TranscriptImage v-for="image in item.groupImages" :key="image.sha256" :image="image" :project-id="item.row.messages.some((message) => message.archived) ? (projectId || undefined) : undefined" :gallery="item.groupImages" breakout />
                   </div>
                   <div v-if="item.open" class="mt-0.5 pl-3">
                     <template v-for="message in item.row.messages" :key="message.id">
                       <ConversationThoughtRow v-if="message.kind === 'reasoning'" :message="message" :process-id="processId" :duration-ms="thoughtDurations.get(message.id)" :thinking="isThinking(message)" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
-                      <ConversationToolRow v-else :message="message" :process-id="processId" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
+                      <ConversationToolRow v-else :message="message" :process-id="processId" :project-id="projectId" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
                     </template>
                   </div>
                 </div>
-                <ConversationToolRow v-else-if="item.row.message.kind === 'tool'" :message="item.row.message" :process-id="processId" :active="activeMessageId === item.row.message.id" breakout />
+                <ConversationToolRow v-else-if="item.row.message.kind === 'tool'" :message="item.row.message" :process-id="processId" :project-id="projectId" :active="activeMessageId === item.row.message.id" breakout />
                 <div
                   v-else-if="item.row.message.kind === 'notice'"
                   class="flex w-full min-w-0 items-start gap-1.5 py-0.5 text-xs"
@@ -215,7 +215,7 @@ import {
   type TranscriptRow
 } from '../lib/integratedConversation';
 
-const props = withDefaults(defineProps<{ messages: TranscriptMessage[]; truncated?: boolean; historyUnavailable?: boolean; hasOlder?: boolean; loadingOlder?: boolean; historyError?: string; processId: string; live?: boolean; working?: boolean; autoLoadOlder?: boolean; activeMessageId?: string | null; settling?: boolean; canRetry?: boolean; canCancel?: boolean }>(), { truncated: false, historyUnavailable: false, hasOlder: false, loadingOlder: false, historyError: '', live: false, working: false, autoLoadOlder: false, activeMessageId: null, settling: false, canRetry: false, canCancel: false });
+const props = withDefaults(defineProps<{ messages: TranscriptMessage[]; truncated?: boolean; historyUnavailable?: boolean; hasOlder?: boolean; loadingOlder?: boolean; historyError?: string; processId: string; projectId?: string | null | undefined; live?: boolean; working?: boolean; autoLoadOlder?: boolean; activeMessageId?: string | null; settling?: boolean; canRetry?: boolean; canCancel?: boolean }>(), { truncated: false, historyUnavailable: false, hasOlder: false, loadingOlder: false, historyError: '', projectId: null, live: false, working: false, autoLoadOlder: false, activeMessageId: null, settling: false, canRetry: false, canCancel: false });
 const emit = defineEmits<{ 'load-older': []; 'retry-message': [messageId: string]; 'resend-message': [messageId: string]; 'edit-message': [messageId: string]; 'cancel-message': [messageId: string] }>();
 
 // Pages by id, drawn where a reply places [patterm_figure:<id>].

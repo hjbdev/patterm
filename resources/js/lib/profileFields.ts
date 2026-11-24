@@ -2,6 +2,8 @@
 // Bots are set up with the same fields, so both editors share them. The
 // catalog shapes mirror app/Harness/ModelCatalog.
 
+import { defaultReasoningLevelsFor, harnessSupportsServiceTier } from '../../../app/Agents/AgentCapabilitiesDto';
+
 export type ProfileHarness = 'claude' | 'codex' | 'opencode' | 'agy';
 
 export interface CatalogModel {
@@ -67,7 +69,7 @@ export function fieldsFrom(catalog: ModelCatalog, harness: ProfileHarness, value
 }
 
 // The settings to save, or an error to show.
-export function settingsFrom(fields: ProfileFieldsState, supportsServiceTier = fields.harness === 'codex'): ProfileSettingsValue | { error: string } {
+export function settingsFrom(fields: ProfileFieldsState, supportsServiceTier = harnessSupportsServiceTier(fields.harness)): ProfileSettingsValue | { error: string } {
   const model = fields.model === DEFAULT_MODEL ? null : fields.model === CUSTOM_MODEL ? fields.customModel.trim() : fields.model;
   if (fields.model === CUSTOM_MODEL && !model) return { error: 'Enter a custom model ID.' };
   return {
@@ -151,5 +153,5 @@ export function settingsSummary(catalog: ModelCatalog, harness: ProfileHarness, 
 }
 
 function builtinReasoning(harness: ProfileHarness): string[] {
-  return harness === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] : [];
+  return defaultReasoningLevelsFor(harness);
 }

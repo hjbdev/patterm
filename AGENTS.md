@@ -4,7 +4,7 @@ Project instructions for AI coding agents working in this repository.
 
 ## Product Direction
 
-Patterm is a project-based agent workbench with an Electron client and a Linux browser service. It hosts existing agent CLIs through PTYs and should preserve their native terminal workflows, permissions, and resume behavior.
+Patterm is a project-based agent workbench with an Electron client and a Linux browser service. It hosts existing agent CLIs through supervised Integrated hosts/adapters (preserving their native workflows, permissions, and resume behavior) and uses PTYs for user shells and command processes.
 
 Do not turn Patterm into an agent harness or direct LLM API client.
 
@@ -54,7 +54,7 @@ Prefer small, direct implementation steps that preserve this flow.
 
 ## Terminal Implementation
 
-The Rust sidecar owns PTY/process runtime and terminal state. It should expose a stable protocol to the TypeScript app backend.
+The Rust sidecar owns PTY/process runtime and terminal state for user shells and command processes. It should expose a stable protocol to the TypeScript app backend.
 
 Required terminal capabilities:
 
@@ -64,7 +64,6 @@ Required terminal capabilities:
 - scrollback/search/selection;
 - selection text extraction;
 - process lifecycle and exit capture;
-- resume ID scanning hooks;
 - debug-only PTY recording.
 
 Renderer requirements:
@@ -86,7 +85,7 @@ pages for worktrees, conversation history, todos, and scratchpads. Records from
 a paired host carry a `host` field and host-qualified IDs; show the host's name
 beside them in muted text.
 
-The main workspace supports fast switching between agent/process terminals, project worktrees, diff review, and conversation history. Preserve the established visual language. Browser paths are server paths; hide native directory browsing in browser mode.
+The main workspace supports fast switching between Integrated agent conversations, process terminals, project worktrees, diff review, and conversation history. Preserve the established visual language. Browser paths are server paths; hide native directory browsing in browser mode.
 
 ## MCP Conventions
 
@@ -235,9 +234,9 @@ Update `CHANGELOG.md` for notable changes. Follow Keep a Changelog 1.1.0 section
 
 Use Node >=24 <27. The headless server uses Node child processes for history
 imports; desktop uses Electron utility processes. Browser disconnection must not
-stop agents, processes, timers, or imports. Installed Linux services keep PTYs in
-independent, versioned terminal-host units. App restart reconnects to live hosts;
-native processes and sleeps continue. Persist timer deadlines and deliver overdue
+stop agents, processes, timers, or imports. Installed Linux services keep
+supervised Integrated agent hosts and PTYs in independent, versioned host units.
+App restart reconnects to live hosts; native processes and sleeps continue. Persist timer deadlines and deliver overdue
 callbacks after reconnection. Quit requires confirmation and stops all managed
 hosts, including older generations. Reboot still requires explicit native resume,
 except for bots: Patterm resumes each bot's conversation when it starts.

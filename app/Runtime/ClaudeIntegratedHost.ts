@@ -535,7 +535,7 @@ function forgetProcess(): void {
     tasks.set(id, { ...task, status: 'stopped', stoppable: false });
     changed = true;
   }
-  if (changed) publish({ kind: 'pending' });
+  if (changed) publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
 }
 
 // Claude leaves the Artifact tool out of headless sessions unless asked, though
@@ -807,6 +807,11 @@ function backgroundAgentCount(): number {
   return backgroundTasks().filter((task) => task.kind === 'local_agent' && task.stoppable === true).length;
 }
 
+function runningTaskCount(): number {
+  const running = backgroundTasks().filter((task) => task.status === 'running' || task.status === 'pending').length;
+  return Math.max(running, backgroundAgentCount());
+}
+
 function busy(): boolean {
   if (!child) return false;
   if (turnActive || prompts.size > 0) return true;
@@ -884,7 +889,7 @@ function receiveControlRequest(requestId: string, event: JsonRecord): void {
     return;
   }
   updateStatus();
-  publish({ kind: 'pending' });
+  publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
 }
 
 // A readable preview of what an Edit, MultiEdit, or Write would change.
@@ -911,7 +916,7 @@ function editPreview(input: JsonRecord): string {
 function settlePending(requestId: string): void {
   pending.delete(requestId);
   updateStatus();
-  publish({ kind: 'pending' });
+  publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
 }
 
 // A request is a background subagent's when it names one.
@@ -1138,6 +1143,7 @@ function receiveSystem(event: JsonRecord): void {
     backgroundAgentLevel = (Array.isArray(event.tasks) ? event.tasks.map(record) : [])
       .filter((task) => task.task_type === 'local_agent' && task.ambient !== true).length;
     updateStatus();
+    publish({ kind: 'tasks', backgroundTasks: runningTaskCount() });
     return;
   }
   if (event.subtype === 'api_retry') {
@@ -1262,7 +1268,7 @@ function receiveTask(event: JsonRecord): void {
   // Without native session state, a background agent's tasks decide whether
   // the agent still works after its turn.
   updateStatus();
-  publish({ kind: 'pending' });
+  publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
 }
 
 // A retry run that ends in a finished turn says it recovered.

@@ -107,7 +107,7 @@ const identity = (image: GalleryImage) => image.key ?? image.sha256;
 // Images shown together pass the whole group as the gallery so the lightbox
 // can step between them. A project reads images indexed from its history; a
 // filled tile is a square thumbnail that loads once it scrolls into view.
-const props = withDefaults(defineProps<{ image: GalleryImage; gallery?: GalleryImage[]; maxHeight?: number; maxWidth?: number; projectId?: string; fill?: boolean; breakout?: boolean | undefined }>(), { maxHeight: 160, maxWidth: 280, breakout: false });
+const props = withDefaults(defineProps<{ image: GalleryImage; gallery?: GalleryImage[]; maxHeight?: number; maxWidth?: number; projectId?: string | undefined; fill?: boolean; breakout?: boolean | undefined }>(), { maxHeight: 160, maxWidth: 280, breakout: false });
 
 const MAX_DOTS = 12;
 const NAV_CLASS = 'absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 text-foreground shadow outline-none backdrop-blur transition hover:bg-background focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50';

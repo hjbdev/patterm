@@ -399,6 +399,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       assert.deepEqual(retried.at(-1), ['patterm-memory', `whole memory after ${failing}`], `a rebase whose ${failing} failed is retried as a rebase`);
     }
     const controls = await service.controls('process_0');
+    assert.equal(typeof controls.revision, 'string', 'OpenCode controls emit a revision');
+    assert.equal((await service.conversation('process_0')).controls_revision, controls.revision, 'OpenCode snapshot controls_revision matches controls().revision');
     assert.deepEqual(controls.selectors.map((selector) => selector.id), ['model', 'variant', 'agent']);
     assert.deepEqual(controls.selectors[1]?.options.map((option) => option.value), ['default', 'low', 'high']);
     assert.deepEqual(controls.selectors[0]?.options.map((option) => option.description), ['OpenAI', 'OpenAI', 'Zen', 'Go'], 'each model names the provider that serves it, without OpenCode\'s own prefix');
@@ -412,6 +414,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       .filter((request) => request.method === 'POST' && request.route.endsWith('/model')).map((request) => request.body.model);
     assert.deepEqual(thinkingModels, [{ providerID: 'openai', id: 'gpt-test', variant: 'high' }], 'changing Thinking never resets the native model');
     await service.configure('process_0', 'agent', 'plan');
+    const afterAgentControls = await service.controls('process_0');
+    assert.notEqual(afterAgentControls.revision, controls.revision, 'changing OpenCode agent bumps controls_revision');
+    assert.equal((await service.conversation('process_0')).controls_revision, afterAgentControls.revision);
     await service.configure('process_0', 'model', 'openai/gpt-test');
     await service.configure('process_0', 'variant', 'high');
     const controlRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));

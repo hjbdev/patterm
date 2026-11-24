@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { harnessSupportsServiceTier } from '../Agents/AgentCapabilitiesDto';
 import { findPresetByRef, type HarnessPresetSettings } from '../Harness/HarnessPresets';
 import type { DatabaseService } from './DatabaseService';
 import type { LaunchHarnessInput, LaunchHarnessResult } from './HarnessLauncher';
@@ -573,7 +574,7 @@ export class RoutineService {
       throw new Error(`unknown ${input.harness} preset: ${input.preset}`);
     }
     if (!input.model && (input.reasoning || input.service_tier)) throw new Error('Effort and speed need a model');
-    const supportsSpeed = this.deps.supportsServiceTier ? this.deps.supportsServiceTier(input.harness) : input.harness === 'codex';
+    const supportsSpeed = this.deps.supportsServiceTier ? this.deps.supportsServiceTier(input.harness) : harnessSupportsServiceTier(input.harness);
     if (input.service_tier && !supportsSpeed) throw new Error('Only Codex routines choose a speed');
     return { preset: input.preset, model: input.model, reasoning: input.model ? input.reasoning : null, service_tier: input.model ? input.service_tier : null };
   }

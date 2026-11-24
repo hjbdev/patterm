@@ -18,9 +18,17 @@ try {
   const guidance = { type: 'system', subtype: 'informational', content: 'Auto mode lets Claude handle permission prompts automatically', sessionId: 'claude', cwd: root };
   const parsed = claude.parseFile(jsonl('claude.jsonl', [guidance,
     { type: 'user', sessionId: 'claude', message: { role: 'user', content: 'Explain auto mode' } },
-    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Here is the explanation.' }] } }
+    { type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'Checking auto mode behaviour.', signature: 'sig-never-stored' },
+      { type: 'redacted_thinking', data: 'opaque-never-stored' },
+      { type: 'text', text: 'Here is the explanation.' }
+    ] } }
   ]));
-  assert.deepEqual(parsed.conversations[0]!.messages.map(m => m.text), ['Explain auto mode', 'Here is the explanation.']);
+  assert.deepEqual(parsed.conversations[0]!.messages.map(m => m.text), ['Explain auto mode', 'Checking auto mode behaviour.', 'Here is the explanation.']);
+  assert.equal(parsed.conversations[0]!.messages[1]!.metadata.type, 'reasoning', 'non-empty Claude thinking blocks import as reasoning');
+  assert.equal(parsed.conversations[0]!.messages[1]!.metadata.contentType, 'thinking');
+  assert.equal(JSON.stringify(parsed).includes('sig-never-stored'), false, 'thinking signatures are never stored');
+  assert.equal(JSON.stringify(parsed).includes('opaque-never-stored'), false, 'redacted thinking blocks are never stored');
   assert.equal(claude.parseFile(jsonl('empty.jsonl', [guidance])).conversations.flatMap(c => c.messages).length, 0);
 
   // Slash commands read as typed; their markup and the compaction summary stay out.

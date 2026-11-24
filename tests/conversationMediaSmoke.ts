@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { AgentHistoryImportService } from '../app/Services/AgentHistory/AgentHistoryImportService';
+import { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { ConversationMediaService } from '../app/Services/AgentHistory/ConversationMediaService';
 import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/ProviderHistoryDiscoveryService';
 import { DatabaseService } from '../app/Services/DatabaseService';
@@ -67,6 +68,18 @@ try {
   assert.equal(output.tool_output_summary, '[Image]', 'an image tool result is not stored as base64 text');
 
   const media = new ConversationMediaService(historyDatabase);
+  const read = new AgentHistoryReadService(historyDatabase);
+  const claudeConv = historyDatabase.connection.prepare(`select id from conversations where provider = 'claude' limit 1`).get() as { id: string };
+  const claudeRows = read.get({ conversation_id: claudeConv.id, limit: 50 }).messages;
+  assert.equal(claudeRows.find((row) => row.text === 'Here is a screenshot')?.media?.[0]?.sha256, sha(PNG), 'pasted image attaches to its archived user message');
+  const readCallIndex = claudeRows.findIndex((row) => row.kind === 'tool_call' && row.metadata?.toolUseId === 'toolu_1');
+  const readResultIndex = claudeRows.findIndex((row) => row.kind === 'tool_result' && row.metadata?.toolUseId === 'toolu_1');
+  assert.equal(claudeRows[readResultIndex]?.media?.[0]?.sha256, sha(OTHER), 'viewed image attaches to its archived tool_result');
+  const splitCallPage = read.archive('claude', 'claude_media', 'media_project', '2026-10-10T11:00:00.000Z', 0, readCallIndex + 1).messages;
+  assert.equal(splitCallPage.find((row) => row.kind === 'tool_result' && row.metadata?.toolUseId === 'toolu_1')?.media?.[0]?.sha256, sha(OTHER), 'archive() boundary-paired tool_result includes its conversation_media');
+  const splitResultPage = read.archive('claude', 'claude_media', 'media_project', '2026-10-10T11:00:00.000Z', readResultIndex, 2).messages;
+  assert.ok(splitResultPage.some((row) => row.kind === 'tool_call' && row.metadata?.toolUseId === 'toolu_1'), 'archive() leading tool_result pulls its preceding tool_call');
+  assert.equal(splitResultPage.find((row) => row.kind === 'tool_result' && row.metadata?.toolUseId === 'toolu_1')?.media?.[0]?.sha256, sha(OTHER), 'archive() leading tool_result keeps its conversation_media');
   const all = media.list({ project_id: 'media_project' });
   assert.equal(all.total, 4, 'each image is listed once per conversation');
   assert.deepEqual(all.items.map((item) => [item.kind, item.name, item.mime]), [
