@@ -482,7 +482,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.ok(!JSON.stringify(imageConversation).includes('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='), 'OpenCode image bytes never reach the renderer');
     const imageRows = normaliseMessages(imageConversation.messages);
     const uploaded = normaliseTranscriptAttachments(imageRows.find((message) => message.id === 'msg_upload')?.attachments);
-    const readImage = imageRows.find((message) => message.id === 'msg_read-0')?.tool?.images?.[0];
+    const readRow = imageRows.find((message) => message.id === 'msg_read-0');
+    const readImage = readRow?.tool?.images?.[0];
+    assert.equal(readRow?.text, 'Image read successfully', 'OpenCode tool text blocks survive projection and remain searchable');
+    assert.equal(readRow?.tool?.output, 'Image read successfully', 'OpenCode tool text blocks populate tool.output');
+    assert.equal(readRow?.tool?.images?.length, 1, 'stored OpenCode tool images are not duplicated');
     assert.equal(uploaded[0]?.name, 'shot.png');
     assert.equal(uploaded[0]?.sha256, readImage?.sha256, 'the uploaded and read copies share one stored image');
     assert.deepEqual(imageStore.read(String(readImage?.sha256)), { mime: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' });

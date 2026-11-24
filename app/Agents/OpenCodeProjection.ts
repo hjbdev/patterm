@@ -145,10 +145,13 @@ function projectToolPart(id: string, part: Record<string, unknown>): IntegratedC
   const output = toolOutputText(part.state);
   const images = storedToolImages(state);
   const identity = resolveOpenCodeToolIdentity(name);
+  const projectedState = part.state !== undefined && typeof part.state === 'object' && part.state !== null && !Array.isArray(part.state) && 'content' in state
+    ? (({ content: _content, ...rest }) => rest)(state)
+    : part.state;
   const tool: IntegratedConversationTool = {
     name,
     ...(part.input !== undefined ? { input: part.input } : state.input !== undefined ? { input: state.input } : {}),
-    ...(part.state !== undefined ? { state: part.state } : {}),
+    ...(projectedState !== undefined ? { state: projectedState } : {}),
     ...identity,
     ...(images.length ? { images } : {})
   };
@@ -165,9 +168,13 @@ function projectToolPart(id: string, part: Record<string, unknown>): IntegratedC
 function toolOutputText(value: unknown): string {
   if (typeof value === 'string') return value;
   const state = record(value);
-  if (typeof state.output === 'string') return state.output;
-  if (typeof state.error === 'string') return state.error;
-  if (typeof state.text === 'string') return state.text;
+  if (typeof state.output === 'string' && state.output) return state.output;
+  if (Array.isArray(state.content)) {
+    const content = state.content.flatMap((part) => typeof record(part).text === 'string' ? [String(record(part).text)] : []).join('\n');
+    if (content) return content;
+  }
+  if (typeof state.error === 'string' && state.error) return state.error;
+  if (typeof state.text === 'string' && state.text) return state.text;
   return '';
 }
 

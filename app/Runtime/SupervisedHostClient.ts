@@ -90,6 +90,7 @@ export class SupervisedHostClient {
 
     const connect = (initial: boolean) => new Promise<void>((resolve, reject) => {
       const next = net.createConnection(ipcPath(socketPath));
+      next.setEncoding('utf8');
       socket = next;
       const id = randomUUID();
       let buffer = '';
@@ -105,8 +106,8 @@ export class SupervisedHostClient {
         next.write(`${JSON.stringify({ id, method: 'subscribe', params: {} })}\n`);
       });
 
-      next.on('data', (chunk) => {
-        buffer += chunk.toString('utf8');
+      next.on('data', (chunk: string) => {
+        buffer += chunk;
         if (Buffer.byteLength(buffer, 'utf8') > MAX_HOST_STREAM_BUFFER_BYTES) {
           buffer = '';
           fail(new Error(`${label} event stream exceeded buffer limit`));
