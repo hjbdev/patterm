@@ -559,14 +559,10 @@ async function main(): Promise<void> {
   assert.equal(botLine(botRows({ bots: [bot('new', 'New')], userName: null }, projects, [botsProject])[0]!), 'Starting…');
   assert.equal(botLine(row!), 'A helper is waiting: Deploy to production?');
   // Helpers' reports and Patterm's notes stay out of a bot's conversation.
-  for (const text of ['[report from process_7: completed]\nDone', '[message from process_7]\nhi', '[Patterm timer t1: condition met]', '[Attention needed by process_7]', '[Close requested by process_7]\nall done']) {
+  for (const text of ['[report from process_7: completed]\nDone', '[message from process_7]\nhi', '[Patterm timer t1: condition met]', '[Attention needed by process_7]', '[Close requested by process_7]\nall done', '[Patterm notifications]\n- Build failed', '[Patterm focus digest digest_1: 2 items held while Focus mode was on or you were not running.]\n- one']) {
     assert.equal(hiddenFromBot(text), true, text);
   }
   assert.equal(hiddenFromBot('Can you check the deploy?'), false);
-  // Notification and focus digests show as receipts.
-  for (const text of ['[Patterm notifications]\n- Build failed', '[Patterm focus digest digest_1: 2 items held while Focus mode was on or you were not running.]\n- one']) {
-    assert.equal(hiddenFromBot(text), false, text);
-  }
 
   console.log('botsSmoke: ok');
 }
