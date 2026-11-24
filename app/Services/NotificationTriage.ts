@@ -31,6 +31,9 @@ interface TurnState extends TurnDigest {
   toolIds: Set<string>;
   // The stream dropped mid-turn, so rows may be missing until the next turn.
   lost: boolean;
+  // Text arrived only as streamed fragments, as Antigravity sends it, so the
+  // turn said something even without a reply row.
+  streamed: boolean;
 }
 
 // Who sent the user row that started a turn. Agent messages, timers and
@@ -56,6 +59,7 @@ export class TurnDigests {
       this.current(processId).lost = true;
       return;
     }
+    if (event.kind === 'append' && !event.message && !event.parentId && event.messageKind === 'text' && event.delta?.trim()) this.current(processId).streamed = true;
     const message = event.message;
     if ((event.kind !== 'append' && event.kind !== 'replace') || !message || message.parentId) return;
     if (message.role === 'user' && message.kind === 'text') this.start(processId, message);
@@ -68,7 +72,10 @@ export class TurnDigests {
   activity(processId: string, previous: string, activity: string): void {
     const busy = (value: string) => BUSY.has(value);
     const turn = this.turns.get(processId);
-    if (turn && busy(activity) && !busy(previous) && !awaitingUser(previous)) turn.reply = '';
+    if (turn && busy(activity) && !busy(previous) && !awaitingUser(previous)) {
+      turn.reply = '';
+      turn.streamed = false;
+    }
   }
 
   // The reply of the turn that just ended, or null without one.
@@ -80,7 +87,7 @@ export class TurnDigests {
   // The turn that just ended was followed throughout and said nothing.
   silent(processId: string): boolean {
     const turn = this.turns.get(processId);
-    return Boolean(turn && !turn.lost && !turn.reply);
+    return Boolean(turn && !turn.lost && !turn.reply && !turn.streamed);
   }
 
   get(processId: string): TurnDigest | null {
@@ -93,14 +100,14 @@ export class TurnDigests {
     this.turns.delete(processId);
     // Oldest first, so agents that have gone quiet fall out.
     if (this.turns.size >= TURN_LIMIT) this.turns.delete(this.turns.keys().next().value!);
-    this.turns.set(processId, { startedBy: turnStarter(message.text), finalMessage: '', tools: [], toolCount: 0, startId: message.id, reply: '', toolIds: new Set(), lost: false });
+    this.turns.set(processId, { startedBy: turnStarter(message.text), finalMessage: '', tools: [], toolCount: 0, startId: message.id, reply: '', toolIds: new Set(), lost: false, streamed: false });
   }
 
   private current(processId: string): TurnState {
     let turn = this.turns.get(processId);
     if (!turn) {
       // A turn already running when Patterm started; its starter is unknown.
-      turn = { startedBy: 'unknown', finalMessage: '', tools: [], toolCount: 0, startId: null, reply: '', toolIds: new Set(), lost: false };
+      turn = { startedBy: 'unknown', finalMessage: '', tools: [], toolCount: 0, startId: null, reply: '', toolIds: new Set(), lost: false, streamed: false };
       this.turns.set(processId, turn);
     }
     return turn;
