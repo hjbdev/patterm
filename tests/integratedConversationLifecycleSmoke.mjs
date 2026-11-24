@@ -1705,3 +1705,55 @@ test('archived pages fold cross-page out-of-order tool results in original call 
   assert.equal(h.pane.messages.value[1].tool.images?.[0]?.sha256, 'sha-2', 'folded tool_result media survives cross-page merge');
   h.scope.stop();
 });
+
+test('switching agents and loading further older archive pages preserves previously loaded archive pages', async () => {
+  const row = (seq, text) => ({
+    id: `m${seq}`, conversationId: 'conv', providerMessageId: `m${seq}`, parentProviderMessageId: null,
+    turnId: null, seq, role: 'user', kind: 'message', text, toolName: null, toolStatus: null,
+    toolInputSummary: null, toolOutputSummary: null, redactionCount: 0, tokenCount: null,
+    providerCreatedAt: `2026-10-10T00:00:${String(seq).padStart(2, '0')}.000Z`, metadata: {},
+    createdAt: `2026-10-10T00:00:${String(seq).padStart(2, '0')}.000Z`
+  });
+  const h = createHarness({ processId: 'arch_A' });
+  await resolveSubscriptions(h);
+  await resolveGets(h, {
+    provider: 'claude', status: 'idle', streaming: false, history_truncated: true,
+    history_cursor: { next: 'page2' }, messages: { data: [] },
+    archived_messages: [row(5, 'five'), row(6, 'six')]
+  });
+  await flush();
+  pending(h, 'integrated_history')[0].resolve({
+    messages: [], cursor: 'page1', archived_messages: [row(3, 'three'), row(4, 'four')]
+  });
+  await flush();
+  assert.deepEqual(h.pane.messages.value.map((m) => m.id), ['m3', 'm4', 'm5', 'm6']);
+
+  // Switch away to arch_B and back to arch_A; cached archivedRows must survive.
+  h.props.processId = 'arch_B';
+  await flush();
+  await resolveSubscriptions(h);
+  await resolveGets(h, emptyConversation());
+  h.props.processId = 'arch_A';
+  await flush();
+  await resolveSubscriptions(h);
+  await resolveGets(h, {
+    provider: 'claude', status: 'idle', streaming: false, history_truncated: true,
+    history_cursor: { next: 'page2' }, messages: { data: [] },
+    archived_messages: [row(5, 'five'), row(6, 'six')]
+  });
+  await flush();
+  const loadMore = h.pane.loadOlder();
+  await flush();
+  pending(h, 'integrated_history')[0].resolve({
+    messages: [], cursor: 'page0', archived_messages: [row(2, 'two')]
+  });
+  await loadMore;
+  const loadEarliest = h.pane.loadOlder();
+  await flush();
+  pending(h, 'integrated_history')[0].resolve({
+    messages: [], cursor: null, archived_messages: [row(1, 'one')]
+  });
+  await loadEarliest;
+  assert.deepEqual(h.pane.messages.value.map((m) => m.id), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'], 'all loaded archive pages survive tab switches and subsequent loadOlder calls');
+  h.scope.stop();
+});

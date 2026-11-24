@@ -668,7 +668,8 @@ function rememberState(processId: string | undefined): void {
     historyTruncated: historyTruncated.value,
     historyUnavailable: historyUnavailable.value,
     historyCursor: historyCursor.value,
-    historyLoaded
+    historyLoaded,
+    ...(archivedRows.length ? { archivedRows } : {})
   });
 }
 
@@ -677,6 +678,7 @@ function restoreState(processId: string): void {
   const cached = cachedConversation(processId);
   if (!cached) return;
   messages.value = cached.messages;
+  archivedRows = Array.isArray(cached.archivedRows) ? (cached.archivedRows as ConversationMessageRecord[]) : [];
   permissions.value = cached.permissions;
   applyQuestions(cached.questions);
   applyForms(cached.forms);

@@ -203,7 +203,8 @@ async function readTranscript(processId: string): Promise<void> {
     historyTruncated: result.history_truncated === true,
     historyUnavailable: result.history_unavailable === true,
     historyCursor: result.history_truncated === true ? snapshotHistoryCursor(result) : null,
-    historyLoaded: false
+    historyLoaded: false,
+    ...(Array.isArray(result.archived_messages) ? { archivedRows: result.archived_messages } : {})
   }, { evict: false });
 }
 

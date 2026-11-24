@@ -268,6 +268,7 @@ export interface CachedIntegratedConversation extends ConversationProjection {
   historyUnavailable: boolean;
   historyCursor: string | null;
   historyLoaded: boolean;
+  archivedRows?: unknown[];
 }
 
 // The one piece of module state here: a small LRU of recently shown panes.
