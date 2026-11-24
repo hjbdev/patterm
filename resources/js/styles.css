@@ -52,6 +52,12 @@
   }
 }
 
+/* Settings search marks matches without changing the DOM (lib/searchHighlight.ts). */
+::highlight(settings-search) {
+  background-color: rgb(250 204 21 / 0.25);
+  color: inherit;
+}
+
 /* Unlayered so it follows the Tailwind utilities and overrides `.h-dvh`. */
 @media (display-mode: standalone) {
   /* The safe-area padding shows the body, so match the application frame. */

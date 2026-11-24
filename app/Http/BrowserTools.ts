@@ -33,7 +33,7 @@ export const BROWSER_TOOLS = new Set([
   ...SECRET_VIEW_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
   'agent_snooze', 'agent_unsnooze', 'agent_snooze_reminder_dismiss',
-  'history_sources', 'history_configure', 'history_import',
+  'history_import',
   'history_import_status', 'history_reset_imports', 'history_list',
   'history_get', 'history_search', 'history_delete', 'history_resume',
   'media_list', 'media_get',

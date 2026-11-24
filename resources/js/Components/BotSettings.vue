@@ -6,7 +6,7 @@
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
 
     <SettingsSection list scope="bots">
-      <SettingsItem v-for="bot in bots" :key="bot.id" :save-key="`bots.${bot.id}`">
+      <SettingsItem v-for="bot in bots" :key="bot.id" :keywords="bot.name" :save-key="`bots.${bot.id}`">
         <template #title>
           <BotAvatar :avatar="bot.avatar" :size="20" />
           <span class="truncate">{{ bot.name }}</span>
@@ -164,7 +164,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { Dices } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
@@ -242,6 +242,7 @@ const HARNESS_CHOICES = PROFILE_HARNESSES.map((harness) => ({ value: harness, la
 const EMOJI = ['🦊', '🐙', '🦉', '🐢', '🤖', '🌱', '⚡', '🧠', '🎩', '🍄'];
 
 const route = useRoute();
+const router = useRouter();
 const { settings, rows, voices } = useBots();
 const { projects, harnesses } = useWorkbench();
 const bots = computed(() => settings.value.bots);
@@ -299,7 +300,9 @@ onMounted(async () => {
     error.value = caught instanceof Error ? caught.message : String(caught);
   }
   // Links such as Edit bot… from a bot's page open its editor.
+  // The link opens it once, so search, which mounts this panel again, doesn't reopen it.
   const requested = typeof route.query.bot === 'string' ? bots.value.find((bot) => bot.id === route.query.bot) : null;
+  if (route.query.bot !== undefined) void router.replace({ query: { ...route.query, bot: undefined } });
   if (requested) editBot(requested);
 });
 

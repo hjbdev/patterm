@@ -147,7 +147,8 @@ export interface HistorySourceCandidate {
 export interface ProviderHistoryAdapter {
   readonly provider: AgentHistoryProvider;
   readonly parserVersion: string;
-  defaultSources(homeDir: string): HistorySourceCandidate[];
+  // `env` is the environment agents launch with, which can move a CLI's home.
+  defaultSources(homeDir: string, env?: NodeJS.ProcessEnv): HistorySourceCandidate[];
   discoverFiles(sourcePath: string): string[];
   discoverFilesSince?(sourcePath: string, sinceMtimeMs: number, forcePaths?: string[]): string[];
   quickFingerprintFile?(filePath: string): HistoryFileFingerprint;
