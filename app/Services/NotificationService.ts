@@ -74,6 +74,8 @@ export interface NotificationUnread {
   urgency: NotificationUrgency;
   // Its project is snoozed: it marks the tab but stays out of the tray's total.
   snoozed: boolean;
+  // The newest unread notification's plain-text body, such as a bot's reply.
+  preview: string | null;
 }
 
 interface ProcessContext {
@@ -254,11 +256,14 @@ export class NotificationService {
   unread(): NotificationUnread[] {
     const rows = this.database.connection.prepare(`select notifications.process_id, notifications.project_id, count(*) as count,
         max(case notifications.urgency when 'high' then 2 when 'normal' then 1 else 0 end) as rank,
-        coalesce(projects.snoozed_until > ?, 0) as snoozed
+        coalesce(projects.snoozed_until > ?, 0) as snoozed,
+        (select newest.body from notifications newest
+          where newest.process_id = notifications.process_id and newest.resolved_at is null and newest.read_at is null
+          order by newest.updated_at desc, newest.id desc limit 1) as preview
       from notifications left join projects on projects.id = notifications.project_id
       where notifications.resolved_at is null and notifications.read_at is null
-      group by notifications.process_id, notifications.project_id`).all(new Date(this.now()).toISOString()) as Array<{ process_id: string | null; project_id: string | null; count: number; rank: number; snoozed: number }>;
-    return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed) }));
+      group by notifications.process_id, notifications.project_id`).all(new Date(this.now()).toISOString()) as Array<{ process_id: string | null; project_id: string | null; count: number; rank: number; snoozed: number; preview: string | null }>;
+    return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed), preview: row.preview || null }));
   }
 
   // Unread totals depend on which projects are snoozed.

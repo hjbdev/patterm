@@ -37,6 +37,8 @@ interface Unread {
   urgency: NotificationUrgency;
   // Its project is snoozed; older hosts omit it.
   snoozed?: boolean;
+  // The newest unread notification's body, such as a bot's reply; older hosts omit it.
+  preview?: string | null;
 }
 
 export type NotificationChange =
@@ -61,20 +63,30 @@ const quietDismissals = new Set<string | number>();
 let releasingPointer = false;
 let started = false;
 
+// A page that shows a process without naming it in its route, such as a
+// bot's, which is addressed by its bot ID.
+const viewedProcess = ref<string | null>(null);
+
+export function setViewedProcess(processId: string | null): void {
+  viewedProcess.value = processId;
+}
+
 const unreadIndex = computed(() => {
   const byProcess = new Map<string, NotificationUrgency>();
+  const previewByProcess = new Map<string, string>();
   const byProject = new Map<string, number>();
   let total = 0;
   let highest: NotificationUrgency | null = null;
   for (const row of unread.value) {
     if (row.process_id && !byProcess.has(row.process_id)) byProcess.set(row.process_id, row.urgency);
+    if (row.process_id && row.preview && !previewByProcess.has(row.process_id)) previewByProcess.set(row.process_id, row.preview);
     if (row.project_id) byProject.set(row.project_id, (byProject.get(row.project_id) ?? 0) + row.count);
     if (!row.snoozed) {
       total += row.count;
       if (!highest || RANK[row.urgency] > RANK[highest]) highest = row.urgency;
     }
   }
-  return { byProcess, byProject, total, highest };
+  return { byProcess, previewByProcess, byProject, total, highest };
 });
 
 function dismissQuietly(id?: string): void {
@@ -86,6 +98,11 @@ function dismissQuietly(id?: string): void {
 export function unreadUrgency(processId: string | null | undefined): NotificationUrgency | null {
   if (!processId) return null;
   return unreadIndex.value.byProcess.get(processId) ?? null;
+}
+
+// The newest unread notification's text for a process, such as a bot's reply.
+export function unreadPreview(processId: string | null | undefined): string | null {
+  return processId ? unreadIndex.value.previewByProcess.get(processId) ?? null : null;
 }
 
 // Snoozed projects' notifications stay in the tray's list but out of its
@@ -131,6 +148,7 @@ export function startNotifications(router: Router): void {
   // and system notifications link to pages that contain every tab.
   const inView = (notification: NotificationRecord) => {
     if (!notification.process_id || !focused()) return false;
+    if (notification.process_id === viewedProcess.value) return true;
     return route() === notification.url || route().startsWith(`${notification.url}/`);
   };
 
@@ -161,7 +179,8 @@ export function startNotifications(router: Router): void {
   function markViewedRead(): void {
     if (!focused()) return;
     const { params } = router.currentRoute.value;
-    if (typeof params.sessionId === 'string') void api.notificationsRead({ session_id: params.sessionId }).catch(() => {});
+    if (viewedProcess.value) void api.notificationsRead({ process_id: viewedProcess.value }).catch(() => {});
+    else if (typeof params.sessionId === 'string') void api.notificationsRead({ session_id: params.sessionId }).catch(() => {});
     else if (typeof params.processId === 'string') void api.notificationsRead({ process_id: params.processId }).catch(() => {});
   }
 
@@ -214,7 +233,7 @@ export function startNotifications(router: Router): void {
   document.addEventListener('visibilitychange', onAttention);
   window.addEventListener('focus', onAttention);
   window.addEventListener('blur', reportPresence);
-  watch(() => router.currentRoute.value.fullPath, onAttention);
+  watch([() => router.currentRoute.value.fullPath, viewedProcess], onAttention);
   setInterval(() => { if (focused()) reportPresence(); }, PRESENCE_HEARTBEAT_MS);
   // Opening the app from a push notification lands here with the service
   // worker's target already in the URL.

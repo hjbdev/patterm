@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue';
 defineOptions({ name: 'BotPage' });
 import { useRoute, useRouter } from 'vue-router';
 import { useElementSize } from '@vueuse/core';
@@ -115,6 +115,7 @@ import { Button } from '../Components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../Components/ui/dropdown-menu';
 import { useBots } from '../Composables/useBots';
+import { setViewedProcess } from '../Composables/useNotifications';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { restartBot, startBot } from '../lib/bots';
 import { botStates, setBotFocus, startBotEvents } from '../lib/botRelay';
@@ -143,6 +144,15 @@ const mode = ref<'chat' | 'voice'>('chat');
 const transcript = shallowRef<TranscriptMessage[]>([]);
 const streamStatus = ref('');
 onMounted(startBotEvents);
+// The bot's route names it by bot ID, so the page says which process is in
+// view: its replies are read here rather than announced.
+let shown = false;
+const showViewed = () => setViewedProcess(shown ? row.value?.session?.processId ?? null : null);
+watch(() => row.value?.session?.processId, showViewed);
+onMounted(() => { shown = true; showViewed(); });
+onActivated(() => { shown = true; showViewed(); });
+onDeactivated(() => { shown = false; showViewed(); });
+onBeforeUnmount(() => { shown = false; showViewed(); });
 watch(() => row.value?.bot.id, () => { mode.value = 'chat'; });
 // A call ends with voice turned off, a non-Codex profile, or a stopped bot.
 watch(() => !live.value || relay.value?.voice.available === false, (unavailable) => { if (unavailable) mode.value = 'chat'; });
