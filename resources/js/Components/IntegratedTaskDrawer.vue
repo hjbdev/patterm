@@ -9,7 +9,7 @@
     @keydown.esc.stop.prevent="emit('close')"
   >
     <header class="shrink-0 border-b border-border/60">
-      <div class="mx-auto flex h-11 w-full max-w-[50rem] min-w-0 items-center gap-2 px-4 2xl:max-w-[1000px]">
+      <div class="mx-auto flex h-11 w-full max-w-[var(--patterm-conversation-max-width,50rem)] min-w-0 items-center gap-2 px-4">
         <Button variant="ghost" size="sm" class="-ml-2 h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground" aria-label="Back to conversation" @click="emit('close')">
           <ArrowLeft class="h-3.5 w-3.5" aria-hidden="true" />
           Conversation
@@ -29,15 +29,15 @@
       <LoadingBar :active="loading" label="Loading task output" />
       <ConversationTranscript v-if="format === 'transcript'" :messages="messages" :has-older="Boolean(olderCursor)" :loading-older="loadingOlder" :history-error="olderError" :process-id="`${processId}:task:${task.id}`" :live="active" auto-load-older class="min-h-0 flex-1" @load-older="loadOlder" />
       <div v-else-if="format === 'text'" ref="textViewport" class="min-h-0 flex-1 overflow-auto overscroll-contain">
-        <div class="mx-auto w-full max-w-[50rem] px-4 py-4 2xl:max-w-[1000px]">
+        <div class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4 py-4">
           <p v-if="truncated" class="mb-2 text-xs text-muted-foreground">Showing the end of the output.</p>
           <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground">{{ text || 'No output yet.' }}</pre>
         </div>
       </div>
-      <p v-else-if="format === 'missing'" role="status" class="mx-auto w-full max-w-[50rem] px-4 py-6 text-sm text-muted-foreground 2xl:max-w-[1000px]">
+      <p v-else-if="format === 'missing'" role="status" class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4 py-6 text-sm text-muted-foreground">
         {{ active ? 'Waiting for the task to write output…' : 'No output was kept for this task.' }}
       </p>
-      <p v-if="error" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-3 text-sm text-destructive 2xl:max-w-[1000px]">{{ error }}</p>
+      <p v-if="error" role="alert" class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] shrink-0 break-words px-4 pb-3 text-sm text-destructive">{{ error }}</p>
     </div>
   </section>
 </template>

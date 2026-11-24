@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { appearanceSettingsInput } from '../app/Services/SettingsService';
 import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../resources/js/lib/recentProjects';
-import { applyUiFont, normalizeAppearanceSettings, UI_FONT_OPTIONS, TERMINAL_FONT_OPTIONS, resolveTerminalFontFamily } from '../resources/js/appearance/AppearanceSettings';
+import { applyUiFont, CONVERSATION_BREAKOUT_OPTIONS, CONVERSATION_WIDTH_OPTIONS, normalizeAppearanceSettings, UI_FONT_OPTIONS, TERMINAL_FONT_OPTIONS, resolveTerminalFontFamily } from '../resources/js/appearance/AppearanceSettings';
 
 for (const [key, options] of [['uiFont', UI_FONT_OPTIONS], ['terminalFont', TERMINAL_FONT_OPTIONS]] as const) {
   for (const option of options) {
@@ -32,6 +32,25 @@ assert.equal(normalizeAppearanceSettings({ navigation: 'drawer' as never }).navi
 assert.throws(() => appearanceSettingsInput.parse({ navigation: 'drawer' }), 'the service rejects unknown navigation');
 assert.equal(appearanceSettingsInput.parse({}).recentProjects, true, 'recent projects show by default');
 assert.equal(normalizeAppearanceSettings(JSON.parse(JSON.stringify(appearanceSettingsInput.parse({ recentProjects: false })))).recentProjects, false);
+assert.equal(appearanceSettingsInput.parse({}).conversationFontSizePx, 14, 'conversation font size defaults to 14 px');
+assert.equal(appearanceSettingsInput.parse({}).conversationWidth, 'default', 'conversation width defaults to default');
+assert.equal(appearanceSettingsInput.parse({}).conversationBreakout, 'off', 'conversation breakout defaults to off');
+assert.equal(normalizeAppearanceSettings({ conversationFontSizePx: 8 }).conversationFontSizePx, 12, 'conversation font size clamps at min');
+assert.equal(normalizeAppearanceSettings({ conversationFontSizePx: 30 }).conversationFontSizePx, 22, 'conversation font size clamps at max');
+assert.throws(() => appearanceSettingsInput.parse({ conversationFontSizePx: 11 }), 'service rejects conversation font size under 12');
+assert.throws(() => appearanceSettingsInput.parse({ conversationFontSizePx: 23 }), 'service rejects conversation font size over 22');
+for (const width of CONVERSATION_WIDTH_OPTIONS) {
+  const saved = appearanceSettingsInput.parse({ conversationWidth: width.value });
+  assert.equal(normalizeAppearanceSettings(JSON.parse(JSON.stringify(saved))).conversationWidth, width.value);
+}
+for (const breakout of CONVERSATION_BREAKOUT_OPTIONS) {
+  const saved = appearanceSettingsInput.parse({ conversationBreakout: breakout.value });
+  assert.equal(normalizeAppearanceSettings(JSON.parse(JSON.stringify(saved))).conversationBreakout, breakout.value);
+}
+assert.throws(() => appearanceSettingsInput.parse({ conversationWidth: 'huge' }));
+assert.throws(() => appearanceSettingsInput.parse({ conversationBreakout: 'bleed' }));
+assert.equal(normalizeAppearanceSettings({ conversationWidth: 'huge' as never }).conversationWidth, 'default');
+assert.equal(normalizeAppearanceSettings({ conversationBreakout: 'bleed' as never }).conversationBreakout, 'off');
 
 // Recent projects: newest first, deduplicated, without the active or deleted ones.
 const stored = new Map<string, string>();
@@ -57,6 +76,18 @@ try {
     applyUiFont(restored);
     assert.equal(properties.get('--patterm-terminal-max-width'), enabled ? '960px' : 'none');
   }
+  applyUiFont(normalizeAppearanceSettings({ conversationFontSizePx: 18, conversationWidth: 'narrow', conversationBreakout: 'wider' }));
+  assert.equal(properties.get('--patterm-conversation-font-size'), '18px');
+  assert.equal(properties.get('--patterm-conversation-max-width'), '42.5rem');
+  assert.equal(properties.get('--patterm-conversation-breakout-max-width'), '62.5rem');
+  assert.equal(properties.get('--patterm-conversation-breakout-justify'), 'center');
+  applyUiFont(normalizeAppearanceSettings({ conversationWidth: 'default', conversationBreakout: 'full' }));
+  assert.equal(properties.get('--patterm-conversation-max-width'), '50rem');
+  assert.equal(properties.get('--patterm-conversation-breakout-max-width'), '100cqi');
+  applyUiFont(normalizeAppearanceSettings({ conversationWidth: 'full', conversationBreakout: 'wider' }));
+  assert.equal(properties.get('--patterm-conversation-max-width'), '100%');
+  assert.equal(properties.get('--patterm-conversation-breakout-max-width'), '0px');
+  assert.equal(properties.get('--patterm-conversation-breakout-justify'), 'flex-start');
 } finally {
   Reflect.deleteProperty(globalThis, 'document');
 }

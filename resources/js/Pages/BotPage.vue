@@ -6,7 +6,7 @@
         <!-- Laid out like an agent's header, lined up with the conversation,
              with a way back to the list on a phone. -->
         <header class="relative z-10 shrink-0 bg-background" :class="phoneLayout ? 'pb-1' : 'pb-3 pt-4'">
-          <div class="mx-auto flex w-full items-center" :class="phoneLayout ? 'h-12 gap-1.5 pl-1 pr-1.5' : 'max-w-[50rem] gap-3 px-4 2xl:max-w-[1000px]'">
+          <div class="mx-auto flex w-full items-center" :class="phoneLayout ? 'h-12 gap-1.5 pl-1 pr-1.5' : 'max-w-[var(--patterm-conversation-max-width,50rem)] gap-3 px-4'">
             <PhoneBackButton v-if="phoneLayout && route.name === 'bot'" :waiting="waiting" @back="back" />
             <BotAvatar :avatar="row.bot.avatar" :size="28" :activity="row.activity" motion />
             <div class="min-w-0 flex-1">

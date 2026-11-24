@@ -1,5 +1,5 @@
 <template>
-  <div class="relative mx-auto grid h-full min-h-0 w-full md:max-w-[calc(var(--patterm-terminal-max-width,960px)+320px)] md:grid-cols-[320px_minmax(0,1fr)]">
+  <div class="relative mx-auto grid h-full min-h-0 w-full md:grid-cols-[320px_minmax(0,1fr)]">
     <LoadingBar :active="busy || conversationLoading || positioningInitialMessages" label="Loading conversation history" />
     <aside class="flex h-full min-h-0 flex-col space-y-3 md:border-r md:border-border/70 md:pr-4">
       <div class="flex h-8 shrink-0 items-center justify-between gap-2">
@@ -55,8 +55,8 @@
     <section class="flex h-full min-h-0 min-w-0 flex-col">
       <div v-if="!selectedConversation" class="flex min-h-64 items-center justify-center text-sm text-muted-foreground">Select a conversation.</div>
       <div v-else class="flex min-h-0 flex-1 flex-col">
-        <header class="shrink-0 px-5 pb-4">
-          <div class="flex items-center justify-between gap-3">
+        <header class="shrink-0 pb-4">
+          <div class="mx-auto flex w-full max-w-[var(--patterm-conversation-max-width,50rem)] items-center justify-between gap-3 px-4">
             <div class="min-w-0">
               <h3 class="flex h-8 items-center text-sm font-semibold"><span class="truncate">{{ selectedConversation.title || selectedConversation.providerConversationId }}</span></h3>
               <p class="truncate text-xs text-muted-foreground">{{ selectedConversation.cwd || 'No cwd' }}</p>

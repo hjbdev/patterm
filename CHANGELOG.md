@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Conversation display settings under Settings › Appearance: a 12–22 px font size
+  slider with live preview (scaling prose, headings, code blocks, and user
+  messages proportionally), conversation column width presets (Narrow, Default,
+  Wide, Full), and a Wide tables & media breakout setting (Off, Wider, Full)
+  that lets HTML figures, Markdown tables, and images extend symmetrically past
+  narrower prose columns.
+
 - Bots and the assistant can call `bot_stay_quiet` to handle unsolicited wakeups
   (digests, helper reports, agent messages, timer callbacks, routine reports)
   silently without raising a `turn_finished` notification across any harness.

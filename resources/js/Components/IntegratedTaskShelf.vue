@@ -3,7 +3,7 @@
        negative margin overlaps the composer's padding so the shelf sits on
        its border; it stacks above the form so that padding does not take its
        clicks. A row opens the task's drawer, which has its output. -->
-  <section class="relative z-10 mx-auto -mb-4 w-full max-w-[50rem] px-4 text-xs 2xl:max-w-[1000px]" aria-label="Background tasks" data-component="integrated-tasks">
+  <section class="relative z-10 mx-auto -mb-4 w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4 text-xs" aria-label="Background tasks" data-component="integrated-tasks">
     <div class="mx-3 overflow-hidden rounded-t-lg border border-b-0 border-border bg-muted/25">
       <!-- The list slides up out of the composer. Its height animates from a
            measurement, then goes back to auto so it follows tasks that start
