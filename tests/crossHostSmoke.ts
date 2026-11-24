@@ -102,7 +102,8 @@ async function main(): Promise<void> {
       sidecarPath: debugSidecarPath(),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
       runtime: 'node',
-      publicOrigin: origin
+      publicOrigin: origin,
+      historyHomeDir: dir
     });
     const host: Host = { app, server: null, port, dir, origin };
     hosts.push(host);
@@ -121,7 +122,8 @@ async function main(): Promise<void> {
       sidecarPath: debugSidecarPath(),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
       runtime: 'node',
-      publicOrigin: host.origin
+      publicOrigin: host.origin,
+      historyHomeDir: host.dir
     });
     await host.app.mcp.call('harness_discover', {});
     servePeerRoutes(host.app);

@@ -29,7 +29,22 @@ export class AgentHistorySourceService {
   }
 
   configure(raw: z.input<typeof historyConfigureInput>) {
-    const input = historyConfigureInput.parse(raw);
+    this.save(historyConfigureInput.parse(raw));
+    return this.sources();
+  }
+
+  // Every agent CLI's own history location imports and is watched, including
+  // one a person turned off before history became automatic. A location that
+  // doesn't exist yet is watched from its nearest parent, so a CLI installed
+  // later starts importing without a restart. `env` is the environment agents
+  // launch with, since CLAUDE_CONFIG_DIR and CODEX_HOME move their history.
+  enableDefaultSources(homeDir?: string, env: NodeJS.ProcessEnv = {}): void {
+    for (const source of this.discovery.defaultSources(homeDir, env)) {
+      this.save({ provider: source.provider, path: source.path, source_kind: source.sourceKind, enabled: true, watch_enabled: true });
+    }
+  }
+
+  private save(input: z.output<typeof historyConfigureInput>): void {
     const now = new Date().toISOString();
     const sourcePath = this.canonicalPath(input.provider, input.path);
     const sourceKind = input.source_kind ?? this.discovery.candidateForPath(input.provider, sourcePath).sourceKind;
@@ -38,7 +53,6 @@ export class AgentHistorySourceService {
       values (?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(provider, path) do update set source_kind = excluded.source_kind, enabled = excluded.enabled, watch_enabled = excluded.watch_enabled, updated_at = excluded.updated_at
     `).run(randomUUID(), input.provider, sourceKind, sourcePath, input.enabled ? 1 : 0, input.watch_enabled ? 1 : 0, now, now);
-    return this.sources();
   }
 
   enabledWatchSources(): HistorySourceCandidate[] {

@@ -1,5 +1,5 @@
 <template>
-  <div class="px-3.5 py-3">
+  <div v-show="visible" class="px-3.5 py-3">
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
       <div v-if="$slots.icon" class="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"><slot name="icon" /></div>
       <div class="min-w-0 flex-1" :class="muted ? 'text-muted-foreground' : ''">
@@ -18,8 +18,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { settingSaveStatus } from '../../Composables/useSettingsAutosave';
+import { useSettingsSearch } from './settingsSearch';
 
-const props = defineProps<{ muted?: boolean; saveKey?: string }>();
+// `keywords` are the words search finds this item by, such as its name.
+const props = defineProps<{ muted?: boolean; saveKey?: string; keywords?: string }>();
+
+const { visible } = useSettingsSearch(() => [props.keywords], { row: true });
 
 const error = computed(() => {
   const saved = props.saveKey ? settingSaveStatus(props.saveKey) : null;

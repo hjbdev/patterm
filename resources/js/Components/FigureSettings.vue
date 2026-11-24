@@ -8,7 +8,7 @@
       </SettingsRow>
     </SettingsSection>
     <SettingsSection list title="Templates" description="Saved pages agents fill with data instead of writing HTML each time. Agents publish them with template_publish. A version never changes once published, and every page shown keeps the version it drew.">
-      <SettingsItem v-for="item in templates" :key="`${item.name}@${item.version}`" :muted="!item.latest" data-component="figure-template-version">
+      <SettingsItem v-for="item in templates" :key="`${item.name}@${item.version}`" :keywords="item.name" :muted="!item.latest" data-component="figure-template-version">
         <template #title>
           <span class="font-mono text-xs">{{ item.name }}</span>
           <Badge variant="secondary" class="h-4 px-1.5 text-[10px] font-medium">v{{ item.version }}</Badge>
