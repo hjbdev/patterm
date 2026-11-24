@@ -1500,10 +1500,6 @@ export class IntegratedAgentService {
     return this.provider(this.harness(processId));
   }
 
-  private steers(processId: string): boolean {
-    try { return this.forProcess(processId).capabilities?.input.steering === true; } catch { return false; }
-  }
-
   private sessionHarness(processId: string): string | null {
     const row = this.database.connection.prepare(`
       select harness from sessions
@@ -1760,9 +1756,7 @@ export class IntegratedAgentService {
     const preserveAttention = this.preservedAttention.has(processId);
     if (activity === 'idle' || activity === 'error') this.preservedAttention.delete(processId);
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
-    // An agent that takes input mid-turn may have refused it only while it
-    // waited for the user.
-    if (activity === 'idle' || activity === 'error' || (activity === 'working' && awaitingUser(previous) && this.steers(processId))) this.flushHeld(processId);
+    if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
     this.onWorkbenchChange?.();
     for (const listener of this.activityListeners) {
       try { listener({ processId, previous, activity, snapshot, ...(preserveAttention ? { preserveAttention: true } : {}) }); } catch { /* a listener must not break observation */ }

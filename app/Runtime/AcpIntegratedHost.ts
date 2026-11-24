@@ -240,13 +240,13 @@ function stopBackground(): void {
 // Kept apart from the transcript, whose oldest rows are evicted while a
 // daemon can run for the life of the session. A finished command keeps its
 // final state so an open task drawer settles.
-// agy keeps its turn open while they run, so a command the reply has already
-// moved past is one too. Stopping it then ends that turn: ACP has no other way.
+// agy keeps its turn open while they run, so a command its reply or later
+// tools have moved past is one too. Stopping it then ends that turn: ACP has no other way.
 function backgroundTasks(): Row[] {
   for (const id of runningTools) {
     if (backgroundCommands.has(id)) continue;
     const index = messages.findIndex((message) => message.id === id);
-    if (active && index >= 0 && !messages.slice(index + 1).some((message) => message.role === 'assistant' && message.kind === 'text' && message.text.trim())) continue;
+    if (active && index >= 0 && !messages.slice(index + 1).some((message) => message.role === 'assistant')) continue;
     const row = messages[index];
     const input = (row?.tool?.input ?? {}) as Row;
     const command = input.CommandLine ?? input.command;
@@ -530,6 +530,9 @@ function admit(): void {
         replace(userEcho);
       }
     }
+    // A late receipt opens the turn to steering. Every status retries held
+    // input, and nothing else announces this.
+    if (active && !admission) publish({ kind: 'status', status, detail: workingDetail || undefined });
   }
   if (!admission) return;
   clearTimeout(admission.timer); admission.resolve(); admission = null;
