@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
+use std::process::{self, Command};
 #[cfg(windows)]
 use std::process::Stdio;
-use std::process::{self, Command};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -199,9 +199,9 @@ mod ipc {
         };
         let normalized = normalize_path(&abs);
         let lower = normalized.to_string_lossy().to_lowercase();
-        let dir = Path::new(&lower).parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "socket path needs a parent")
-        })?;
+        let dir = Path::new(&lower)
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "socket path needs a parent"))?;
         let key_path = dir.join(".ipc-key");
         let key = fs::read_to_string(&key_path)?.trim().to_string();
         let mut input = Vec::with_capacity(key.len() + lower.len());
@@ -412,9 +412,8 @@ mod ipc {
                 }
             }
             let mut transferred: u32 = 0;
-            if unsafe {
-                GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE)
-            } == 0
+            if unsafe { GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE) }
+                == 0
             {
                 let err = io::Error::last_os_error();
                 return if is_pipe_eof(&err) || self.handle.is_closed() {
@@ -456,9 +455,8 @@ mod ipc {
                 }
             }
             let mut transferred: u32 = 0;
-            if unsafe {
-                GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE)
-            } == 0
+            if unsafe { GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE) }
+                == 0
             {
                 return Err(io::Error::last_os_error());
             }
@@ -594,8 +592,10 @@ impl PersistentSocket {
                                                 .get("push")
                                                 .and_then(Value::as_bool)
                                                 .unwrap_or(false);
-                                            let result =
-                                                value.get("result").cloned().unwrap_or(Value::Null);
+                                            let result = value
+                                                .get("result")
+                                                .cloned()
+                                                .unwrap_or(Value::Null);
                                             let _ = tx.send(Ok(SocketResponse { result, push }));
                                         }
                                     }
@@ -686,12 +686,16 @@ impl PersistentSocket {
 }
 
 #[cfg(unix)]
-fn connect_ipc(socket_path: &str) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
+fn connect_ipc(
+    socket_path: &str,
+) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
     ipc::IpcReader::connect(socket_path)
 }
 
 #[cfg(windows)]
-fn connect_ipc(socket_path: &str) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
+fn connect_ipc(
+    socket_path: &str,
+) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
     ipc::connect(socket_path)
 }
 
@@ -735,9 +739,7 @@ fn attach_auth(
 // --- One-shot modes ---
 
 fn run_print_headers(cfg: &EnvConfig, op: &str, args: &[String]) -> Result<()> {
-    let server_id = args
-        .first()
-        .ok_or_else(|| anyhow!("missing MCP server ID"))?;
+    let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let sock = PersistentSocket::new(cfg.socket_path.clone(), None);
     let mut req = Map::new();
     req.insert("op".to_string(), json!(op));
@@ -793,9 +795,7 @@ fn enable_kill_on_exit_job() {
 }
 
 fn run_mcp_exec(cfg: &EnvConfig, args: &[String]) -> Result<()> {
-    let server_id = args
-        .first()
-        .ok_or_else(|| anyhow!("missing MCP server ID"))?;
+    let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let sock = PersistentSocket::new(cfg.socket_path.clone(), None);
     let mut req = Map::new();
     req.insert("op".to_string(), json!("mcp-exec"));
@@ -863,22 +863,14 @@ fn run_mcp_exec(cfg: &EnvConfig, args: &[String]) -> Result<()> {
 }
 
 fn run_mcp_bridge(cfg: &EnvConfig, args: &[String]) -> Result<()> {
-    let server_id = args
-        .first()
-        .ok_or_else(|| anyhow!("missing MCP server ID"))?;
+    let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let js_shim = cfg.js_shim.clone().or_else(|| {
         let exe = env::current_exe().ok()?;
         let dir = exe.parent()?;
         for candidate in [
             dir.join("patterm-mcp.js"),
             dir.join("..").join("mcp").join("patterm-mcp.js"),
-            dir.join("..")
-                .join("..")
-                .join("..")
-                .join("..")
-                .join("dist")
-                .join("mcp")
-                .join("patterm-mcp.js"),
+            dir.join("..").join("..").join("..").join("..").join("dist").join("mcp").join("patterm-mcp.js"),
         ] {
             if candidate.exists() {
                 return Some(candidate.to_string_lossy().into_owned());
@@ -1163,11 +1155,7 @@ fn validate_arguments(schema: &Value, args: &Value) -> std::result::Result<(), S
             }
         }
         let props = schema_obj.get("properties").and_then(Value::as_object);
-        if schema_obj
-            .get("additionalProperties")
-            .and_then(Value::as_bool)
-            == Some(false)
-        {
+        if schema_obj.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
             for key in args_obj.keys() {
                 if !props.is_some_and(|p| p.contains_key(key)) {
                     return Err(format!("unexpected property '{key}'"));
@@ -1210,7 +1198,9 @@ fn validate_value(
         value.as_str(),
     ) {
         if (s.chars().count() as u64) < min_len {
-            return Err(format!("property '{key}' must have length >= {min_len}"));
+            return Err(format!(
+                "property '{key}' must have length >= {min_len}"
+            ));
         }
     }
     Ok(())
@@ -1480,10 +1470,7 @@ fn handle_tool_call(
     };
 
     let Some(tool) = tool else {
-        let notice = catalogue
-            .lock()
-            .unwrap()
-            .pending_notice(cfg.relist_grace_ms);
+        let notice = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms);
         let mut message = format!("Tool {name} not found");
         if let Some(n) = notice {
             message.push_str("\n\n");
@@ -1509,11 +1496,7 @@ fn handle_tool_call(
             "type": "text",
             "text": format!("Invalid arguments for tool {name}: {reason}")
         })];
-        if let Some(notice) = catalogue
-            .lock()
-            .unwrap()
-            .pending_notice(cfg.relist_grace_ms)
-        {
+        if let Some(notice) = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms) {
             content.push(json!({ "type": "text", "text": notice }));
         }
         write_json_line(
@@ -1557,11 +1540,7 @@ fn handle_tool_call(
     match sock.request(req) {
         Ok(resp) => {
             let mut content = format_tool_content(resp.result);
-            if let Some(notice) = catalogue
-                .lock()
-                .unwrap()
-                .pending_notice(cfg.relist_grace_ms)
-            {
+            if let Some(notice) = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms) {
                 content.push(json!({ "type": "text", "text": notice }));
             }
             write_json_line(
@@ -1587,11 +1566,7 @@ fn send_tool_error(
     cfg: &EnvConfig,
 ) {
     let mut content = vec![json!({ "type": "text", "text": message })];
-    if let Some(notice) = catalogue
-        .lock()
-        .unwrap()
-        .pending_notice(cfg.relist_grace_ms)
-    {
+    if let Some(notice) = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms) {
         content.push(json!({ "type": "text", "text": notice }));
     }
     write_json_line(
@@ -1630,8 +1605,8 @@ fn format_tool_content(result: Value) -> Vec<Value> {
             }
             return content;
         }
-        let text =
-            serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_else(|_| "{}".to_string());
+        let text = serde_json::to_string_pretty(&Value::Object(obj))
+            .unwrap_or_else(|_| "{}".to_string());
         return vec![json!({ "type": "text", "text": text })];
     }
     let text = serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string());

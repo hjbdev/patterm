@@ -7,9 +7,9 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::mpsc::{self, TryRecvError};
 #[cfg(not(unix))]
 use std::sync::mpsc::RecvTimeoutError;
-use std::sync::mpsc::{self, TryRecvError};
 #[cfg(unix)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
