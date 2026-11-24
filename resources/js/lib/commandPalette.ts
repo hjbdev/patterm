@@ -107,8 +107,14 @@ export function rendererCommands(projectId: string | null, repository = true, sn
   ];
 }
 
-// Harnesses name some selectors differently, such as Codex's Thinking.
-const SELECTOR_ALIASES: Record<string, string[]> = { effort: ['Effort', 'Reasoning', 'Thinking'] };
+// Harnesses name reasoning selectors differently (effort, variant, thought_level).
+const REASONING_ALIASES = ['Effort', 'Reasoning', 'Thinking'];
+const FALLBACK_REASONING_SELECTORS = new Set(['effort', 'variant', 'thought_level']);
+function selectorAliases(selectorId: string, controls: IntegratedControls): string[] {
+  const reasoningId = controls.capabilities?.selectors.reasoning;
+  if (reasoningId ? selectorId === reasoningId : FALLBACK_REASONING_SELECTORS.has(selectorId)) return REASONING_ALIASES;
+  return [];
+}
 
 // The open conversation publishes its native selectors. Each becomes a setting
 // that opens its choices, placed after the agent's main actions.
@@ -118,7 +124,7 @@ export function withIntegratedSelectors(commands: CommandDescriptor[], processId
     id: `integrated:selector:${processId}:${selector.id}`,
     label: selector.label,
     hint: selector.options.find(option => option.value === selector.value)?.label ?? selector.value,
-    aliases: [selector.label, ...(SELECTOR_ALIASES[selector.id] ?? [])].flatMap(name => [name, `Change ${name.toLowerCase()}`]),
+    aliases: [selector.label, ...selectorAliases(selector.id, controls)].flatMap(name => [name, `Change ${name.toLowerCase()}`]),
     group: 'current',
     kind: 'page',
     inline: true,

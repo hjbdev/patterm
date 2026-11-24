@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { AgentCapabilities } from '../Agents/AgentProtocol';
 import type { DatabaseService } from './DatabaseService';
 import type { IntegratedAgentService, ReviewPrompt } from './IntegratedAgentService';
 import {
@@ -65,12 +66,18 @@ export class ParentRequestService {
 
   constructor(
     private readonly database: DatabaseService,
-    private readonly integrated: Pick<IntegratedAgentService, 'peekConversation' | 'replyPermission' | 'replyQuestion' | 'replyForm'>,
+    private readonly integrated: Pick<IntegratedAgentService, 'peekConversation' | 'replyPermission' | 'replyQuestion' | 'replyForm'> & {
+      capabilities?: (harness: string) => AgentCapabilities;
+    },
     private readonly send: (to: string, text: string, review: ReviewPrompt) => Promise<unknown>,
     private readonly notifyUser: (processId: string, kind: RequestKind) => void,
     private readonly clearNotice: (processId: string, kind: RequestKind) => void,
     private readonly log: (event: string, data: Record<string, unknown>) => void
   ) {}
+
+  private sourceCapabilities(source: Pick<Process, 'harness'>): AgentCapabilities | undefined {
+    return source.harness ? this.integrated.capabilities?.(source.harness) : undefined;
+  }
 
   handles(processId: string): boolean {
     return Boolean(this.process(processId)?.parent_process_id);
@@ -104,7 +111,7 @@ export class ParentRequestService {
       if (requests.has(id)) continue;
       const request: Request = { source, native: item, visited: new Set([processId]), offer: null, replying: false, answered: false, escalated: false };
       requests.set(id, request);
-      this.advance(request, item.kind === 'form' && !choiceQuestions(source, item.data) ? null : source.parent_process_id);
+      this.advance(request, item.kind === 'form' && !choiceQuestions(source, item.data, this.sourceCapabilities(source)) ? null : source.parent_process_id);
     }
     this.clearIfHandled(processId);
   }
@@ -178,9 +185,10 @@ export class ParentRequestService {
   private async apply(source: Process, pending: NativeRequest, reply: DirectRequestReply, who: 'parent' | 'overseer'): Promise<void> {
     const { decision } = reply;
     const instead = who === 'parent' ? 'Reject or escalate this request.' : 'Reject it or leave it for the user.';
+    const capabilities = this.sourceCapabilities(source);
     if (pending.kind === 'permission') {
       if (decision === 'answer') throw new Error(who === 'parent' ? 'Use once, reject or escalate for a permission request' : 'Use once or reject for a permission request');
-      if (decision === 'once' && !canApprove(source, pending.data)) {
+      if (decision === 'once' && !canApprove(source, pending.data, capabilities)) {
         throw new Error(`Only a one-time read of a workspace file can be approved by the ${who === 'parent' ? 'parent' : 'bot'}. ${instead}`);
       }
       await this.integrated.replyPermission(source.id, pending.data.id, decision);
@@ -193,7 +201,7 @@ export class ParentRequestService {
       return;
     }
     const form = pending.data;
-    const questions = choiceQuestions(source, form);
+    const questions = choiceQuestions(source, form, capabilities);
     if (!questions) throw new Error('This form needs the user to answer it');
     validateAnswers(questions, reply.answers);
     const raw = Object.fromEntries(form.fields.map((field, index): [string, string | string[] | undefined] => {
@@ -251,7 +259,7 @@ export class ParentRequestService {
       offer.timer.unref();
       this.offers.set(id, offer);
       request.offer = offer;
-      void this.send(parent.id, reviewMessage(offer), { id, revoked: offer.controller.signal, current: () => this.isCurrent(offer) }).catch(next);
+      void this.send(parent.id, reviewMessage(offer, this.sourceCapabilities(offer.request.source)), { id, revoked: offer.controller.signal, current: () => this.isCurrent(offer) }).catch(next);
       return;
     }
     request.escalated = true;
@@ -298,7 +306,7 @@ const clip = (value: string | undefined, limit: number) => value && value.length
 // An agent's pending native requests, bounded, for agents that read its
 // conversation. answerable says whether an agent may answer it at all, with
 // parent_request_reply or agent_request_reply; the rest need the user.
-export function pendingRequestSummary(source: Pick<Process, 'harness' | 'cwd'>, conversation: unknown): Record<string, unknown>[] {
+export function pendingRequestSummary(source: Pick<Process, 'harness' | 'cwd'>, conversation: unknown, capabilities?: AgentCapabilities): Record<string, unknown>[] {
   return nativeRequests(conversation).slice(0, 8).map((item) => {
     if (item.kind === 'permission') {
       const permission = item.data;
@@ -310,10 +318,10 @@ export function pendingRequestSummary(source: Pick<Process, 'harness' | 'cwd'>, 
         ...(permission.detail ? { detail: clip(permission.detail, 1_000) } : {}),
         ...(permission.patch ? { has_patch: true } : {}),
         ...(permission.plan ? { has_plan: true } : {}),
-        can_approve_once: canApprove(source, permission)
+        can_approve_once: canApprove(source, permission, capabilities)
       };
     }
-    const questions = item.kind === 'question' ? item.data : choiceQuestions(source, item.data);
+    const questions = item.kind === 'question' ? item.data : choiceQuestions(source, item.data, capabilities);
     const json = questions ? questionData(questions.questions) : null;
     const answerable = Boolean(json && json.length <= 8_000);
     return {
@@ -388,8 +396,8 @@ function expandHome(resource: string): string {
   return resource;
 }
 
-function canApprove(source: Pick<Process, 'harness' | 'cwd'>, permission: IntegratedPermission): boolean {
-  if (source.harness !== 'agy' || permission.once !== true || permission.toolKind !== 'read' || !source.cwd
+function canApprove(source: Pick<Process, 'harness' | 'cwd'>, permission: IntegratedPermission, capabilities?: AgentCapabilities): boolean {
+  if (!capabilities?.interactions.parentReadAutoApprove || permission.once !== true || permission.toolKind !== 'read' || !source.cwd
     || permission.command || permission.patch || permission.plan || permission.resources.length !== 1
     || permission.resources[0]!.length > 1_000 || source.cwd.length > 1_000) return false;
   try {
@@ -411,10 +419,10 @@ function sensitivePath(relative: string): boolean {
     /^(?:\.env(?:$|[.-])|\.ssh$|\.aws$|\.git$|\.gnupg$|\.npmrc$|\.netrc$|\.pypirc$|\.docker$|\.kube$|\.codex$|\.claude$|\.gemini$|auth\.json$|id_(?:rsa|ed25519|ecdsa|dsa)(?:$|\.)|\.?(?:secrets?|credentials?)(?:$|[._-]))/i.test(component)
     || /\.(?:pem|key|p12|pfx|kdbx)$/i.test(component));
 }
-// OpenCode's question tool uses choice forms. Other forms can include
-// third-party inputs or external actions and stay with the user.
-function choiceQuestions(source: Pick<Process, 'harness'>, form: IntegratedFormRequest): IntegratedQuestionRequest | null {
-  if (source.harness !== 'opencode' || form.detail || form.fields.some((field) =>
+// Harnesses whose question tool uses choice forms declare choiceFormsAsQuestions.
+// Other forms can include third-party inputs or external actions and stay with the user.
+function choiceQuestions(_source: Pick<Process, 'harness'>, form: IntegratedFormRequest, capabilities?: AgentCapabilities): IntegratedQuestionRequest | null {
+  if (!capabilities?.interactions.choiceFormsAsQuestions || form.detail || form.fields.some((field) =>
     field.when.length || field.url || new Set(field.options.map((option) => option.label)).size !== field.options.length)) return null;
   const view = formAsQuestions(form, form.fields);
   // A multiselect custom field uses a separate native "Other" input. Let a
@@ -439,9 +447,9 @@ function questionData(questions: IntegratedQuestionRequest['questions']): string
   return JSON.stringify(questions.map(({ key: _key, ...question }) => question));
 }
 
-function reviewMessage({ id, request: { source, native } }: Offer): string {
+function reviewMessage({ id, request: { source, native } }: Offer, capabilities?: AgentCapabilities): string {
   if (native.kind !== 'permission') {
-    const question = native.kind === 'question' ? native.data : choiceQuestions(source, native.data)!;
+    const question = native.kind === 'question' ? native.data : choiceQuestions(source, native.data, capabilities)!;
     const json = questionData(question.questions);
     const complete = json.length <= 8_000;
     return `[Patterm: subagent question]

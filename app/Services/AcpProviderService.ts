@@ -31,7 +31,7 @@ export const ACP_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
   hibernation: { supported: true },
   archiveFallback: 'never',
   input: { steering: false, nativeQueue: false, configureWhileBusy: false, routineDigest: false },
-  interactions: { permissions: true, questions: false, forms: false, parentReadAutoApprove: true },
+  interactions: { permissions: true, questions: false, forms: false, parentReadAutoApprove: true, choiceFormsAsQuestions: false },
   features: {
     goals: false,
     compact: true,
@@ -43,7 +43,8 @@ export const ACP_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
     serviceTier: false,
     liveModels: false,
     sessionDirectory: false,
-    olderMessages: true
+    olderMessages: true,
+    taskOutput: true
   },
   selectors: { reasoning: 'thought_level' }
 });

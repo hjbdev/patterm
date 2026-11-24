@@ -7,11 +7,12 @@ import type { McpLaunchServer } from '../Services/McpServerRegistry';
 import type { MemoryUpdate } from '../Services/MemoryPushService';
 import type { IntegratedFormRequest, IntegratedPermission, IntegratedQuestionRequest, IntegratedQueuedMessage } from '../Services/TranscriptProjection';
 
+import type { AgentCapabilitiesDto, AgentHostKind } from './AgentCapabilitiesDto';
+export type { AgentCapabilitiesDto, AgentHostKind };
+
 export type AgentAdapterId = HarnessId;
 
 export type AgentArchiveFallback = 'always' | 'when-unavailable' | 'never';
-
-export type AgentHostKind = 'supervised-socket' | 'external-daemon';
 
 export type SupervisedHostKind = 'claude-host' | 'app-server' | 'acp-host';
 
@@ -27,12 +28,14 @@ export interface AgentCapabilities {
     nativeQueue: boolean;
     configureWhileBusy: boolean;
     routineDigest: boolean;
+    maxContextBytes?: number | null;
   };
   interactions: {
     permissions: boolean;
     questions: boolean;
     forms: boolean;
     parentReadAutoApprove: boolean;
+    choiceFormsAsQuestions: boolean;
   };
   features: {
     goals: boolean;
@@ -46,6 +49,7 @@ export interface AgentCapabilities {
     liveModels: boolean;
     sessionDirectory: boolean;
     olderMessages: boolean;
+    taskOutput: boolean;
   };
   selectors: {
     reasoning?: string;
@@ -55,6 +59,50 @@ export interface AgentCapabilities {
     defaultCacheTtlMs: number | null;
     modelCacheTtlMs?: (model: string | null) => number | null;
   };
+  messageIdPrefix?: string;
+}
+
+// JSON-serializable projection of AgentCapabilities exposed to the renderer
+// (on Workbench harnesses and live IntegratedControls) without shipping
+// runtime-only callbacks across IPC or paired-host sockets.
+export function serializeAgentCapabilities(capabilities: AgentCapabilities): AgentCapabilitiesDto {
+  return {
+    hostKind: capabilities.hostKind,
+    input: {
+      steering: capabilities.input.steering,
+      nativeQueue: capabilities.input.nativeQueue,
+      configureWhileBusy: capabilities.input.configureWhileBusy
+    },
+    interactions: {
+      permissions: capabilities.interactions.permissions,
+      questions: capabilities.interactions.questions,
+      forms: capabilities.interactions.forms
+    },
+    features: {
+      goals: capabilities.features.goals,
+      compact: capabilities.features.compact,
+      slashCommands: capabilities.features.slashCommands,
+      voice: capabilities.features.voice,
+      statelessGenerate: capabilities.features.statelessGenerate,
+      serviceTier: capabilities.features.serviceTier,
+      olderMessages: capabilities.features.olderMessages,
+      taskOutput: capabilities.features.taskOutput
+    },
+    selectors: {
+      ...(capabilities.selectors.reasoning ? { reasoning: capabilities.selectors.reasoning } : {}),
+      ...(capabilities.selectors.speed ? { speed: capabilities.selectors.speed } : {})
+    },
+    ...(capabilities.messageIdPrefix ? { messageIdPrefix: capabilities.messageIdPrefix } : {})
+  };
+}
+
+// OpenAI documents a 30-minute minimum prompt-cache TTL for GPT-5.6 and later;
+// earlier models can drop an in-memory cache after 5 to 10 minutes.
+export function thirtyMinuteCacheModel(model: string): boolean {
+  const match = /^gpt-(\d+)(?:\.(\d+))?(?![\d.])/.exec(model);
+  if (!match) return false;
+  const major = Number(match[1]);
+  return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 6);
 }
 
 export function defaultAgentCapabilities(overrides: Partial<AgentCapabilities> = {}): AgentCapabilities {
@@ -70,6 +118,7 @@ export function defaultAgentCapabilities(overrides: Partial<AgentCapabilities> =
       nativeQueue: false,
       configureWhileBusy: true,
       routineDigest: false,
+      maxContextBytes: null,
       ...overrides.input
     },
     interactions: {
@@ -77,6 +126,7 @@ export function defaultAgentCapabilities(overrides: Partial<AgentCapabilities> =
       questions: false,
       forms: false,
       parentReadAutoApprove: false,
+      choiceFormsAsQuestions: false,
       ...overrides.interactions
     },
     features: {
@@ -91,6 +141,7 @@ export function defaultAgentCapabilities(overrides: Partial<AgentCapabilities> =
       liveModels: false,
       sessionDirectory: false,
       olderMessages: false,
+      taskOutput: false,
       ...overrides.features
     },
     selectors: {
@@ -99,7 +150,8 @@ export function defaultAgentCapabilities(overrides: Partial<AgentCapabilities> =
     compaction: {
       defaultCacheTtlMs: null,
       ...overrides.compaction
-    }
+    },
+    ...(overrides.messageIdPrefix ? { messageIdPrefix: overrides.messageIdPrefix } : {})
   };
 }
 
@@ -179,6 +231,7 @@ export interface AgentControls {
   commands: AgentCommand[];
   revision?: string;
   goals?: import('../Services/IntegratedGoal').IntegratedGoalSupport;
+  capabilities?: AgentCapabilitiesDto;
 }
 
 export interface AgentReviewPrompt {

@@ -216,7 +216,7 @@ export function outgoingFor(processId: string): OutgoingMessage[] {
   return outgoing.get(processId) ?? [];
 }
 
-export function beginOutgoingMessage(processId: string, payload: ComposerSendPayload & { hash: string }, messages: TranscriptMessage[], provider: string | null): OutgoingMessage {
+export function beginOutgoingMessage(processId: string, payload: ComposerSendPayload & { hash: string }, messages: TranscriptMessage[], messageIdPrefix?: string | null): OutgoingMessage {
   let entries = outgoing.get(processId);
   if (!entries) {
     entries = reactive([]) as OutgoingMessage[];
@@ -235,7 +235,7 @@ export function beginOutgoingMessage(processId: string, payload: ComposerSendPay
       afterId: anchor ? transcriptMessageKey(anchor) : null,
       previewUrls: attachments.flatMap((attachment) => attachment.url ? [attachment.url] : []),
       row: {
-        id: `${provider === 'opencode' ? 'msg_' : 'user_'}${payload.messageId}`,
+        id: `${messageIdPrefix || 'user_'}${payload.messageId}`,
         role: 'user', kind: 'text', text: payload.text,
         createdAt: new Date().toISOString(),
         attachments,

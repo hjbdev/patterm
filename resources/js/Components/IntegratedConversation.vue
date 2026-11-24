@@ -226,7 +226,6 @@
         :compact="compactComposer ?? false"
         :addressee="addressee"
         :process-id="processId"
-        :provider="provider"
         :controls="composerControls"
         :controlling="controlling"
         :sending="sending"
@@ -353,6 +352,7 @@ import { permissionAsk } from '../../../app/Services/IntegratedAsking';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
 import { conversationFailure } from '../lib/conversationFailure';
+import { harnessLabel } from '../lib/harnessLabels';
 import { isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH } from '../../../app/Services/OpenCodeServiceErrors';
 
 // `embedded` conversations live outside the workbench main area, such as a routine run's dialog.
@@ -409,7 +409,7 @@ watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.
 // The drawer keeps the last known state of its task after Claude drops a
 // finished one from the snapshot.
 const openedTask = shallowRef<IntegratedTask | null>(null);
-const canOpenTasks = computed(() => provider.value === 'claude' || provider.value === 'codex' || provider.value === 'opencode' || provider.value === 'agy');
+const canOpenTasks = computed(() => controls.value.capabilities?.features.taskOutput ?? Boolean(provider.value));
 watch(tasks, (current) => {
   const task = openedTask.value && current.find((item) => item.id === openedTask.value!.id);
   if (task) openedTask.value = task;
@@ -459,13 +459,7 @@ let streamUnavailable = false;
 // A plain function, not a computed: streamUnavailable is not reactive, so a
 // cached computed would keep claiming push after the stream failed.
 const pushCapable = (): boolean => streaming.value && canSubscribe();
-const providerLabel = computed(() => {
-  if (provider.value === 'codex') return 'Codex';
-  if (provider.value === 'opencode') return 'OpenCode';
-  if (provider.value === 'claude') return 'Claude';
-  if (provider.value === 'agy') return 'Antigravity';
-  return 'The agent';
-});
+const providerLabel = computed(() => provider.value ? harnessLabel(provider.value) : 'The agent');
 const controls = shallowRef<IntegratedControls>({ selectors: [], commands: [] });
 const canRestart = computed(() => Boolean(props.restartable && (props.projectId || props.onRestartSession)));
 const composerControls = computed<IntegratedControls>(() => ended.value
@@ -776,10 +770,9 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       historyCursor.value = result.history_truncated === true && typeof cursor?.next === 'string' ? cursor.next : null;
     }
     streaming.value = result.streaming === true;
-    // Claude changes its own mode when it enters plan mode or a plan is
-    // approved, and Codex leaves Plan mode when a plan is approved; the
-    // snapshot that follows reports the new mode.
-    const mode = (result.provider === 'claude' || result.provider === 'codex') && typeof result.mode === 'string' ? result.mode : null;
+    // Agents that change their own mode (such as entering or leaving plan mode)
+    // report the new mode on the following snapshot.
+    const mode = typeof result.mode === 'string' ? result.mode : null;
     if (mode && controls.value.selectors.some((item) => item.id === 'mode' && item.value !== mode)) {
       controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item.id === 'mode' ? { ...item, value: mode } : item) };
     }
@@ -944,7 +937,7 @@ async function sendRequest(request: ComposerSendPayload & { hash: string }, opti
   transcriptRef.value?.followEnd();
   const command = nativeCommand(outgoing);
   if (command) beginSubmission(processId, outgoing);
-  const optimistic = command ? null : beginOutgoingMessage(processId, outgoing, transcriptMessages.value, provider.value);
+  const optimistic = command ? null : beginOutgoingMessage(processId, outgoing, transcriptMessages.value, controls.value.capabilities?.messageIdPrefix ?? (provider.value === 'opencode' ? 'msg_' : undefined));
   try {
     let result: unknown;
     if (command) {
@@ -1151,7 +1144,8 @@ async function readControls(token: number): Promise<void> {
       selectors: Array.isArray(result.selectors) ? result.selectors : [],
       commands: Array.isArray(result.commands) ? result.commands : [],
       ...(typeof result.revision === 'string' ? { revision: result.revision } : {}),
-      ...(normaliseGoalSupport(result.goals) ? { goals: normaliseGoalSupport(result.goals)! } : {})
+      ...(normaliseGoalSupport(result.goals) ? { goals: normaliseGoalSupport(result.goals)! } : {}),
+      ...(result.capabilities && typeof result.capabilities === 'object' ? { capabilities: result.capabilities } : {})
     };
     controlsError.value = '';
   } catch (cause) {
@@ -1213,10 +1207,12 @@ async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'ca
     }
     updated = true;
     // A cancelled message never reaches the agent, so no native row will
-    // replace its local copy. OpenCode lists a prompt as `msg_` and its id.
+    // replace its local copy. Strip any provider message-id prefix to match.
     if (action === 'cancel') {
       discardOutgoingMessage(processId, item.id);
-      discardOutgoingMessage(processId, item.id.replace(/^msg_/, ''));
+      const prefix = controls.value.capabilities?.messageIdPrefix;
+      if (prefix && item.id.startsWith(prefix)) discardOutgoingMessage(processId, item.id.slice(prefix.length));
+      else if (!prefix && item.id.startsWith('msg_')) discardOutgoingMessage(processId, item.id.slice(4));
     }
     if (token === generation) await refresh();
   });

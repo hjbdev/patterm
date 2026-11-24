@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { AgentCapabilities } from '../Agents/AgentProtocol';
 import { ASSISTANT_BOT_ID, purviewAllows, type Bot, type BotPurview } from '../Bots/BotSettings';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import type { AssistantMemoryService } from './AssistantMemoryService';
@@ -78,6 +79,7 @@ export class BotService {
     private readonly options: {
       log?: (event: string, data: Record<string, unknown>) => void;
       conversationSaved?: (harness: string, cwd: string, resumeId: string) => boolean;
+      capabilities?: (harness: string) => AgentCapabilities;
       memory?: Pick<AssistantMemoryService, 'snapshot'>;
       history?: Pick<AgentHistoryReadService, 'conversationIdForSession' | 'tail'>;
       launched?: (botId: string, processId: string) => void;
@@ -131,11 +133,13 @@ export class BotService {
     const bot = this.bot(botId);
     if (!bot) return '';
     // Where Patterm keeps memory current, launch instructions carry none.
-    const memoryPush = memoryPushSupported(bot.harness);
+    const capabilities = this.options.capabilities?.(bot.harness);
+    const memoryPush = capabilities ? capabilities.features.memoryPush : memoryPushSupported(bot.harness);
+    const maxContextBytes = capabilities ? (capabilities.input.maxContextBytes ?? null) : (bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
     let base: string;
     if (bot.id === ASSISTANT_BOT_ID) {
-      // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
-      const limit = bot.harness === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
+      // Harnesses that cap launch instructions rely on the assistant reading memory with tools.
+      const limit = maxContextBytes ? { limitBytes: maxContextBytes } : {};
       base = new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
     } else {
       const purview = bot.purview;
@@ -146,7 +150,7 @@ export class BotService {
     }
     const handoff = this.pendingHandoff.get(botId);
     if (!handoff) return base;
-    return appendHandoff(base, handoff, bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
+    return appendHandoff(base, handoff, maxContextBytes);
   }
 
   // Starts a bot that isn't running: on its latest conversation, or a new

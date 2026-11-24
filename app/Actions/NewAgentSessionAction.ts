@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import { z } from 'zod';
+import { presetHarnessInput } from '../Harness/HarnessPresets';
+import type { HarnessId } from '../Harness/HarnessProvider';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
 import type { CloseProcessAction } from './CloseProcessAction';
@@ -82,8 +84,8 @@ export class NewAgentSessionAction {
   }
 }
 
-function isIntegratedHarness(harness: string): harness is 'claude' | 'codex' | 'opencode' | 'agy' {
-  return harness === 'claude' || harness === 'codex' || harness === 'opencode' || harness === 'agy';
+function isIntegratedHarness(harness: string): harness is HarnessId {
+  return presetHarnessInput.safeParse(harness).success;
 }
 
 function isDirectory(candidate: string): boolean {

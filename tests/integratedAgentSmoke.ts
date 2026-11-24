@@ -6,7 +6,7 @@ import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener, IntegratedConversationMessage } from '../app/Services/IntegratedConversation';
-import type { AgentConversationSnapshot, AgentPromptResult } from '../app/Agents/AgentProtocol';
+import { defaultAgentCapabilities, type AgentConversationSnapshot, type AgentPromptResult } from '../app/Agents/AgentProtocol';
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import { ASKING_MAX_LENGTH, pendingAsk } from '../app/Services/IntegratedAsking';
@@ -298,7 +298,9 @@ async function main(): Promise<void> {
       }
     } as unknown as AgentHistoryReadService;
     const liveAt = '2026-09-28T12:00:00.000Z';
-    const claudeProvider: IntegratedProviderService = { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [{ id: 'live', role: 'assistant', kind: 'text', text: '', created_at: liveAt }] } }) };
+    const claudeCapabilities = defaultAgentCapabilities({ archiveFallback: 'always' });
+    const codexCapabilities = defaultAgentCapabilities({ archiveFallback: 'when-unavailable' });
+    const claudeProvider: IntegratedProviderService = { ...provider, capabilities: claudeCapabilities, conversation: async () => ({ status: 'idle', messages: { data: [{ id: 'live', role: 'assistant', kind: 'text', text: '', created_at: liveAt }] } }) };
     const resumed = new IntegratedAgentService(database, { claude: claudeProvider });
     resumed.setHistoryReadService(history);
     const claudeSnapshot = await resumed.conversation('process_claude') as { history_truncated: boolean; history_cursor: { next: string } };
@@ -312,18 +314,18 @@ async function main(): Promise<void> {
     // A host woken from hibernation starts empty while its session keeps the
     // first start time, so every imported turn is older than the live window.
     database.connection.prepare(`update sessions set started_at = '2020-01-01T00:00:00.000Z' where id = 'session_claude'`).run();
-    const woken = new IntegratedAgentService(database, { claude: { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [] } }) } });
+    const woken = new IntegratedAgentService(database, { claude: { ...provider, capabilities: claudeCapabilities, conversation: async () => ({ status: 'idle', messages: { data: [] } }) } });
     woken.setHistoryReadService(history);
     const wokenSnapshot = await woken.conversation('process_claude') as { history_truncated: boolean };
     assert.equal(wokenSnapshot.history_truncated, true);
     assert.ok(Date.now() - Date.parse(archiveCalls.at(-1)!.before) < 60_000, 'an empty live window pages imported history up to now, not the session start');
     database.connection.prepare(`update sessions set started_at = ? where id = 'session_claude'`).run(now);
 
-    const nativeCodex = new IntegratedAgentService(database, { codex: { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [] }, history_cursor: { next: 'native' }, history_truncated: true }), olderMessages: async (_id, cursor) => ({ native: cursor }) } });
+    const nativeCodex = new IntegratedAgentService(database, { codex: { ...provider, capabilities: codexCapabilities, conversation: async () => ({ status: 'idle', messages: { data: [] }, history_cursor: { next: 'native' }, history_truncated: true }), olderMessages: async (_id, cursor) => ({ native: cursor }) } });
     nativeCodex.setHistoryReadService(history);
     assert.deepEqual((await nativeCodex.conversation('process_test') as { history_cursor: unknown }).history_cursor, { next: 'native' }, 'Codex keeps its native cursor');
     assert.deepEqual(await nativeCodex.olderMessages('process_test', 'native'), { native: 'native' });
-    const legacyCodex = new IntegratedAgentService(database, { codex: { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [] }, history_unavailable: true }) } });
+    const legacyCodex = new IntegratedAgentService(database, { codex: { ...provider, capabilities: codexCapabilities, conversation: async () => ({ status: 'idle', messages: { data: [] }, history_unavailable: true }) } });
     legacyCodex.setHistoryReadService(history);
     const legacySnapshot = await legacyCodex.conversation('process_test') as { history_unavailable: boolean; history_cursor: { next: string } };
     assert.equal(legacySnapshot.history_unavailable, false, 'Codex builds without item listing fall back to imported history');
