@@ -80,6 +80,9 @@
                     >
                       <SettingsChoice id="conversation-breakout" :model-value="draft.conversationBreakout" :options="CONVERSATION_BREAKOUT_OPTIONS" aria-label="Wide tables and media" :disabled="draft.conversationWidth === 'full'" segmented @update:model-value="(value) => { draft.conversationBreakout = value; void saveAppearance('appearance.conversation.breakout'); }" />
                     </SettingsRow>
+                    <SettingsRow label="Tool names" description="Name the skills and MCP tools in a collapsed group of tool calls, such as MCP (notify_user)." html-for="conversation-tool-names" save-key="appearance.conversation.toolNames" toggle>
+                      <Switch id="conversation-tool-names" :model-value="draft.conversationToolNames" @update:model-value="(value) => { draft.conversationToolNames = value; void saveAppearance('appearance.conversation.toolNames'); }" />
+                    </SettingsRow>
                     <ConversationPreview
                       :font-size-px="draft.conversationFontSizePx"
                       :width="draft.conversationWidth"
@@ -407,6 +410,7 @@ function assignDraft(settings: AppearanceSettings): void {
   draft.conversationFontSizePx = settings.conversationFontSizePx;
   draft.conversationWidth = settings.conversationWidth;
   draft.conversationBreakout = settings.conversationBreakout;
+  draft.conversationToolNames = settings.conversationToolNames;
   draft.historyImportToasts = settings.historyImportToasts;
   draft.diffViewer = settings.diffViewer;
   draft.navigation = settings.navigation;

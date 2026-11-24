@@ -267,6 +267,35 @@ button.mention-glow:hover {
   --markdown-font-size: var(--patterm-conversation-font-size, 0.875rem);
 }
 
+/* Tool calls, thoughts and their groups follow the conversation font size, a
+   step below the prose. Sizes inside them are in em, so they scale too. */
+.transcript-tool-text {
+  font-size: calc(var(--patterm-conversation-font-size, 14px) * 0.93);
+  line-height: 1.5;
+}
+
+/* A collapsed tool call, thought or group recedes until it is hovered or
+   focused, so the replies stand out. */
+.transcript-quiet {
+  opacity: 0.55;
+  transition: opacity 150ms ease-out;
+}
+
+.transcript-quiet:hover,
+.transcript-quiet:focus-visible,
+.transcript-quiet:focus-within {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-quiet { transition: none; }
+}
+
+/* A group names its skills and MCP tools only when the owner turns that on. */
+.transcript-tool-names {
+  display: var(--patterm-tool-names-display, none);
+}
+
 .conversation-breakout-images {
   --breakout-width: max(100%, min(calc(100cqi - 2rem), var(--patterm-conversation-breakout-max-width, 0px)));
   width: var(--breakout-width);
