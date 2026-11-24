@@ -79,11 +79,17 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
   };
   const opencode = raw.some((line) => /^\s+Line \d+: /.test(line));
   // Every way each line could split into file, number and text. A path can
-  // hold `-12-` (dated logs) and text can hold `:12:` (stack locations), so
-  // a line takes the file most lines could name.
+  // hold `-12-` (dated logs) and text can hold `:12:` (stack locations).
+  // Files that other lines name as plain hits settle which reading is right.
   const readings = opencode ? [] : raw.map(grepReadings);
-  const support = new Map<string, number>();
-  for (const options of readings) for (const file of new Set(options.map((option) => option.file))) support.set(file, (support.get(file) ?? 0) + 1);
+  const hits = new Map<string, Set<number>>();
+  readings.forEach((options, index) => {
+    for (const option of options) {
+      if (option.context || /\s/.test(option.file)) continue;
+      if (!hits.has(option.file)) hits.set(option.file, new Set());
+      hits.get(option.file)!.add(index);
+    }
+  });
   let heading: string | undefined;
   let matched = 0;
   let unmatched = 0;
@@ -96,10 +102,8 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
       else unmatched++;
       continue;
     }
-    const bare = /^(\d+)([:-])(.*)$/.exec(line);
-    const reading = bare ? null : bestReading(readings[index]!, support);
-    if (bare) add(undefined, { n: Number(bare[1]), text: bare[3]!, ...(bare[2] === '-' ? { context: true } : {}) });
-    else if (reading) add(reading.file, { n: reading.n, text: reading.text, ...(reading.context ? { context: true } : {}) });
+    const reading = bestReading(readings[index]!, hits, index);
+    if (reading) add(reading.file || undefined, { n: reading.n, text: reading.text, ...(reading.context ? { context: true } : {}) });
     else { unmatched++; continue; }
     matched++;
   }
@@ -109,8 +113,11 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
 
 interface GrepReading { file: string; n: number; text: string; context: boolean }
 
+// The empty file is ripgrep's path-less output, when one file was searched.
 function grepReadings(line: string): GrepReading[] {
   const readings: GrepReading[] = [];
+  const bare = /^(\d+)([:-])(.*)$/.exec(line);
+  if (bare) readings.push({ file: '', n: Number(bare[1]), text: bare[3]!, context: bare[2] === '-' });
   for (const match of line.matchAll(/([:-])(\d+)\1/g)) {
     if (!match.index) continue;
     readings.push({ file: line.slice(0, match.index), n: Number(match[2]), text: line.slice(match.index + match[0].length), context: match[1] === '-' });
@@ -118,10 +125,11 @@ function grepReadings(line: string): GrepReading[] {
   return readings;
 }
 
-// Most supported file first, then one without spaces, then a hit, then the
-// longer name.
-function bestReading(readings: GrepReading[], support: Map<string, number>): GrepReading | null {
-  const rank = (reading: GrepReading): number[] => [support.get(reading.file) ?? 0, /\s/.test(reading.file) ? 0 : 1, reading.context ? 0 : 1, reading.file.length];
+// A file other lines hit first, then one without spaces, then one with an
+// extension, then a hit, then the earliest separator.
+function bestReading(readings: GrepReading[], hits: Map<string, Set<number>>, index: number): GrepReading | null {
+  const support = (file: string): number => { const lines = hits.get(file); return lines ? lines.size - (lines.has(index) ? 1 : 0) : 0; };
+  const rank = (reading: GrepReading): number[] => [support(reading.file), /\s/.test(reading.file) ? 0 : 1, /\.\w+$/.test(reading.file) ? 1 : 0, reading.context ? 0 : 1, -reading.file.length];
   let best: GrepReading | null = null;
   for (const reading of readings) {
     if (!best) { best = reading; continue; }
