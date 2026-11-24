@@ -532,6 +532,25 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   await settle();
   assert.equal(backgroundTasks(), 0, 'a read that predates a task\'s end does not leave it counted');
 
+  // Live backgroundTasks counts on tasks/pending events update immediately
+  // without an extra snapshot read and win over slower in-flight snapshots.
+  let snapshotReads = 0;
+  let releaseStaleTaskRead!: (value: unknown) => void;
+  conversation = () => {
+    snapshotReads += 1;
+    return new Promise((resolve) => { releaseStaleTaskRead = resolve; });
+  };
+  emit({ kind: 'tasks', backgroundTasks: 2 });
+  assert.equal(backgroundTasks(), 2, 'tasks event updates background_tasks immediately');
+  assert.equal(snapshotReads, 0, 'tasks event does not trigger an extra snapshot read');
+  emit({ kind: 'pending' });
+  assert.equal(snapshotReads, 1, 'pending starts a snapshot read');
+  emit({ kind: 'tasks', backgroundTasks: 0 });
+  assert.equal(backgroundTasks(), 0, 'a newer tasks event clears the count immediately');
+  releaseStaleTaskRead({ status: 'idle', tasks: [{ id: 'stale', status: 'running' }] });
+  await settle();
+  assert.equal(backgroundTasks(), 0, 'a slower in-flight snapshot does not overwrite a newer live backgroundTasks count');
+
   // A waiting agent's row says what it asks, read from the snapshot a prompt
   // re-reads, and leaving the prompt clears it.
   const asking = () => (database.connection.prepare(`select asking from processes where id = 'process_observed'`).get() as { asking: string | null }).asking;

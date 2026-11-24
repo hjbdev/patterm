@@ -229,10 +229,10 @@ function stopBackground(): void {
       // finishTools reaches only rows still in the transcript.
       runningTools.clear();
       finishCancellation();
-      state(); publish({ kind: 'pending' });
+      state(); publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
     }, CANCEL_TIMEOUT_MS);
   }
-  state(); publish({ kind: 'pending' });
+  state(); publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
 }
 // Commands that outlive their turn, such as dev servers. Listing them as
 // tasks keeps an idle agent from hibernating (which would kill them) and
@@ -267,6 +267,10 @@ function backgroundTasks(): Row[] {
     return { id, label: command.label, kind: 'local_bash', status, stoppable: false };
   });
 }
+function runningTaskCount(): number {
+  return [...(subagents?.tasks() ?? []), ...backgroundTasks()]
+    .filter((task) => task.status === 'running' || task.status === 'pending').length;
+}
 function noteModelActivity(): void {
   if (loaded && !failed && !stopping) usage.lastModelActivityAt = new Date().toISOString();
 }
@@ -289,7 +293,7 @@ function endTurn(stopReason: string | null): void {
   if (stopped) replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: stopped });
   active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
   subagents?.syncNow();
-  setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending' }); } });
+  setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending', backgroundTasks: runningTaskCount() }); } });
   saveSettings();
 }
 function cancelTurn(): void {
@@ -329,7 +333,7 @@ function fail(error: Error, fatal = true): void {
   failed = fatal;
   permissions.clear();
   finishTools(error.message);
-  status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
+  status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail, backgroundTasks: runningTaskCount() });
 }
 function finishTools(reason: string, pendingOnly = false): void {
   for (const message of [...messages]) {
@@ -545,6 +549,11 @@ function replace(message: IntegratedConversationMessage): void {
   const index = messages.findIndex((row) => row.id === message.id);
   if (index < 0) { messages.push(message); trimMessages(); } else messages[index] = message;
   publish({ kind: 'replace', message });
+  if (index < 0 && message.role === 'assistant' && loaded && !failed && !stopping && active && [...runningTools].some((id) => !backgroundCommands.has(id))) {
+    const known = backgroundCommands.size;
+    const count = runningTaskCount();
+    if (backgroundCommands.size > known) publish({ kind: 'pending', backgroundTasks: count });
+  }
 }
 function nativeMessageKey(role: string, kind: string, id: string): string {
   return JSON.stringify([role, kind, id]);
@@ -557,15 +566,22 @@ function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assista
   }
   const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
   let row = key === null ? block : nativeBlocks.get(key);
+  let added = false;
   if (!row || row.kind !== kind || row.role !== role) {
     row = { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
     messages.push(row);
     trimMessages();
     if (key !== null) setNativeBlock(key, row);
+    added = true;
   }
   block = key === null ? row : null;
   row.text += text;
   publish({ kind: 'append', id: row.id, messageKind: kind, delta: text });
+  if (added && role === 'assistant' && loaded && !failed && !stopping && active && [...runningTools].some((id) => !backgroundCommands.has(id))) {
+    const known = backgroundCommands.size;
+    const count = runningTaskCount();
+    if (backgroundCommands.size > known) publish({ kind: 'pending', backgroundTasks: count });
+  }
 }
 function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | 'assistant', nativeId?: string): void {
   if (role === 'assistant' && (content.type === 'text' || content.type === 'image')) {
@@ -753,6 +769,7 @@ function receive(frame: Row): void {
       // A late update cannot revive a tool Patterm settled after an
       // unanswered background Stop.
       if (stoppedToolIds.has(id) && !terminal) break;
+      let runningToolsChanged = false;
       if (loaded && !failed && !stopping) {
         const tracked = runningTools.size;
         // The update that confirms Stop is not fresh work, and a tool Patterm
@@ -760,9 +777,7 @@ function receive(frame: Row): void {
         if (toolState.status === 'in_progress') { runningTools.add(id); backgroundActivity(); }
         else if (terminal && runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         else backgroundActivity();
-        // Running tools are tasks: observers re-read the count that keeps
-        // idle hibernation from killing a daemon.
-        if (runningTools.size !== tracked) publish({ kind: 'pending' });
+        runningToolsChanged = runningTools.size !== tracked;
         state();
       }
       const rawText = !output && (replacesContent || !previous?.text) && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
@@ -773,6 +788,9 @@ function receive(frame: Row): void {
       const mcpParts = matchConfiguredMcpTool(String(toolName));
       replace({ id, role: 'assistant', kind: 'tool', text: rowText, createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: toolName, input, state: toolState, ...(mcpParts ? { server: mcpParts.server, tool: mcpParts.tool } : {}) } });
       subagents?.observeToolCall(id, String(toolName), input as Record<string, unknown>, rowText, update.rawOutput);
+      // Running tools are tasks: publish after replace() so backgroundTasks()
+      // sees the tool's message row and label when computing the task count.
+      if (runningToolsChanged) publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
       break;
     }
     case 'available_commands_update': commands = update.availableCommands ?? []; controlsRevision++; publish({ kind: 'pending' }); break;
@@ -875,7 +893,7 @@ async function start(): Promise<void> {
     ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),
     onMessage: upsertSubagentMessage,
     onSubagentDetached: removeSubagentMessages,
-    onTasksChanged: () => publish({ kind: 'pending' })
+    onTasksChanged: () => publish({ kind: 'pending', backgroundTasks: runningTaskCount() })
   });
   for (const row of messages) {
     if (row.kind === 'tool' && row.tool) {
@@ -1006,7 +1024,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
       publish({ kind: 'turn_boundary', detail: lastTurnBoundaryAt });
     }
     // A turn changes what Stop on a background command task does.
-    if (runningTools.size) publish({ kind: 'pending' });
+    if (runningTools.size) publish({ kind: 'pending', backgroundTasks: runningTaskCount() });
     // The result arrives only at turn end. Keep the host socket responsive to
     // permissions and cancellation instead of awaiting it in this handler.
     const turn = rpc('session/prompt', { sessionId, prompt: params.prompt }, 0);
@@ -1121,7 +1139,7 @@ const server = net.createServer((socket) => {
       const respond = (result: unknown, error?: unknown) => {
         if (!socket.destroyed) socket.write(`${JSON.stringify({ id: request.id, ...(error ? { error: error instanceof Error ? error.message : String(error) } : { result }) })}\n`);
       };
-      if (request.method === 'subscribe') { subscribers.add(socket); respond({ revision }); publish({ kind: 'pending' }); }
+      if (request.method === 'subscribe') { subscribers.add(socket); respond({ revision }); publish({ kind: 'pending', backgroundTasks: runningTaskCount() }); }
       else void handle(String(request.method), request.params ?? {}).then((result) => respond(result), (error) => respond(null, error));
     }
   });

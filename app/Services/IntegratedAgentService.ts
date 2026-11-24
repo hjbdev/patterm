@@ -151,6 +151,7 @@ export class IntegratedAgentService {
   // Stream events and synthetic marks bump the sequence. Snapshot reads and
   // post-admission marks write only when no newer write landed meanwhile.
   private readonly activitySequence = new Map<string, number>();
+  private readonly backgroundTasksSequence = new Map<string, number>();
   // Idle host hibernation: idle claude/codex/agy hosts with saved conversations
   // can be retired while keeping their Patterm sessions live and viewable, and
   // transparently woken on the next prompt/command/control action.
@@ -1589,6 +1590,7 @@ export class IntegratedAgentService {
     const observer = this.observers.get(key);
     if (!observer) return;
     this.observers.delete(key);
+    this.backgroundTasksSequence.delete(key);
     observer.closed = true;
     if (observer.retry) clearTimeout(observer.retry);
     observer.release?.();
@@ -1603,6 +1605,10 @@ export class IntegratedAgentService {
       try { listener(key, event); } catch { /* a listener must not break observation */ }
     }
     try {
+      if (typeof event.backgroundTasks === 'number' && Number.isFinite(event.backgroundTasks) && event.backgroundTasks >= 0) {
+        this.backgroundTasksSequence.set(key, this.tasksSequence(key) + 1);
+        this.markBackgroundTasks(key, Math.floor(event.backgroundTasks));
+      }
       if (event.kind === 'reconnecting') {
         observer.stale = true;
       } else if (event.kind === 'error' && event.id === 'connection_error') {
@@ -1649,12 +1655,13 @@ export class IntegratedAgentService {
       return;
     }
     const sequence = this.sequence(key);
+    const tasksSince = this.tasksSequence(key);
     observer.refreshing = this.forProcess(key).conversation(key).then((conversation) => {
       if (!observer.closed) {
         this.markSnapshot(key, conversation, sequence);
-        // Only these reads set the task count: they run one at a time, so a
-        // slower, older read cannot overwrite a newer count.
-        this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
+        // Only these reads (and live task-count events with a newer sequence)
+        // set the task count, so a slower read cannot overwrite a newer count.
+        if (this.tasksSequence(key) === tasksSince) this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
         this.markGoal(key, openGoalStatus(record(conversation).goal));
         this.markAsking(key, pendingAsk(conversation));
         this.emitRequests(key, {
@@ -1702,6 +1709,10 @@ export class IntegratedAgentService {
 
   private sequence(key: string): number {
     return this.activitySequence.get(key) ?? 0;
+  }
+
+  private tasksSequence(key: string): number {
+    return this.backgroundTasksSequence.get(key) ?? 0;
   }
 
   private markSnapshot(key: string, conversation: unknown, since: number): void {

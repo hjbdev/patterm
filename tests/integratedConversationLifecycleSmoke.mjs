@@ -1671,3 +1671,89 @@ test('a paired-host mismatch never restarts the local shared server', async () =
   assert.equal(pending(h, 'opencode_service_restart').length, 0);
   h.scope.stop();
 });
+
+test('archived pages fold cross-page out-of-order tool results in original call order without duplicating rows', async () => {
+  const h = createHarness({ processId: 'archived_fold', exited: true });
+  await flush();
+  await resolveGets(h, {
+    provider: 'claude',
+    status: 'idle',
+    streaming: false,
+    history_truncated: true,
+    history_cursor: { next: 'archive:page0' },
+    messages: { data: [] },
+    archived_messages: [
+      { id: 'r2', conversationId: 'conv', providerMessageId: 'r2', parentProviderMessageId: null, turnId: null, seq: 3, role: 'tool', kind: 'tool_result', text: '', toolName: 'Read', toolStatus: 'completed', toolInputSummary: null, toolOutputSummary: 'second-out', redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:03.000Z', metadata: { toolUseId: 'call_2' }, createdAt: '2026-10-10T00:00:03.000Z', media: [{ kind: 'viewed', mime: 'image/png', sha256: 'sha-2', sizeBytes: 10, name: 'two.png' }] },
+      { id: 'r1', conversationId: 'conv', providerMessageId: 'r1', parentProviderMessageId: null, turnId: null, seq: 4, role: 'tool', kind: 'tool_result', text: '', toolName: 'Bash', toolStatus: 'completed', toolInputSummary: null, toolOutputSummary: 'first-out', redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:04.000Z', metadata: { toolUseId: 'call_1' }, createdAt: '2026-10-10T00:00:04.000Z' }
+    ]
+  });
+  await flush();
+  const olderCall = pending(h, 'integrated_history')[0];
+  assert.ok(olderCall, 'resumed archived view loads older page');
+  olderCall.resolve({
+    messages: [],
+    cursor: null,
+    archived_messages: [
+      { id: 'c1', conversationId: 'conv', providerMessageId: 'c1', parentProviderMessageId: null, turnId: null, seq: 1, role: 'tool', kind: 'tool_call', text: '', toolName: 'Bash', toolStatus: null, toolInputSummary: '{"command":"echo 1"}', toolOutputSummary: null, redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:01.000Z', metadata: { toolUseId: 'call_1' }, createdAt: '2026-10-10T00:00:01.000Z' },
+      { id: 'c2', conversationId: 'conv', providerMessageId: 'c2', parentProviderMessageId: null, turnId: null, seq: 2, role: 'tool', kind: 'tool_call', text: '', toolName: 'Read', toolStatus: null, toolInputSummary: '{"file_path":"two.png"}', toolOutputSummary: null, redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:02.000Z', metadata: { toolUseId: 'call_2' }, createdAt: '2026-10-10T00:00:02.000Z' }
+    ]
+  });
+  await flush();
+  assert.deepEqual(h.pane.messages.value.map((m) => m.id), ['c1', 'c2'], 'parallel calls stay in original seq order with results folded in');
+  assert.equal(h.pane.messages.value[0].tool.output, 'first-out');
+  assert.equal(h.pane.messages.value[1].tool.output, 'second-out');
+  assert.equal(h.pane.messages.value[1].tool.images?.[0]?.sha256, 'sha-2', 'folded tool_result media survives cross-page merge');
+  h.scope.stop();
+});
+
+test('switching agents and loading further older archive pages preserves previously loaded archive pages', async () => {
+  const row = (seq, text) => ({
+    id: `m${seq}`, conversationId: 'conv', providerMessageId: `m${seq}`, parentProviderMessageId: null,
+    turnId: null, seq, role: 'user', kind: 'message', text, toolName: null, toolStatus: null,
+    toolInputSummary: null, toolOutputSummary: null, redactionCount: 0, tokenCount: null,
+    providerCreatedAt: `2026-10-10T00:00:${String(seq).padStart(2, '0')}.000Z`, metadata: {},
+    createdAt: `2026-10-10T00:00:${String(seq).padStart(2, '0')}.000Z`
+  });
+  const h = createHarness({ processId: 'arch_A' });
+  await resolveSubscriptions(h);
+  await resolveGets(h, {
+    provider: 'claude', status: 'idle', streaming: false, history_truncated: true,
+    history_cursor: { next: 'page2' }, messages: { data: [] },
+    archived_messages: [row(5, 'five'), row(6, 'six')]
+  });
+  await flush();
+  pending(h, 'integrated_history')[0].resolve({
+    messages: [], cursor: 'page1', archived_messages: [row(3, 'three'), row(4, 'four')]
+  });
+  await flush();
+  assert.deepEqual(h.pane.messages.value.map((m) => m.id), ['m3', 'm4', 'm5', 'm6']);
+
+  // Switch away to arch_B and back to arch_A; cached archivedRows must survive.
+  h.props.processId = 'arch_B';
+  await flush();
+  await resolveSubscriptions(h);
+  await resolveGets(h, emptyConversation());
+  h.props.processId = 'arch_A';
+  await flush();
+  await resolveSubscriptions(h);
+  await resolveGets(h, {
+    provider: 'claude', status: 'idle', streaming: false, history_truncated: true,
+    history_cursor: { next: 'page2' }, messages: { data: [] },
+    archived_messages: [row(5, 'five'), row(6, 'six')]
+  });
+  await flush();
+  const loadMore = h.pane.loadOlder();
+  await flush();
+  pending(h, 'integrated_history')[0].resolve({
+    messages: [], cursor: 'page0', archived_messages: [row(2, 'two')]
+  });
+  await loadMore;
+  const loadEarliest = h.pane.loadOlder();
+  await flush();
+  pending(h, 'integrated_history')[0].resolve({
+    messages: [], cursor: null, archived_messages: [row(1, 'one')]
+  });
+  await loadEarliest;
+  assert.deepEqual(h.pane.messages.value.map((m) => m.id), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'], 'all loaded archive pages survive tab switches and subsequent loadOlder calls');
+  h.scope.stop();
+});

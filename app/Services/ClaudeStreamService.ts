@@ -19,7 +19,7 @@ import { UncertainDeliveryError, type IntegratedDeliveryState } from './Integrat
 import type { IntegratedConversationListener, IntegratedConversationMessage } from './IntegratedConversation';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import { quietReplyDirectory } from './ClaudeQuietReplies';
-import { memoryPushSupported, type MemoryUpdate } from './MemoryPushService';
+import type { MemoryUpdate } from './MemoryPushService';
 import { claudeConversationSaved, readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
 import { ClaudeGoalReader } from './ClaudeGoal';
 import { snapshotWithGoal, type IntegratedGoalAction } from './IntegratedGoal';
@@ -108,7 +108,7 @@ export class ClaudeStreamService implements AgentAdapter {
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
     // Memory reaches Claude through a prompt hook that takes the file the host
     // leaves for it. The hook's context is hidden from Patterm's transcripts.
-    const memory = input.memoryPush && memoryPushSupported('claude') ? {
+    const memory = input.memoryPush && this.capabilities.features.memoryPush ? {
       memoryHookPath: path.join(directory, `${key}-memory.json`),
       settingsPath: path.join(directory, `${key}-settings.json`)
     } : null;

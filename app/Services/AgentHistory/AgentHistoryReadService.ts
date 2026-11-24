@@ -73,8 +73,42 @@ export class AgentHistoryReadService {
     this.visibility = new HistoryMessageVisibility(quietReplies);
   }
 
+  private mediaTable = false;
+
   private visibleMessages(): string {
     return this.visibility.predicate(this.database!.connection);
+  }
+
+  private hasMediaTable(): boolean {
+    if (!this.database) return false;
+    if (this.mediaTable) return true;
+    this.mediaTable = Boolean(this.database.connection.prepare(`select 1 from sqlite_master where type = 'table' and name = 'conversation_media'`).get());
+    return this.mediaTable;
+  }
+
+  private attachMedia<T extends { seq: number }>(conversationId: string, messages: T[]): Array<T & { media?: ConversationMessageMedia[] }> {
+    if (!messages.length || !this.database || !this.hasMediaTable()) return messages;
+    const minSeq = messages[0]!.seq;
+    const maxSeq = messages[messages.length - 1]!.seq;
+    const rows = this.database.connection.prepare(`
+      select message_seq, kind, mime, sha256, size_bytes, name
+      from conversation_media
+      where conversation_id = ? and message_seq is not null and message_seq between ? and ?
+      order by id asc
+    `).all(conversationId, minSeq, maxSeq) as Array<{ message_seq: number; kind: string; mime: string; sha256: string; size_bytes: number | null; name: string | null }>;
+    if (!rows.length) return messages;
+    const bySeq = new Map<number, ConversationMessageMedia[]>();
+    for (const row of rows) {
+      const list = bySeq.get(row.message_seq) ?? [];
+      if (!list.some((item) => item.sha256 === row.sha256)) {
+        list.push({ kind: row.kind, mime: row.mime, sha256: row.sha256, sizeBytes: row.size_bytes, name: row.name });
+      }
+      bySeq.set(row.message_seq, list);
+    }
+    return messages.map((message) => {
+      const media = bySeq.get(message.seq);
+      return media?.length ? { ...message, media } : message;
+    });
   }
 
   // The imported conversation for a Patterm session, matched by the session
@@ -103,7 +137,7 @@ export class AgentHistoryReadService {
     const messages = this.database.connection.prepare(`
       select * from conversation_messages where ${predicate} order by seq asc limit ? offset ?
     `).all(conversation.id, before, limit, offset) as MessageRow[];
-    return { count, messages: messages.map(mapMessage) };
+    return { count, messages: this.attachMedia(conversation.id, messages.map(mapMessage)) };
   }
 
   // One row per conversation, ranked by its best-matching title, path, or
@@ -250,7 +284,7 @@ export class AgentHistoryReadService {
     const messages = this.database.connection.prepare(`
       select * from conversation_messages where conversation_id = ? and ${this.visibleMessages()} order by seq asc limit ? offset ?
     `).all(input.conversation_id, input.limit, offset) as MessageRow[];
-    return { conversation, messages: messages.map(mapMessage), offset };
+    return { conversation, messages: this.attachMedia(input.conversation_id, messages.map(mapMessage)), offset };
   }
 
   // The newest messages of a conversation, oldest first, before a sequence
@@ -262,7 +296,7 @@ export class AgentHistoryReadService {
     const rows = this.database.connection.prepare(`
       select * from conversation_messages where conversation_id = ? and seq < ? and ${this.visibleMessages()} order by seq desc limit ?
     `).all(conversationId, beforeSeq ?? Number.MAX_SAFE_INTEGER, limit + 1) as MessageRow[];
-    return { conversation, messages: rows.slice(0, limit).reverse().map(mapMessage), has_more: rows.length > limit };
+    return { conversation, messages: this.attachMedia(conversationId, rows.slice(0, limit).reverse().map(mapMessage)), has_more: rows.length > limit };
   }
 
   // Retained prose (see proseLabel) that conversations imported since
@@ -340,6 +374,7 @@ export class AgentHistoryReadService {
   }
 }
 
+interface ConversationMessageMedia { kind: string; mime: string; sha256: string; sizeBytes: number | null; name: string | null; }
 interface ConversationRow { id: string; provider: string; provider_conversation_id: string | null; project_id: string | null; session_id: string | null; process_id: string | null; worktree_id: string | null; source_file_id: string | null; title: string | null; session_title?: string | null; cwd: string | null; provider_version: string | null; started_at: string | null; updated_at: string | null; ended_at: string | null; status: string; link_confidence: number | null; link_reason: string | null; metadata: string; created_at: string; imported_at: string; message_count: number; }
 interface MessageRow { id: string; conversation_id: string; provider_message_id: string | null; parent_provider_message_id: string | null; turn_id: string | null; seq: number; role: string; kind: string; text: string; tool_name: string | null; tool_status: string | null; tool_input_summary: string | null; tool_output_summary: string | null; redaction_count: number; token_count: number | null; provider_created_at: string | null; metadata: string; created_at: string; }
 interface ImportBatchRow { id: string; trigger: string; provider: string | null; source_id: string | null; project_id: string | null; started_at: string; finished_at: string | null; status: string; files_seen: number; files_imported: number; conversations_imported: number; messages_imported: number; skipped_count: number; error_count: number; }

@@ -201,6 +201,14 @@ export interface ConversationRecord {
   messageCount: number;
 }
 
+export interface ConversationMessageMedia {
+  kind: string;
+  mime: string;
+  sha256: string;
+  sizeBytes: number | null;
+  name: string | null;
+}
+
 export interface ConversationMessageRecord {
   id: string;
   conversationId: string;
@@ -220,4 +228,5 @@ export interface ConversationMessageRecord {
   providerCreatedAt: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
+  media?: ConversationMessageMedia[];
 }

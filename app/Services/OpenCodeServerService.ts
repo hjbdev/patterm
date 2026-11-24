@@ -216,6 +216,8 @@ export const OPENCODE_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities
 export class OpenCodeServerService implements AgentAdapter {
   readonly id = 'opencode';
   readonly capabilities = OPENCODE_CAPABILITIES;
+  private readonly run = randomUUID();
+  private daemonEpoch = 0;
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   // Digests of the server configs installed per directory, never the configs:
@@ -711,6 +713,7 @@ export class OpenCodeServerService implements AgentAdapter {
       // projection and notify all subscribers to refresh their snapshots.
       // Per-session failures must not abort the shared stream for healthy agents.
       if (!first) {
+        this.daemonEpoch += 1;
         const current = [...this.sharedSubscribers];
         const bySession = new Map<string, SharedOpenCodeSubscriber[]>();
         for (const sub of current) {
@@ -1112,7 +1115,10 @@ export class OpenCodeServerService implements AgentAdapter {
       changed = state.children.delete(child);
       changed = dropRequests(state, child) || changed;
     }
-    if (changed) this.publishActivity(state);
+    if (changed) {
+      this.publishActivity(state);
+      if (!isRequestEvent(type)) this.broadcast(state, { kind: 'pending' });
+    }
   }
 
   // Sends the status the stream state implies. An end is held back briefly
@@ -1233,11 +1239,16 @@ export class OpenCodeServerService implements AgentAdapter {
     }
   }
 
+  private async sessionInfo(runtime: { executable: string; cwd: string; resumeId: string }): Promise<Record<string, unknown>> {
+    return this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}`)
+      .then((value) => record(record(value).data), () => ({} as Record<string, unknown>));
+  }
+
   // Session totals from Session.Info, context from the newest assistant
   // message, and the window from that message's model. Each assistant message
   // is one model request, so the newest one's start is the latest activity.
   // Best effort: usage never blocks the transcript.
-  private async usage(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[]): Promise<Record<string, unknown>> {
+  private async usage(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[], sessionInfo?: Record<string, unknown>): Promise<Record<string, unknown>> {
     // A newer finished compaction makes that context stale. OpenCode does not
     // report the compacted size, so context is unknown until the next request.
     const latest = rows.map(record).find((row) => (row.type === 'assistant' && Object.keys(record(row.tokens)).length) || (row.type === 'compaction' && row.status === 'completed'));
@@ -1248,7 +1259,7 @@ export class OpenCodeServerService implements AgentAdapter {
     const model = record(latest?.model);
     const started = record(rows.map(record).find((row) => row.type === 'assistant')?.time).created;
     const [info, windows] = await Promise.all([
-      this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}`).then((value) => record(record(value).data), () => ({} as Record<string, unknown>)),
+      sessionInfo ? Promise.resolve(sessionInfo) : this.sessionInfo(runtime),
       this.modelWindows(runtime).catch(() => new Map<string, number>())
     ]);
     const totals = record(info.tokens);
@@ -1752,6 +1763,7 @@ export class OpenCodeServerService implements AgentAdapter {
     if (identity.healthy === false || identity.pid !== pid || (version && identity.version !== version)) {
       throw new Error('OpenCode background service identity check failed');
     }
+    this.daemonEpoch += 1;
     return { url, auth };
   }
 
@@ -1771,7 +1783,7 @@ export class OpenCodeServerService implements AgentAdapter {
   async controls(processId: string): Promise<IntegratedControls> {
     const runtime = this.runtime(processId);
     const location = `?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`;
-    const [modelResult, agentResult, commandResult, defaultResult, providerResult, live] = await Promise.all([
+    const [modelResult, agentResult, commandResult, defaultResult, providerResult, info] = await Promise.all([
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/model${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/agent${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/command${location}`),
@@ -1780,8 +1792,10 @@ export class OpenCodeServerService implements AgentAdapter {
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/provider${location}`).catch(() => null),
       // The native session is authoritative: a Patterm restart forgets picks,
       // and another client can change them. Without it, fall back to them.
-      this.nativeSettings(processId).catch((): LiveSettings => ({}))
+      this.sessionInfo(runtime)
     ]);
+    const live = liveSettingsFromInfo(info);
+    const directory = directoryFromInfo(info);
     const providerNames = openCodeProviderNames(providerResult);
     const models = dataRows(modelResult).flatMap((item) => {
       const providerID = stringValue(item.providerID);
@@ -1825,15 +1839,37 @@ export class OpenCodeServerService implements AgentAdapter {
         ...dataRows(commandResult).flatMap((item) => stringValue(item.name) && !OPENCODE_BUILTIN_COMMANDS.some((command) => command.name === item.name)
           ? [{ name: stringValue(item.name)!, ...(stringValue(item.description) ? { description: stringValue(item.description)! } : {}) }]
           : [])
-      ]
+      ],
+      revision: this.controlsRevision(processId, runtime, live, directory)
     };
+  }
+
+  private controlsRevision(processId: string, runtime: { cwd: string; model: string | null; reasoning: string | null }, live: LiveSettings, directory: string | null): string {
+    const selected = this.selections.get(processId) ?? {};
+    return createHash('sha256').update(JSON.stringify([
+      this.run,
+      this.daemonEpoch,
+      directory ?? runtime.cwd,
+      live.model ?? null,
+      live.reasoning ?? null,
+      selected.model ?? null,
+      selected.variant ?? null,
+      selected.agent ?? null,
+      runtime.model,
+      runtime.reasoning
+    ])).digest('base64url').slice(0, 16);
   }
 
   async configure(processId: string, selector: string, value: string): Promise<void> {
     const runtime = this.runtime(processId);
+    const notify = () => {
+      const state = this.activity.get(runtime.resumeId);
+      if (state) this.broadcast(state, { kind: 'pending' });
+    };
     if (selector === 'agent') {
       await this.api(runtime.executable, runtime.cwd, 'POST', `/api/session/${encodeURIComponent(runtime.resumeId)}/agent`, { agent: value });
       this.selections.set(processId, { ...this.selections.get(processId), agent: value });
+      notify();
       return;
     }
     if (selector === 'model') {
@@ -1844,6 +1880,7 @@ export class OpenCodeServerService implements AgentAdapter {
       });
       const { variant: _previousVariant, ...previous } = this.selections.get(processId) ?? {};
       this.selections.set(processId, { ...previous, model: value });
+      notify();
       return;
     }
     if (selector === 'variant') {
@@ -1857,6 +1894,7 @@ export class OpenCodeServerService implements AgentAdapter {
         model: { providerID: model.slice(0, slash), id: model.slice(slash + 1), ...(value === 'default' ? {} : { variant: value }) }
       });
       this.selections.set(processId, { ...this.selections.get(processId), variant: value });
+      notify();
       return;
     }
     throw new Error('Unknown OpenCode setting');
@@ -1981,10 +2019,11 @@ export class OpenCodeServerService implements AgentAdapter {
         .catch(() => null),
       this.sessionGoal(runtime)
     ]);
-    const [nestedRows, usage, undelivered] = await Promise.all([
-      this.childMessages(runtime, rows), this.usage(runtime, rows),
+    const [nestedRows, info, undelivered] = await Promise.all([
+      this.childMessages(runtime, rows), this.sessionInfo(runtime),
       this.settlePending(runtime, rows, inbox === null ? null : dataRows(inbox)).catch((): IntegratedQueuedMessage[] => [])
     ]);
+    const usage = await this.usage(runtime, rows, info);
     const tasks = subagentTasks(rows, runtime.resumeId, active, new Set(dataRows(shells).map((shell) => String(shell.id))));
     const permissions = [...dataRows(ownPermissions), ...childRequests.permissions];
     const forms = [...dataRows(ownForms), ...childRequests.forms];
@@ -2015,6 +2054,7 @@ export class OpenCodeServerService implements AgentAdapter {
       history_truncated: truncated,
       history_cursor: normalizedCursor,
       revision,
+      controls_revision: this.controlsRevision(processId, runtime, liveSettingsFromInfo(info), directoryFromInfo(info)),
       streaming: true,
       messages: { data: projectOpenCodeRows(this.withStoredImages(withLiveParts([...[...rows].reverse(), ...nestedRows], live))) },
       permissions: { data: permissions.map(permissionView) },
@@ -3015,6 +3055,17 @@ function bounded<K, V>(map: Map<K, V>, key: K, value: V, limit = 5_000): void {
   map.delete(key);
   map.set(key, value);
   while (map.size > limit) map.delete(map.keys().next().value!);
+}
+
+function liveSettingsFromInfo(info: Record<string, unknown>): LiveSettings {
+  const model = record(info.model);
+  const providerID = stringValue(model.providerID);
+  const id = stringValue(model.id ?? model.modelID);
+  return providerID && id ? { model: `${providerID}/${id}`, reasoning: stringValue(model.variant) ?? null } : {};
+}
+
+function directoryFromInfo(info: Record<string, unknown>): string | null {
+  return stringValue(record(info.location).directory) ?? null;
 }
 
 const OPENCODE_CHILD_SESSIONS = 8;

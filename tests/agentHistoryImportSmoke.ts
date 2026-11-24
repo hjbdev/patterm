@@ -400,6 +400,15 @@ async function main(): Promise<void> {
     const emptyClaudeToolResults = database.connection.prepare(`select count(*) as count from conversation_messages where metadata like '%toolu_history_2%' and kind = 'tool_result'`).get() as { count: number };
     assert.equal(emptyClaudeToolResults.count, 0, 'Claude empty successful tool results are not imported as empty bubbles');
 
+    // Pagination limit is preserved strictly even when a tool_call / tool_result straddles a page boundary.
+    const claudeMessages = read.get({ conversation_id: claudeConversationId, limit: 200 }).messages;
+    const callIdx = claudeMessages.findIndex((message) => message.kind === 'tool_call' && message.metadata?.toolUseId === 'toolu_history_1');
+    const resultIdx = claudeMessages.findIndex((message) => message.kind === 'tool_result' && message.metadata?.toolUseId === 'toolu_history_1');
+    assert.equal(resultIdx, callIdx + 1, 'tool_call is followed by tool_result');
+    assert.equal(read.get({ conversation_id: claudeConversationId, limit: 1, offset: callIdx }).messages.length, 1, 'history_get(limit=1) returns at most 1 row on a tool_call boundary');
+    assert.equal(read.get({ conversation_id: claudeConversationId, limit: 1, offset: resultIdx }).messages.length, 1, 'history_get(limit=1) returns at most 1 row on a tool_result boundary');
+    assert.equal(read.archive('claude', 'claude_resume_1', project.id, '2026-07-02T00:00:00.000Z', resultIdx, 1).messages.length, 1, 'archive(limit=1) returns at most 1 row on a tool_result boundary');
+
     const codexConversation = database.connection.prepare(`select provider_conversation_id from conversations where provider = 'codex' limit 1`).get() as { provider_conversation_id: string } | undefined;
     assert.equal(codexConversation?.provider_conversation_id, 'codex_resume_1', 'Codex response item ids do not replace the session id');
     assert.ok(importedText.text.includes('Codex response-item-user-history-needle prompt'), 'Codex response_item user messages are imported');

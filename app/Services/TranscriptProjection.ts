@@ -268,6 +268,7 @@ export interface CachedIntegratedConversation extends ConversationProjection {
   historyUnavailable: boolean;
   historyCursor: string | null;
   historyLoaded: boolean;
+  archivedRows?: unknown[];
 }
 
 // The one piece of module state here: a small LRU of recently shown panes.
@@ -878,7 +879,7 @@ export type IntegratedDeliveryStatus = 'working' | 'idle' | 'error' | 'permissio
 export interface ConversationStreamEvent {
   processId: string;
   revision: number;
-  kind: 'replace' | 'append' | 'status' | 'pending' | 'turn_boundary' | 'error' | 'reconnecting';
+  kind: 'replace' | 'append' | 'status' | 'pending' | 'tasks' | 'turn_boundary' | 'error' | 'reconnecting';
   message?: ConversationStreamMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;
@@ -888,6 +889,7 @@ export interface ConversationStreamEvent {
   parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
+  backgroundTasks?: number | undefined;
 }
 
 export function applyConversationStreamEvent(messages: TranscriptMessage[], event: ConversationStreamEvent): TranscriptMessage[] {

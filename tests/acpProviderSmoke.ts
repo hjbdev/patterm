@@ -107,6 +107,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='overlapping-follow-up') {
    out({id:44,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'deferred',title:'Delayed approval'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});return;
   }
+  if(text==='running-dev-server') {
+   update({sessionUpdate:'tool_call',toolCallId:'dev-server',name:'run_command',status:'in_progress',rawInput:{CommandLine:'pnpm dev'}});
+   say('Dev server started.');
+   return;
+  }
   if(text==='tool-outlives-prompt'||text==='tool-never-starts') {
    const started = text==='tool-outlives-prompt';
    update({sessionUpdate:'tool_call',toolCallId:started?'outlives':'unstarted',status:started?'in_progress':'pending'});
@@ -343,6 +348,22 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const queue = new IntegratedAgentService(database, { agy: provider });
     try {
       queue.observe('process');
+      const beforeDevServer = events.length;
+      await ask('running-dev-server');
+      // A running tool becomes a background task once an assistant reply follows
+      // it in the open turn; the host pushes backgroundTasks=1 without waiting
+      // for a manual snapshot read.
+      const promotedDeadline = Date.now() + 2_000;
+      while (Date.now() < promotedDeadline) {
+        const pushed = events.slice(beforeDevServer).some((event) => event.kind === 'pending' && event.backgroundTasks === 1);
+        const count = (database.connection.prepare(`select background_tasks from processes where id = 'process'`).get() as { background_tasks: number }).background_tasks;
+        if (pushed && count === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.ok(events.slice(beforeDevServer).some((event) => event.kind === 'pending' && event.backgroundTasks === 1), 'promoting an active-turn running tool via assistant reply pushes a live backgroundTasks pending event');
+      assert.equal((database.connection.prepare(`select background_tasks from processes where id = 'process'`).get() as { background_tasks: number }).background_tasks, 1, 'processes.background_tasks updates live when a running tool becomes a background task');
+      await provider.stopTask('process', 'tool:dev-server');
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:dev-server')?.tool.state.status === 'failed');
       await ask('tool-outlives-prompt');
       assert.notEqual((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'steer-after-tool' }) as any).delivery, 'queued', 'a prompt sent into an open turn steers it');
       state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'steer-after-tool'));

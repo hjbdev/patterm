@@ -38,7 +38,7 @@
     </div>
 
     <div v-if="toolImages.length" :class="['mt-1 flex flex-wrap gap-2', breakout && 'conversation-breakout-images']" data-component="transcript-tool-images">
-      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :gallery="toolImages" :breakout="breakout" />
+      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :project-id="message.archived ? (projectId || undefined) : undefined" :gallery="toolImages" :breakout="breakout" />
     </div>
 
     <div v-if="open && expandable" class="mb-1 mt-0.5 min-w-0 space-y-2 pl-3">
@@ -53,7 +53,7 @@
       </ul>
       <div v-if="children.length" class="min-w-0 space-y-0.5" data-component="transcript-subagent" aria-label="Subagent steps">
         <template v-for="child in children" :key="child.id">
-          <ConversationToolRow v-if="child.kind === 'tool'" :message="child" :process-id="processId" />
+          <ConversationToolRow v-if="child.kind === 'tool'" :message="child" :process-id="processId" :project-id="projectId" />
           <p v-else-if="child.kind === 'reasoning'" class="line-clamp-3 whitespace-pre-wrap break-words py-0.5 italic text-muted-foreground">{{ child.text }}</p>
           <p v-else-if="child.text.trim()" class="whitespace-pre-wrap break-words py-0.5" :class="child.role === 'user' ? 'text-muted-foreground' : 'text-foreground'">{{ child.text }}</p>
         </template>
@@ -128,7 +128,7 @@ import ProcessMention from './ProcessMention.vue';
 const DiffPatchView = defineAsyncComponent(() => import('./DiffPatchView.vue'));
 const HtmlFigureCard = defineAsyncComponent(() => import('./HtmlFigureCard.vue'));
 
-const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; active?: boolean; breakout?: boolean }>(), { active: false, breakout: false });
+const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; projectId?: string | null | undefined; active?: boolean; breakout?: boolean }>(), { projectId: null, active: false, breakout: false });
 
 const tool = computed(() => props.message.tool ?? {
   name: props.message.title ?? 'Tool',

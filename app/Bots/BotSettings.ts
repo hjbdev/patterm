@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { harnessSupportsServiceTier } from '../Agents/AgentCapabilitiesDto';
 import { presetHarnessInput, profileLookInput, type HarnessPreset } from '../Harness/HarnessPresets';
 import { BOT_AVATAR_KINDS, BOT_PICTURE_DATA_URL, MAX_BOT_PICTURE_BYTES, isSingleEmoji } from './BotAvatar';
 import { ASSISTANT_BOT_ID, BOT_VOICES } from './BotIdentity';
@@ -77,7 +78,7 @@ export const botInput = z.object({
   requests: z.boolean().default(false)
 }).superRefine((value, context) => {
   if (value.model === null && value.reasoning !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoning'], message: 'reasoning requires a model' });
-  if (value.harness !== 'codex' && value.serviceTier !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['serviceTier'], message: 'only Codex bots select a service tier' });
+  if (!harnessSupportsServiceTier(value.harness) && value.serviceTier !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['serviceTier'], message: 'only Codex bots select a service tier' });
 });
 
 export type Bot = z.infer<typeof botInput>;

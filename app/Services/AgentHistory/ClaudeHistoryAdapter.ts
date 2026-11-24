@@ -7,7 +7,7 @@ import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedI
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v14';
+  readonly parserVersion = 'claude-jsonl-v15';
 
   constructor(private readonly quietReplies?: string) {}
 
@@ -139,12 +139,33 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
           toolOutputSummary: item.toolOutputSummary,
           providerCreatedAt: createdAt,
           tokenCount: null,
-          metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl',
+          metadata: { type: item.contentType === 'thinking' ? 'reasoning' : type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl',
             ...(nativeMessageId && text === QUIET_REPLY ? { nativeMessageId } : {}), ...(queued ? { queued: true } : {}) }
         });
       }
-      const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
-      media.push(...claudeImages(message?.content, readPaths, { messageSeq, occurredAt: createdAt, position: parsed.position }));
+      let messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
+      const rowMedia = claudeImages(message?.content, readPaths, { messageSeq, occurredAt: createdAt, position: parsed.position });
+      if (seq === rowSeq && type === 'user' && rowMedia.some((item) => item.kind === 'pasted')) {
+        messageSeq = seq;
+        messages.push({
+          providerMessageId: rowId,
+          parentProviderMessageId: stringValue(row.parentUuid),
+          turnId: stringValue(row.promptId),
+          seq: seq++,
+          role: 'user',
+          kind: 'message',
+          text: '',
+          toolName: null,
+          toolStatus: null,
+          toolInputSummary: null,
+          toolOutputSummary: null,
+          providerCreatedAt: createdAt,
+          tokenCount: null,
+          metadata: { type, contentType: 'image', isSidechain: row.isSidechain ?? null, toolUseId: null, source: 'claude-jsonl', ...(queued ? { queued: true } : {}) }
+        });
+        for (const item of rowMedia) item.messageSeq = messageSeq;
+      }
+      media.push(...rowMedia);
     }
 
     warnings.push(...parsed.warnings);
@@ -276,7 +297,12 @@ function extractClaudeContent(content: unknown, rowType: string, row: Record<str
     if (!block || typeof block !== 'object') return;
     const record = block as Record<string, unknown>;
     const contentType = stringValue(record.type);
-    if (contentType === 'thinking' || contentType === 'redacted_thinking') return;
+    if (contentType === 'redacted_thinking') return;
+    if (contentType === 'thinking') {
+      const thinking = stringValue(record.thinking) ?? '';
+      if (thinking.trim()) out.push(messageItem(index, 'message', contentType, thinking));
+      return;
+    }
     if (contentType === 'text') {
       const text = textFromUnknown(record.text);
       if (text.trim()) out.push(messageItem(index, 'message', contentType, text));

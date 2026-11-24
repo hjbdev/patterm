@@ -1,4 +1,4 @@
-import type { ConversationMessageRecord } from '../types';
+import type { ConversationMessageMedia, ConversationMessageRecord } from '../types';
 import { buildTranscriptTool, diffChangeCounts, type TranscriptMessage, type TranscriptToolFile } from './integratedConversation';
 
 interface ArchiveDisplay {
@@ -51,11 +51,18 @@ export function archiveTranscript(messages: ConversationMessageRecord[], options
 }
 
 export function isReasoningMessage(message: ConversationMessageRecord): boolean {
-  return message.metadata?.type === 'reasoning';
+  return message.metadata?.type === 'reasoning' || message.metadata?.contentType === 'thinking';
 }
 
 // A folded tool call finishes when its result was recorded.
 type CombinedMessageRecord = ConversationMessageRecord & { providerCompletedAt?: string | null };
+
+function mergeMedia(first: ConversationMessageMedia[] | undefined, second: ConversationMessageMedia[] | undefined): ConversationMessageMedia[] | undefined {
+  if (!first?.length) return second?.length ? second : undefined;
+  if (!second?.length) return first;
+  const seen = new Set(first.map((item) => item.sha256));
+  return [...first, ...second.filter((item) => !seen.has(item.sha256))];
+}
 
 function combineToolResults(messages: ConversationMessageRecord[]): CombinedMessageRecord[] {
   const result: CombinedMessageRecord[] = [];
@@ -65,9 +72,11 @@ function combineToolResults(messages: ConversationMessageRecord[]): CombinedMess
     const index = key ? calls.get(key) : undefined;
     if (message.kind === 'tool_result' && index !== undefined) {
       const call = result[index]!;
+      const media = mergeMedia(call.media, message.media);
       result[index] = { ...call, toolOutputSummary: [call.toolOutputSummary, message.toolOutputSummary].filter(Boolean).join('\n') || null,
         toolStatus: message.toolStatus ?? call.toolStatus, redactionCount: (call.redactionCount ?? 0) + (message.redactionCount ?? 0),
-        providerCompletedAt: message.providerCreatedAt ?? call.providerCompletedAt ?? null };
+        providerCompletedAt: message.providerCreatedAt ?? call.providerCompletedAt ?? null,
+        ...(media ? { media } : {}) };
     } else {
       if (key && message.kind === 'tool_call') calls.set(key, result.length);
       result.push(message);
@@ -103,7 +112,7 @@ function cachedDisplay(message: ConversationMessageRecord, projectPath: string |
 function hasVisibleContent(message: ConversationMessageRecord, options: ArchiveTranscriptOptions, cache: ArchiveDisplayCache): boolean {
   if (isReasoningMessage(message) && !options.showReasoning) return false;
   const display = cachedDisplay(message, options.projectPath, cache);
-  return Boolean(display.displayText || display.approvalDetails || message.redactionCount || message.toolName || message.toolInputSummary || message.toolOutputSummary || display.fileReferences.length);
+  return Boolean(display.displayText || display.approvalDetails || message.redactionCount || message.toolName || message.toolInputSummary || message.toolOutputSummary || display.fileReferences.length || message.media?.length);
 }
 
 function toolNameFromMetadata(message: ConversationMessageRecord): string | null {
@@ -214,7 +223,7 @@ export function archiveTranscriptMessage(message: CombinedMessageRecord, display
   const base: TranscriptMessage = {
     id: message.id,
     role: message.role === 'user' ? 'user' : 'assistant',
-    kind: isArchivedTool(message) ? 'tool' : message.metadata?.type === 'reasoning' ? 'reasoning' : 'text',
+    kind: isArchivedTool(message) ? 'tool' : isReasoningMessage(message) ? 'reasoning' : 'text',
     text: display.text,
     archived: true,
     ...(createdAt ? { createdAt } : {}),
@@ -223,7 +232,18 @@ export function archiveTranscriptMessage(message: CombinedMessageRecord, display
     ...(display.fileReferences.length ? { fileReferences: display.fileReferences } : {}),
     ...(display.approval ? { approval: display.approval } : {})
   };
-  if (base.kind !== 'tool') return base;
+  if (base.kind !== 'tool') {
+    if (!message.media?.length) return base;
+    return {
+      ...base,
+      attachments: message.media.map((item) => ({
+        type: 'image',
+        sha256: item.sha256,
+        mime: item.mime,
+        ...(item.name ? { name: item.name } : {})
+      }))
+    };
+  }
 
   const nativeName = message.metadata?.toolName ?? message.metadata?.name;
   const name = message.toolName ?? (typeof nativeName === 'string' ? nativeName : null) ?? (display.fileReferences.length ? 'read' : 'tool');
@@ -237,6 +257,14 @@ export function archiveTranscriptMessage(message: CombinedMessageRecord, display
     tool.files = files;
     tool.patch = '';
     tool.changes = { additions, deletions };
+  }
+  if (message.media?.length) {
+    const existing = tool.images ?? [];
+    const seen = new Set(existing.map((image) => image.sha256));
+    const added = message.media
+      .filter((item) => !seen.has(item.sha256))
+      .map((item) => ({ sha256: item.sha256, mime: item.mime, ...(item.name ? { name: item.name } : {}) }));
+    if (added.length) tool.images = [...existing, ...added];
   }
   if (!tool.target && display.toolDetail) tool.target = display.toolDetail;
   return { ...base, text: output, title: name, tool };
