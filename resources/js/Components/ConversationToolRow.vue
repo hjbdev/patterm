@@ -79,8 +79,12 @@
               <button type="button" class="tool-action" aria-label="Copy diff" @click="copy('patch', patch)"><Check v-if="copied === 'patch'" /><Copy v-else /></button>
             </div>
           </div>
-          <div v-else-if="tool.files?.length" class="tool-section tool-output text-muted-foreground">
-            <p v-for="file in tool.files" :key="file.name" class="truncate">{{ file.name }}</p>
+          <!-- Files Pierre can't place: names, and any raw change lines. -->
+          <div v-if="rawFiles.length" class="tool-section tool-output">
+            <div v-for="(file, index) in rawFiles" :key="file.name ?? index" :class="index ? 'mt-2' : ''">
+              <p v-if="file.name" class="truncate text-muted-foreground">{{ file.name }}</p>
+              <template v-if="file.patch"><span v-for="(line, lineIndex) in file.patch.replace(/\n+$/, '').split('\n')" :key="lineIndex" class="block" :class="rawLineClass(line)">{{ line }}</span></template>
+            </div>
           </div>
 
           <div v-if="showOutput" class="tool-section" :class="{ 'tool-section-failed': failed && !separateError }">
@@ -110,7 +114,7 @@ import TranscriptImage from './TranscriptImage.vue';
 import ToolCollapse from './ToolCollapse.vue';
 import { isSavedFigure, subagentSummary, toggleTranscriptRow, transcriptRowOpen, type TranscriptMessage } from '../lib/integratedConversation';
 import { toolProcessCall } from '../lib/assistantFocus';
-import { filesPatch, formatToolDuration, outputTail, parseGrepOutput, parseNumberedOutput, shellExitCode, toolDurationMs, withoutExitCode } from '../lib/toolDetail';
+import { filesPatch, formatToolDuration, isUnifiedPatch, outputTail, parseGrepOutput, parseNumberedOutput, shellExitCode, toolDurationMs, withoutExitCode } from '../lib/toolDetail';
 import ProcessMention from './ProcessMention.vue';
 
 // Pierre and Shiki load with the first opened row rather than with the app.
@@ -130,6 +134,8 @@ const tool = computed(() => props.message.tool ?? {
   status: 'pending' as const,
   title: props.message.title ?? 'Tool'
 });
+// Codex passes a command's exit code and duration through its input.
+const nativeInput = computed(() => (tool.value.input && typeof tool.value.input === 'object' ? tool.value.input : {}) as Record<string, unknown>);
 const open = ref(props.active || transcriptRowOpen(props.processId, props.message.id));
 watch(() => props.active, (active) => { if (active) open.value = true; });
 const copied = ref<string | null>(null);
@@ -138,7 +144,11 @@ const fullOutput = ref(false);
 const children = computed(() => props.message.children ?? []);
 const drawn = computed(() => isSavedFigure(tool.value));
 // A non-zero exit code, when the harness reports one, counts as a failure.
-const exitCode = computed(() => tool.value.family === 'shell' ? shellExitCode(tool.value.output) || null : null);
+const exitCode = computed(() => {
+  if (tool.value.family !== 'shell') return null;
+  const native = nativeInput.value.exitCode;
+  return (typeof native === 'number' ? native : shellExitCode(tool.value.output)) || null;
+});
 const failed = computed(() => tool.value.status === 'failed' || Boolean(exitCode.value));
 const latest = computed(() => subagentSummary(children.value));
 const toolProcess = computed(() => toolProcessCall(tool.value, props.message.text)?.processId ?? null);
@@ -155,7 +165,8 @@ const target = computed(() => {
 });
 const duration = computed(() => {
   if (tool.value.status === 'running') return '';
-  const ms = toolDurationMs(props.message.createdAt, props.message.completedAt);
+  const native = nativeInput.value.durationMs;
+  const ms = typeof native === 'number' ? native : toolDurationMs(props.message.createdAt, props.message.completedAt);
   return ms === null ? '' : formatToolDuration(ms);
 });
 const toolImages = computed(() => (tool.value.images ?? []).map((item) => ({ ...item, name: item.name ?? tool.value.target })));
@@ -169,12 +180,13 @@ const inputText = computed(() => {
 
 const commandLines = computed(() => [{ lines: (tool.value.command ?? '').split('\n').map((text) => ({ text })) }]);
 const patch = computed(() => filesPatch(tool.value.patch, tool.value.files));
+const rawFiles = computed(() => (tool.value.files ?? []).filter((file) => !isUnifiedPatch(file.patch) && (file.name || file.patch)));
 const patchFiles = computed(() => (patch.value.match(/^diff --git /gm) ?? []).length);
 // A failed call's error is usually its output; show it once.
 const separateError = computed(() => Boolean(tool.value.error && tool.value.error.trim() !== tool.value.output?.trim()));
 const showOutput = computed(() => Boolean(tool.value.output && !drawn.value));
 const showArguments = computed(() => !tool.value.command && !tool.value.output && !patch.value && !tool.value.files?.length && !tool.value.checklist?.length && !children.value.length && tool.value.input !== undefined);
-const hasBlock = computed(() => Boolean(tool.value.command || separateError.value || patch.value || tool.value.files?.length || showOutput.value || showArguments.value));
+const hasBlock = computed(() => Boolean(tool.value.command || separateError.value || patch.value || rawFiles.value.length || showOutput.value || showArguments.value));
 
 const numberedLines = computed(() => tool.value.family === 'read' && tool.value.output ? parseNumberedOutput(tool.value.output) : null);
 const grepGroups = computed(() => tool.value.family === 'grep' && tool.value.output ? parseGrepOutput(tool.value.output) : null);
@@ -206,6 +218,12 @@ function ready(): Promise<unknown> {
 
 function diffRendered(): void {
   markDiffDrawn?.();
+}
+
+function rawLineClass(line: string): string {
+  if (line.startsWith('+')) return 'text-diff-add';
+  if (line.startsWith('-')) return 'text-diff-remove';
+  return 'text-muted-foreground';
 }
 
 function toggle(): void {

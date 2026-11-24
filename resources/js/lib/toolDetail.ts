@@ -52,9 +52,11 @@ export function parseNumberedOutput(output: string): CodeLine[] | null {
   for (const line of raw) {
     const match = NUMBERED_LINE.exec(line);
     if (match) lines.push({ n: Number(match[1]), text: match[2]! });
-    else if (lines.length && line.trim()) unmatched++;
+    // Notices after the first line, such as a truncation or the offset to
+    // continue from, stay in place, dimmed.
+    else if (lines.length && line.trim()) { lines.push({ text: line, context: true }); unmatched++; }
   }
-  if (!lines.length || unmatched > lines.length * 0.2) return null;
+  if (!lines.length || unmatched > (lines.length - unmatched) * 0.2) return null;
   return lines;
 }
 
@@ -84,8 +86,12 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
       continue;
     }
     const bare = /^(\d+)([:-])(.*)$/.exec(line);
-    const hit = bare ? null : /^(.+?):(\d+):(.*)$/.exec(line);
-    const context = bare || hit ? null : /^(.+?)-(\d+)-(.*)$/.exec(line);
+    const colon = bare ? null : /^(.+?):(\d+):(.*)$/.exec(line);
+    const dash = bare ? null : /^(.+?)-(\d+)-(.*)$/.exec(line);
+    // The separator nearest the start is ripgrep's; a later `:12:` belongs to
+    // the text, such as a stack location in a context line.
+    const hit = colon && (!dash || colon[1]!.length <= dash[1]!.length) ? colon : null;
+    const context = hit ? null : dash;
     if (bare) add(undefined, { n: Number(bare[1]), text: bare[3]!, ...(bare[2] === '-' ? { context: true } : {}) });
     else if (hit) add(hit[1], { n: Number(hit[2]), text: hit[3]! });
     else if (context) add(context[1], { n: Number(context[2]), text: context[3]!, context: true });
@@ -100,8 +106,10 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
 // expression when it is one; a pattern that doesn't compile marks nothing.
 export function patternRanges(text: string, pattern: string | undefined, ignoreCase = false): Array<[number, number]> {
   if (!pattern) return [];
+  // ripgrep's inline `(?i)` is a flag JavaScript only takes separately.
+  const inline = /^\(\?i\)/.test(pattern);
   let regex: RegExp;
-  try { regex = new RegExp(pattern, ignoreCase ? 'gi' : 'g'); } catch { return []; }
+  try { regex = new RegExp(inline ? pattern.slice(4) : pattern, ignoreCase || inline ? 'gi' : 'g'); } catch { return []; }
   const ranges: Array<[number, number]> = [];
   for (const match of text.matchAll(regex)) {
     if (!match[0].length) break;
@@ -141,11 +149,19 @@ export function markTokens(tokens: Array<{ content: string; color?: string }>, r
   return segments;
 }
 
+// Pierre needs numbered hunks. Codex's apply_patch bodies (`@@` with no line
+// numbers, or bare added lines) can't be placed and show as raw lines instead.
+const NUMBERED_HUNK = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m;
+
+export function isUnifiedPatch(patch: string | undefined): boolean {
+  return Boolean(patch && NUMBERED_HUNK.test(patch));
+}
+
 // One git-format patch for Pierre. Claude's edits arrive as bare hunks per
 // file, so each gets the file headers Pierre needs to name and colour it.
 export function filesPatch(patch: string | undefined, files: TranscriptToolFile[] | undefined): string {
-  if (patch?.includes('diff --git')) return patch;
-  return (files ?? []).filter((file) => file.patch).map((file) => {
+  if (patch?.includes('diff --git') && isUnifiedPatch(patch)) return patch;
+  return (files ?? []).filter((file) => isUnifiedPatch(file.patch)).map((file) => {
     if (file.patch!.includes('diff --git')) return file.patch!;
     const name = (file.name ?? 'file').replace(/^\/+/, '');
     return `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${file.patch}`;
