@@ -197,7 +197,7 @@ async function main(): Promise<void> {
         assert.match(gatewayList.tools.find(({ name }) => name === 'whoami')!.description!, /Kept in full\./, `${label} core tools keep their usage notes`);
         assert.match(gatewayList.tools.find(({ name }) => name === 'help')!.description!, /run them with call/);
         const viaCall = await gateway.callTool({ name: 'call', arguments: { tool: 'todo_create', arguments: { title: 'Through the gateway' } } });
-        assert.notEqual(viaCall.isError, true);
+        assert.notEqual(viaCall.isError, true, `${label} call succeeds: ${JSON.stringify(viaCall.content)}`);
         assert.deepEqual(calls.at(-1), { tool: 'todo_create', args: { title: 'Through the gateway' }, version: 2 }, `${label} call forwards the named tool and its arguments`);
         await gateway.callTool({ name: 'call', arguments: { tool: 'whoami' } });
         assert.deepEqual(calls.at(-1), { tool: 'whoami', args: {}, version: 2 }, `${label} call without arguments sends an empty object`);
