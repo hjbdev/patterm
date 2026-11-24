@@ -32,7 +32,7 @@
 
     <SettingsSection title="Servers" description="Turn a server off to stop giving it to new agents." scope="mcp" list>
       <p v-if="loaded && !servers.length" class="px-3.5 py-3 text-xs text-muted-foreground">No MCP servers yet. Add one, or import the servers your agents already use.</p>
-      <SettingsItem v-for="server in servers" :key="server.id" :save-key="`mcp.${server.id}`" :muted="!server.enabled">
+      <SettingsItem v-for="server in servers" :key="server.id" :keywords="server.name" :save-key="`mcp.${server.id}`" :muted="!server.enabled">
         <template #icon><component :is="server.transport === 'http' ? Globe : SquareTerminal" class="h-4 w-4" aria-hidden="true" /></template>
         <template #title>
           {{ server.name }}

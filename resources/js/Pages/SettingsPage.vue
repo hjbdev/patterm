@@ -112,11 +112,11 @@ const GROUPS: Array<{ label: string; items: SettingsItem[] }> = [
     { value: 'terminal', label: 'Terminal', icon: SquareTerminal, component: TerminalAppearanceSettings, keywords: 'appearance shell' }
   ] },
   { label: 'Agents', items: [
-    { value: 'harnesses', label: 'Harnesses', icon: Cpu, component: HarnessPresetSettings, keywords: 'profiles presets models reasoning' },
-    { value: 'bots', label: 'Bots', icon: Bot, component: BotSettings, keywords: 'assistant voice' },
+    { value: 'harnesses', label: 'Harnesses', icon: Cpu, component: HarnessPresetSettings, keywords: 'profiles presets models reasoning add profile' },
+    { value: 'bots', label: 'Bots', icon: Bot, component: BotSettings, keywords: 'assistant voice add bot' },
     { value: 'summaries', label: 'Auto-summaries', icon: Sparkles, component: AutoSummarySettings, keywords: 'titles' },
     { value: 'compaction', label: 'Idle compaction', icon: Shrink, component: IdleCompactionSettings, keywords: 'cache context' },
-    { value: 'status-labels', label: 'Status labels', icon: Tag, component: StatusLabelSettings },
+    { value: 'status-labels', label: 'Status labels', icon: Tag, component: StatusLabelSettings, keywords: 'add label' },
     { value: 'figures', label: 'Figures', icon: ChartColumn, component: FigureSettings, keywords: 'html charts templates' }
   ] },
   { label: 'Activity', items: [
@@ -124,7 +124,7 @@ const GROUPS: Array<{ label: string; items: SettingsItem[] }> = [
     { value: 'history', label: 'Conversation history', icon: History, component: HistorySettings, keywords: 'import resume' }
   ] },
   { label: 'Connections', items: [
-    { value: 'mcp', label: 'MCP servers', icon: Plug, component: McpServerSettings, keywords: 'tools integrations' },
+    { value: 'mcp', label: 'MCP servers', icon: Plug, component: McpServerSettings, keywords: 'tools integrations add server import' },
     { value: 'hosts', label: 'Hosts', icon: Server, component: HostSettings, keywords: 'pair machines' },
     { value: 'access', label: 'Remote access', icon: KeyRound, component: ServerAccessSettings, keywords: 'tailscale password browser phone' }
   ] },

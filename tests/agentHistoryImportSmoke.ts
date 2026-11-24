@@ -280,6 +280,11 @@ function verifyDefaultSourcesAlwaysOn(): void {
     sources.enableDefaultSources(home);
     assert.deepEqual(sources.enabledWatchSources().map((source) => source.path).sort(), defaults.map((source) => source.path).sort(), 'every default history location is watched, once each');
     assert.deepEqual(sources.importCandidates({}).map((source) => source.path), [claude.path], 'only locations that exist are imported');
+
+    const claudeConfig = path.join(directory, 'claude-config');
+    sources.enableDefaultSources(home, { CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: path.join(directory, 'codex-home') });
+    const watched = sources.enabledWatchSources().map((source) => source.path);
+    assert.ok(watched.includes(path.join(claudeConfig, 'projects')) && watched.includes(path.join(directory, 'codex-home', 'sessions')), 'CLAUDE_CONFIG_DIR and CODEX_HOME move where history imports from');
   } finally {
     database.dispose();
     fs.rmSync(directory, { recursive: true, force: true });

@@ -5,7 +5,7 @@
     </template>
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
 
-    <SettingsSection v-for="harness in PRESET_HARNESSES" :key="harness" list :scope="`harnesses.${harness}`">
+    <SettingsSection v-for="harness in PRESET_HARNESSES" :key="harness" list :keywords="harnessName(harness)" :scope="`harnesses.${harness}`">
       <template #title>
         <AgentIcon :harness="harness" class="h-3.5 w-3.5" />
         {{ harnessName(harness) }}
@@ -19,7 +19,7 @@
         <Button type="button" size="sm" variant="outline" @click="addPreset(harness)">Add profile</Button>
       </template>
 
-      <SettingsItem v-for="preset in presetsFor(harness)" :key="preset.id" :save-key="`harnesses.${harness}.${preset.id}`">
+      <SettingsItem v-for="preset in presetsFor(harness)" :key="preset.id" :keywords="preset.name" :save-key="`harnesses.${harness}.${preset.id}`">
         <template #icon>
           <input
             type="radio"

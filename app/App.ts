@@ -531,7 +531,9 @@ async function createApplicationResources(
   const diffService = new DiffService({ worktrees: worktreeService, git });
   const historyDiscovery = new ProviderHistoryDiscoveryService(undefined, quietReplies);
   const historySourceService = new AgentHistorySourceService(database, historyDiscovery);
-  historySourceService.enableDefaultSources(options.historyHomeDir);
+  // A test's own home ignores the shell's CLI locations, so it never reads real history.
+  if (options.historyHomeDir) historySourceService.enableDefaultSources(options.historyHomeDir);
+  else historySourceService.enableDefaultSources(undefined, resolvedEnv);
   const historyImportService = new AgentHistoryImportService(database, historyDiscovery, timeline, undefined, database, historySourceService);
   const historyReadService = new AgentHistoryReadService(historyDatabase, quietReplies);
   integrated.setHistoryReadService(historyReadService);

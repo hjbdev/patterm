@@ -36,9 +36,10 @@ export class AgentHistorySourceService {
   // Every agent CLI's own history location imports and is watched, including
   // one a person turned off before history became automatic. A location that
   // doesn't exist yet is watched from its nearest parent, so a CLI installed
-  // later starts importing without a restart.
-  enableDefaultSources(homeDir?: string): void {
-    for (const source of this.discovery.defaultSources(homeDir)) {
+  // later starts importing without a restart. `env` is the environment agents
+  // launch with, since CLAUDE_CONFIG_DIR and CODEX_HOME move their history.
+  enableDefaultSources(homeDir?: string, env: NodeJS.ProcessEnv = {}): void {
+    for (const source of this.discovery.defaultSources(homeDir, env)) {
       this.save({ provider: source.provider, path: source.path, source_kind: source.sourceKind, enabled: true, watch_enabled: true });
     }
   }
