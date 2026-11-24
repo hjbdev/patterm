@@ -88,11 +88,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, type RouteLocationRaw } from 'vue-router';
 import { useIntersectionObserver, useMediaQuery } from '@vueuse/core';
 import { ChevronLeft, ChevronRight, ImageOff, X } from 'lucide-vue-next';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from './ui/dialog';
+import { APPEARANCE_SETTINGS_CHANGED_EVENT, lastKnownAppearanceSettings, loadAppearanceSettings, normalizeAppearanceSettings, type AppearanceSettings, type ConversationBreakout } from '../appearance/AppearanceSettings';
 import { useLightboxGestures } from '../Composables/useLightboxGestures';
 import type { TranscriptImage } from '../lib/integratedConversation';
 import { baseName } from '../lib/serverPath';
@@ -106,7 +107,7 @@ const identity = (image: GalleryImage) => image.key ?? image.sha256;
 // Images shown together pass the whole group as the gallery so the lightbox
 // can step between them. A project reads images indexed from its history; a
 // filled tile is a square thumbnail that loads once it scrolls into view.
-const props = withDefaults(defineProps<{ image: GalleryImage; gallery?: GalleryImage[]; maxHeight?: number; maxWidth?: number; projectId?: string; fill?: boolean }>(), { maxHeight: 160, maxWidth: 280 });
+const props = withDefaults(defineProps<{ image: GalleryImage; gallery?: GalleryImage[]; maxHeight?: number; maxWidth?: number; projectId?: string; fill?: boolean; breakout?: boolean | undefined }>(), { maxHeight: 160, maxWidth: 280, breakout: false });
 
 const MAX_DOTS = 12;
 const NAV_CLASS = 'absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 text-foreground shadow outline-none backdrop-blur transition hover:bg-background focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50';
@@ -176,14 +177,40 @@ watch([expanded, () => shown.value.sha256], ([open, sha256]) => {
   );
 });
 
+const breakoutMode = ref<ConversationBreakout>(lastKnownAppearanceSettings()?.conversationBreakout ?? 'off');
+function onAppearanceChanged(event: Event): void {
+  breakoutMode.value = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail).conversationBreakout;
+}
+onMounted(() => {
+  if (!props.breakout) return;
+  window.addEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, onAppearanceChanged);
+  if (!lastKnownAppearanceSettings()) {
+    void loadAppearanceSettings().then((settings) => {
+      if (!disposed) breakoutMode.value = settings.conversationBreakout;
+    }).catch(() => {});
+  }
+});
+
+const effectiveBounds = computed(() => {
+  if (!props.breakout || breakoutMode.value === 'off') {
+    return { maxWidth: props.maxWidth, maxHeight: props.maxHeight };
+  }
+  const single = items.value.length <= 1;
+  if (breakoutMode.value === 'full') {
+    return single ? { maxWidth: 2400, maxHeight: 640 } : { maxWidth: 520, maxHeight: 320 };
+  }
+  return single ? { maxWidth: 1120, maxHeight: 480 } : { maxWidth: 420, maxHeight: 260 };
+});
+
 // Known dimensions reserve the final size so the virtualised transcript does
 // not jump when the image arrives; otherwise the frame fits once it loads.
 const frameStyle = computed(() => {
+  const { maxWidth, maxHeight } = effectiveBounds.value;
   const width = props.image.width ?? natural.value?.width;
   const height = props.image.height ?? natural.value?.height;
-  if (!width || !height) return { height: `${props.maxHeight}px`, width: `${Math.round(props.maxHeight * 4 / 3)}px`, maxWidth: '100%' };
-  const scale = Math.min(1, props.maxHeight / height, props.maxWidth / width);
-  return { height: `${Math.round(height * scale)}px`, width: `${Math.round(width * scale)}px`, maxWidth: '100%' };
+  if (!width || !height) return { width: `${Math.round(maxHeight * 4 / 3)}px`, maxWidth: '100%', aspectRatio: '4 / 3' };
+  const scale = Math.min(1, maxHeight / height, maxWidth / width);
+  return { width: `${Math.round(width * scale)}px`, maxWidth: '100%', aspectRatio: `${width} / ${height}` };
 });
 
 function measure(event: Event): void {
@@ -212,6 +239,7 @@ watch([() => props.image.sha256, visible], ([sha256, shown]) => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  if (props.breakout) window.removeEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, onAppearanceChanged);
   gestures.reset();
 });
 </script>

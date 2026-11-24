@@ -57,6 +57,33 @@ const defaultFence = md.renderer.rules.fence!;
 md.renderer.rules.fence = (tokens, index, options, env, self) =>
   `<div class="code-block">${tokens[index]?.meta?.highlightedHtml ?? defaultFence(tokens, index, options, env, self)}</div>`;
 
+// Wrap tables in a scrolling container so wide tables scroll sideways while
+// keeping normal table layout, and can break out wider than prose.
+const defaultTableOpen =
+  md.renderer.rules.table_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+const defaultTableClose =
+  md.renderer.rules.table_close ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+md.renderer.rules.table_open = (tokens, idx, options, env, self) =>
+  `<div class="markdown-table">${defaultTableOpen(tokens, idx, options, env, self)}`;
+md.renderer.rules.table_close = (tokens, idx, options, env, self) =>
+  `${defaultTableClose(tokens, idx, options, env, self)}</div>`;
+
+// Mark paragraphs that hold only a standalone image (or linked image) so
+// conversations can break them out wider than prose without touching inline icons.
+md.core.ruler.push('standalone_images', (state) => {
+  const tokens = state.tokens;
+  for (let i = 0; i < tokens.length - 2; i++) {
+    const open = tokens[i];
+    const inline = tokens[i + 1];
+    const close = tokens[i + 2];
+    if (open?.type !== 'paragraph_open' || inline?.type !== 'inline' || close?.type !== 'paragraph_close') continue;
+    const meaningful = (inline.children ?? []).filter((token) => !(token.type === 'text' && !token.content.trim()));
+    const standalone = (meaningful.length === 1 && meaningful[0]?.type === 'image')
+      || (meaningful.length === 3 && meaningful[0]?.type === 'link_open' && meaningful[1]?.type === 'image' && meaningful[2]?.type === 'link_close');
+    if (standalone) open.attrJoin('class', 'markdown-image');
+  }
+});
+
 // Process IDs and launch tokens become empty placeholders that the Markdown
 // component fills with chips. Text in links stays as it is, and code only
 // when the whole span is a single mention. text_join has merged the brackets

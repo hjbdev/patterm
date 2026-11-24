@@ -1,5 +1,5 @@
 <template>
-  <form class="mx-auto w-full max-w-[50rem] shrink-0 p-4 2xl:max-w-[1000px]" @submit.prevent="submit">
+  <form class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] shrink-0 p-4" @submit.prevent="submit">
     <div
       class="relative rounded-xl border bg-background shadow-sm transition-colors"
       :class="dragging ? 'border-dashed border-primary/70' : 'border-border'"

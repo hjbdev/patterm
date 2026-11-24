@@ -35,7 +35,10 @@ async function main(): Promise<void> {
     }
     assert.match(await render('[outer <file:///repo/inner>](https://outer.example) after'), /<\/span><\/a> after/, 'a nested file reference preserves the closing tag of an outer web link');
   }
-  assert.match(renderPlainMarkdown('| File |\n| --- |\n| [worker](file:///repo/worker.yml#L109) |'), /<td><span [^>]*>worker<\/span><\/td>/, 'file references also render inside tables');
+  assert.match(renderPlainMarkdown('| File |\n| --- |\n| [worker](file:///repo/worker.yml#L109) |'), /<div class="markdown-table"><table>[\s\S]*<td><span [^>]*>worker<\/span><\/td>[\s\S]*<\/table>\n?<\/div>/, 'file references render inside wrapped tables');
+  assert.match(renderPlainMarkdown('![Diagram](https://example.com/diagram.png)'), /<p class="markdown-image"><img /, 'standalone Markdown images are marked for breakout');
+  assert.match(renderPlainMarkdown('[![Diagram](https://example.com/diagram.png)](https://example.com)'), /<p class="markdown-image"><a [^>]*><img /, 'linked standalone images are marked for breakout');
+  assert.doesNotMatch(renderPlainMarkdown('Inline ![icon](https://example.com/icon.png) in text'), /class="markdown-image"/, 'inline images inside prose stay in the prose column');
   assert.match(renderPlainMarkdown('`[file](file:///repo/file)`\n\n```md\n[file](file:///repo/file)\n```'), /<code>\[file\]\(file:\/\/\/repo\/file\)<\/code>/, 'examples of Markdown links remain literal code');
   assert.doesNotMatch(renderPlainMarkdown('[file](<file:///repo/"onmouseover=alert(1)> "ignored title")'), /(?:\s|<)onmouseover=|href=/, 'file reference paths cannot inject attributes');
   const unsafeLinks = renderPlainMarkdown('[js](javascript:alert(1)) [vb](vbscript:alert(1)) [data](data:text/html;base64,PHNjcmlwdD4=)');

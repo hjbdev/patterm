@@ -11,7 +11,7 @@
         :style="activeTerminalId ? { maxWidth: 'var(--patterm-terminal-max-width, 960px)' } : undefined"
       >
         <!-- The agent's context, above its conversation or terminal and lined up with it. -->
-        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" :inner="integratedAgent ? 'max-w-[50rem] 2xl:max-w-[1000px]' : '!px-0'" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" @open-worktree="openWorktree" />
+        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" :inner="integratedAgent ? 'max-w-[var(--patterm-conversation-max-width,50rem)]' : '!px-0'" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" @open-worktree="openWorktree" />
         <div class="relative min-h-0 flex-1" :class="!phoneLayout && selectedAgent && activeTerminalId && !integratedAgent && 'mt-3'">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />

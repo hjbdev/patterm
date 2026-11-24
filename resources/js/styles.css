@@ -34,6 +34,9 @@
     --diff-add: 142 70% 45%;
     --diff-remove: 0 72% 60%;
     --patterm-ui-font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    --patterm-conversation-font-size: 14px;
+    --patterm-conversation-max-width: 50rem;
+    --patterm-conversation-breakout-max-width: 0px;
   }
 
   * {
@@ -257,4 +260,16 @@ button.mention-glow:hover {
   left: 1px;
   width: 9px;
   height: 1px;
+}
+
+.conversation-transcript-viewport {
+  --markdown-font-size: var(--patterm-conversation-font-size, 0.875rem);
+}
+
+.conversation-breakout-images {
+  --breakout-width: max(100%, min(calc(100cqi - 2rem), var(--patterm-conversation-breakout-max-width, 0px)));
+  width: var(--breakout-width);
+  max-width: none;
+  margin-inline: calc((100% - var(--breakout-width)) / 2);
+  justify-content: var(--patterm-conversation-breakout-justify, flex-start);
 }

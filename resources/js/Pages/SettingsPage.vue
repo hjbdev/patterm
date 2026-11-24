@@ -22,7 +22,7 @@
 
             <div class="min-w-0 max-w-3xl flex-1">
               <TabsContent value="appearance" class="m-0">
-                <SettingsPanel title="Appearance" description="Navigation, fonts, terminal layout, and diff review. Changes apply as soon as you make them.">
+                <SettingsPanel title="Appearance" description="Navigation, fonts, conversations, terminal layout, and diff review. Changes apply as soon as you make them.">
                   <p v-if="loadError" role="alert" class="text-xs text-destructive">{{ loadError }}</p>
                   <SettingsSection title="Navigation" description="Where a project’s agents and processes are listed." scope="appearance.navigation">
                     <!-- One description for both choices, so switching never changes the row's height; the preview shows the difference. -->
@@ -49,6 +49,43 @@
                       <p class="text-sm">A space for your next idea.</p>
                       <p class="mt-1 text-xs text-muted-foreground">Projects, agents, and everything in between.</p>
                     </div>
+                  </SettingsSection>
+
+                  <SettingsSection title="Conversation" description="Text size, reading width, and wide media in agent conversations." scope="appearance.conversation">
+                    <SettingsRow label="Font size" description="From 12 to 22 px. Headings, code blocks, and prompts scale with it." html-for="conversation-font-size" save-key="appearance.conversation.fontSize">
+                      <div class="flex w-full items-center gap-3 [@container(min-width:26rem)]:w-52">
+                        <Slider
+                          id="conversation-font-size"
+                          :model-value="[draft.conversationFontSizePx]"
+                          :min="CONVERSATION_FONT_SIZE_RANGE.min"
+                          :max="CONVERSATION_FONT_SIZE_RANGE.max"
+                          :step="1"
+                          thumb-label="Conversation font size"
+                          class="flex-1"
+                          @update:model-value="(value) => { if (typeof value?.[0] === 'number') draft.conversationFontSizePx = value[0]; }"
+                          @value-commit="(value) => { if (typeof value?.[0] === 'number') { draft.conversationFontSizePx = value[0]; void saveAppearance('appearance.conversation.fontSize'); } }"
+                        />
+                        <span class="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{{ draft.conversationFontSizePx }} px</span>
+                      </div>
+                    </SettingsRow>
+                    <SettingsRow label="Width" :description="CONVERSATION_WIDTH_OPTIONS.find((option) => option.value === draft.conversationWidth)?.description ?? ''" html-for="conversation-width" save-key="appearance.conversation.width">
+                      <SettingsChoice id="conversation-width" :model-value="draft.conversationWidth" :options="CONVERSATION_WIDTH_OPTIONS" aria-label="Conversation width" segmented @update:model-value="(value) => { draft.conversationWidth = value; void saveAppearance('appearance.conversation.width'); }" />
+                    </SettingsRow>
+                    <SettingsRow
+                      label="Wide tables & media"
+                      :description="draft.conversationWidth === 'full' ? 'Conversations already use the full pane width.' : (CONVERSATION_BREAKOUT_OPTIONS.find((option) => option.value === draft.conversationBreakout)?.description ?? '')"
+                      html-for="conversation-breakout"
+                      save-key="appearance.conversation.breakout"
+                      :disabled="draft.conversationWidth === 'full'"
+                    >
+                      <SettingsChoice id="conversation-breakout" :model-value="draft.conversationBreakout" :options="CONVERSATION_BREAKOUT_OPTIONS" aria-label="Wide tables and media" :disabled="draft.conversationWidth === 'full'" segmented @update:model-value="(value) => { draft.conversationBreakout = value; void saveAppearance('appearance.conversation.breakout'); }" />
+                    </SettingsRow>
+                    <ConversationPreview
+                      :font-size-px="draft.conversationFontSizePx"
+                      :width="draft.conversationWidth"
+                      :breakout="draft.conversationBreakout"
+                      :font-family="uiPreviewFamily"
+                    />
                   </SettingsSection>
 
                   <SettingsSection title="Terminal" description="Fonts are bundled with Patterm, except the installed Nerd Font option, which falls back to JetBrains Mono. Custom uses fonts installed on this device. Font changes resize running terminals." scope="appearance.terminal">
@@ -207,6 +244,9 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { Activity, ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles, Tag } from 'lucide-vue-next';
 import {
+  CONVERSATION_BREAKOUT_OPTIONS,
+  CONVERSATION_FONT_SIZE_RANGE,
+  CONVERSATION_WIDTH_OPTIONS,
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
   UI_FONT_OPTIONS,
@@ -222,6 +262,7 @@ import { ensureBundledFontStyles } from '../appearance/FontLoading';
 import { Button } from '../Components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../Components/ui/dropdown-menu';
 import { Input } from '../Components/ui/input';
+import { Slider } from '../Components/ui/slider';
 import { Switch } from '../Components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../Components/ui/tabs';
 import AboutSettings from '../Components/AboutSettings.vue';
@@ -235,6 +276,7 @@ import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
 import BotSettings from '../Components/BotSettings.vue';
 import IdleCompactionSettings from '../Components/IdleCompactionSettings.vue';
 import McpServerSettings from '../Components/McpServerSettings.vue';
+import ConversationPreview from '../Components/settings/ConversationPreview.vue';
 import NavigationPreview from '../Components/settings/NavigationPreview.vue';
 import HostSettings from '../Components/HostSettings.vue';
 import ServerAccessSettings from '../Components/ServerAccessSettings.vue';
@@ -362,6 +404,9 @@ function assignDraft(settings: AppearanceSettings): void {
   draft.terminalFont.customFamily = settings.terminalFont.customFamily;
   draft.terminalFontSizePx = settings.terminalFontSizePx;
   draft.terminalContainer = settings.terminalContainer;
+  draft.conversationFontSizePx = settings.conversationFontSizePx;
+  draft.conversationWidth = settings.conversationWidth;
+  draft.conversationBreakout = settings.conversationBreakout;
   draft.historyImportToasts = settings.historyImportToasts;
   draft.diffViewer = settings.diffViewer;
   draft.navigation = settings.navigation;

@@ -1,7 +1,7 @@
 <template>
   <!-- After you answer one agent on a phone, the next one waiting on you is a
        tap away, until nothing is left. -->
-  <div v-if="waiting" class="mx-auto w-full max-w-[50rem] shrink-0 px-2 pb-2">
+  <div v-if="waiting" class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] shrink-0 px-2 pb-2">
     <button
       type="button"
       class="flex h-[38px] w-full items-center gap-2.5 rounded-[11px] bg-white/[0.08] pl-3 pr-2.5 text-left text-sm transition-colors hover:bg-white/[0.12] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

@@ -5,12 +5,19 @@ export { resolveTerminalFontFamily, resolveUiFontFamily, TERMINAL_FONT_OPTIONS, 
 
 export type DiffViewerLayout = 'drawer' | 'deck';
 export type NavigationLayout = 'tabs' | 'sidebar';
+export type ConversationWidth = 'narrow' | 'default' | 'wide' | 'full';
+export type ConversationBreakout = 'off' | 'wider' | 'full';
+
+export const CONVERSATION_FONT_SIZE_RANGE = { min: 12, max: 22, default: 14 } as const;
 
 export interface AppearanceSettings {
   uiFont: { preset: UiFontPreset; customFamily: string };
   terminalFont: { preset: TerminalFontPreset; customFamily: string };
   terminalFontSizePx: number;
   terminalContainer: boolean;
+  conversationFontSizePx: number;
+  conversationWidth: ConversationWidth;
+  conversationBreakout: ConversationBreakout;
   historyImportToasts: boolean;
   diffViewer: DiffViewerLayout;
   navigation: NavigationLayout;
@@ -23,12 +30,47 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   terminalFont: { preset: 'jetbrains-nerd', customFamily: '' },
   terminalFontSizePx: 14,
   terminalContainer: true,
+  conversationFontSizePx: CONVERSATION_FONT_SIZE_RANGE.default,
+  conversationWidth: 'default',
+  conversationBreakout: 'off',
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',
   personalProject: false,
   recentProjects: true
 };
+
+export const CONVERSATION_WIDTH_OPTIONS: Array<{ value: ConversationWidth; label: string; description: string }> = [
+  { value: 'narrow', label: 'Narrow', description: '680 px — focused reading column.' },
+  { value: 'default', label: 'Default', description: '800 px — balanced conversation column.' },
+  { value: 'wide', label: 'Wide', description: '1040 px — spacious column for dense output.' },
+  { value: 'full', label: 'Full', description: 'Full width — uses the whole conversation pane.' }
+];
+
+export const CONVERSATION_BREAKOUT_OPTIONS: Array<{ value: ConversationBreakout; label: string; description: string }> = [
+  { value: 'off', label: 'Off', description: 'HTML figures, tables, and images stay inside the prose column.' },
+  { value: 'wider', label: 'Wider', description: 'HTML figures, tables, and images extend past both sides of the prose column.' },
+  { value: 'full', label: 'Full', description: 'HTML figures, tables, and images span the full conversation pane.' }
+];
+
+export function resolveConversationMaxWidth(width: ConversationWidth): string {
+  switch (width) {
+    case 'narrow': return '42.5rem';
+    case 'wide': return '65rem';
+    case 'full': return '100%';
+    default: return '50rem';
+  }
+}
+
+export function resolveConversationBreakoutMaxWidth(width: ConversationWidth, breakout: ConversationBreakout): string {
+  if (breakout === 'off' || width === 'full') return '0px';
+  if (breakout === 'full') return '100cqi';
+  switch (width) {
+    case 'narrow': return '62.5rem';
+    case 'wide': return '85rem';
+    default: return '70rem';
+  }
+}
 
 export const DIFF_VIEWER_OPTIONS: Array<{ value: DiffViewerLayout; label: string; description: string }> = [
   { value: 'drawer', label: 'File tree', description: 'Browse changed files in a tree beside the open file.' },
@@ -54,6 +96,9 @@ export function normalizeAppearanceSettings(value: Partial<AppearanceSettings> |
     },
     terminalFontSizePx: clampTerminalFontSize(value?.terminalFontSizePx),
     terminalContainer: typeof value?.terminalContainer === 'boolean' ? value.terminalContainer : DEFAULT_APPEARANCE_SETTINGS.terminalContainer,
+    conversationFontSizePx: clampConversationFontSize(value?.conversationFontSizePx),
+    conversationWidth: isConversationWidth(value?.conversationWidth) ? value.conversationWidth : DEFAULT_APPEARANCE_SETTINGS.conversationWidth,
+    conversationBreakout: isConversationBreakout(value?.conversationBreakout) ? value.conversationBreakout : DEFAULT_APPEARANCE_SETTINGS.conversationBreakout,
     historyImportToasts: typeof value?.historyImportToasts === 'boolean' ? value.historyImportToasts : DEFAULT_APPEARANCE_SETTINGS.historyImportToasts,
     diffViewer: value?.diffViewer === 'deck' ? 'deck' : DEFAULT_APPEARANCE_SETTINGS.diffViewer,
     navigation: value?.navigation === 'sidebar' ? 'sidebar' : DEFAULT_APPEARANCE_SETTINGS.navigation,
@@ -65,8 +110,13 @@ export function normalizeAppearanceSettings(value: Partial<AppearanceSettings> |
 export function applyUiFont(settings: AppearanceSettings): void {
   const fontFamily = resolveUiFontFamily(settings);
   void ensureBundledFontStyles(fontFamily);
-  document.documentElement.style.setProperty('--patterm-ui-font-family', fontFamily);
-  document.documentElement.style.setProperty('--patterm-terminal-max-width', settings.terminalContainer ? '960px' : 'none');
+  const style = document.documentElement.style;
+  style.setProperty('--patterm-ui-font-family', fontFamily);
+  style.setProperty('--patterm-terminal-max-width', settings.terminalContainer ? '960px' : 'none');
+  style.setProperty('--patterm-conversation-font-size', `${settings.conversationFontSizePx}px`);
+  style.setProperty('--patterm-conversation-max-width', resolveConversationMaxWidth(settings.conversationWidth));
+  style.setProperty('--patterm-conversation-breakout-max-width', resolveConversationBreakoutMaxWidth(settings.conversationWidth, settings.conversationBreakout));
+  style.setProperty('--patterm-conversation-breakout-justify', settings.conversationBreakout !== 'off' && settings.conversationWidth !== 'full' ? 'center' : 'flex-start');
   document.body.style.fontFamily = fontFamily;
 }
 
@@ -132,6 +182,20 @@ function clampTerminalFontSize(value: unknown): number {
   const size = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(size)) return DEFAULT_APPEARANCE_SETTINGS.terminalFontSizePx;
   return Math.max(10, Math.min(24, Math.round(size)));
+}
+
+function clampConversationFontSize(value: unknown): number {
+  const size = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(size)) return CONVERSATION_FONT_SIZE_RANGE.default;
+  return Math.max(CONVERSATION_FONT_SIZE_RANGE.min, Math.min(CONVERSATION_FONT_SIZE_RANGE.max, Math.round(size)));
+}
+
+function isConversationWidth(value: unknown): value is ConversationWidth {
+  return CONVERSATION_WIDTH_OPTIONS.some((option) => option.value === value);
+}
+
+function isConversationBreakout(value: unknown): value is ConversationBreakout {
+  return CONVERSATION_BREAKOUT_OPTIONS.some((option) => option.value === value);
 }
 
 function isUiFontPreset(value: unknown): value is UiFontPreset {

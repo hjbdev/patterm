@@ -14,8 +14,8 @@
         <p v-if="historyError" role="alert" class="text-destructive">{{ historyError }}</p>
         <p v-if="historyUnavailable" role="status">This Codex version cannot load earlier messages. New messages appear here live.</p>
       </div>
-      <MessageScrollerViewport ref="viewportRef">
-        <MessageScrollerContent class="mx-auto w-full max-w-[50rem] px-4 2xl:max-w-[1000px]">
+      <MessageScrollerViewport ref="viewportRef" class="conversation-transcript-viewport [container-type:inline-size] overflow-x-hidden">
+        <MessageScrollerContent class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4">
           <div ref="sizerRef" class="relative w-full">
             <div
             v-for="item in renderedRows"
@@ -25,7 +25,7 @@
             :data-row-id="item.row.id"
             :id="`conversation-message-${item.row.id}`"
             class="group/row absolute left-0 top-0 w-full"
-            :class="[activeMessageId === item.row.id ? 'rounded-lg bg-primary/10' : '', item.hasFooter ? 'pb-2' : 'pb-4']"
+            :class="[activeMessageId === item.row.id ? 'rounded-lg bg-primary/10' : '', item.hasFooter ? 'pb-[calc(var(--patterm-conversation-font-size,0.875rem)*0.85)]' : 'pb-[calc(var(--patterm-conversation-font-size,0.875rem)*1.45)]']"
             :style="{ transform: `translateY(${item.virtualItem.start}px)` }"
             :data-tapped="tappedRowId === item.row.id || undefined"
             @click="tapRow(item.row.id, $event)"
@@ -57,7 +57,7 @@
                       </template>
                     </div>
                     <Bubble v-if="item.row.message.text || item.row.message.approval || item.row.message.redactionCount" variant="muted" align="end" class="max-w-[min(82%,64ch)]">
-                      <BubbleContent>
+                      <BubbleContent class="px-[0.95em] py-[0.65em] text-[length:var(--patterm-conversation-font-size,0.875rem)]">
                         <p v-if="item.row.message.redactionCount" class="text-xs text-muted-foreground">{{ item.row.message.redactionCount }} redacted</p>
                         <ApprovalDetails v-if="item.row.message.approval" :details="item.row.message.approval" />
                         <!-- Process IDs, such as agent mentions, show as chips. -->
@@ -116,8 +116,8 @@
                       aria-hidden="true"
                     />
                   </button>
-                  <div v-if="!item.open && item.groupImages.length" class="mt-1 flex flex-wrap gap-2">
-                    <TranscriptImage v-for="image in item.groupImages" :key="image.sha256" :image="image" :gallery="item.groupImages" />
+                  <div v-if="!item.open && item.groupImages.length" class="conversation-breakout-images mt-1 flex flex-wrap gap-2">
+                    <TranscriptImage v-for="image in item.groupImages" :key="image.sha256" :image="image" :gallery="item.groupImages" breakout />
                   </div>
                   <div v-if="item.open" class="mt-0.5 pl-3">
                     <template v-for="message in item.row.messages" :key="message.id">
@@ -126,7 +126,7 @@
                     </template>
                   </div>
                 </div>
-                <ConversationToolRow v-else-if="item.row.message.kind === 'tool'" :message="item.row.message" :process-id="processId" :active="activeMessageId === item.row.message.id" />
+                <ConversationToolRow v-else-if="item.row.message.kind === 'tool'" :message="item.row.message" :process-id="processId" :active="activeMessageId === item.row.message.id" breakout />
                 <div
                   v-else-if="item.row.message.kind === 'notice'"
                   class="flex w-full min-w-0 items-start gap-1.5 py-0.5 text-xs"
@@ -142,10 +142,10 @@
                 </div>
                 <ConversationThoughtRow v-else-if="item.row.message.kind === 'reasoning'" :message="item.row.message" :process-id="processId" :duration-ms="thoughtDurations.get(item.row.message.id)" :thinking="isThinking(item.row.message)" :active="activeMessageId === item.row.message.id" />
                 <Bubble v-else variant="ghost" align="start" class="w-full max-w-full">
-                  <BubbleContent class="w-full">
+                  <BubbleContent class="w-full overflow-visible">
                     <p v-if="item.row.message.redactionCount" class="mb-2 text-xs text-muted-foreground">{{ item.row.message.redactionCount }} redacted</p>
                     <ApprovalDetails v-if="item.row.message.approval" :details="item.row.message.approval" />
-                    <Markdown v-else :source="item.row.message.text" :reveal-appends="Boolean(live)">
+                    <Markdown v-else :source="item.row.message.text" :reveal-appends="Boolean(live)" breakout>
                       <template #mention="{ part }"><MentionPart :part="part" /></template>
                     </Markdown>
                     <div v-if="item.row.message.fileReferences?.length" class="mt-2 flex flex-wrap gap-1">

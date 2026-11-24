@@ -11,7 +11,7 @@
           <ConversationTranscript ref="transcriptRef" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
       </div>
-      <section v-if="recoveryError || ended || restartNeedsServer" class="mx-auto mb-3 w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]" aria-label="Agent recovery">
+      <section v-if="recoveryError || ended || restartNeedsServer" class="mx-auto mb-3 w-full max-w-[var(--patterm-conversation-max-width,50rem)] shrink-0 px-4" aria-label="Agent recovery">
         <div class="rounded-xl border border-border bg-muted/20 p-4 text-sm">
           <p :role="recoveryError ? 'alert' : 'status'" class="font-medium">{{ recoveryError || restartNeedsServer ? recoveryCopy.title : 'This agent has stopped' }}</p>
           <p class="mt-1 text-xs leading-relaxed text-muted-foreground">{{ recoveryError || restartNeedsServer ? recoveryCopy.detail : canRestart ? 'Resume this conversation here. Your saved history will be kept.' : 'The transcript is read-only.' }}</p>
@@ -33,7 +33,7 @@
            within a thumb's reach, and the composer comes back once it's answered. -->
       <div v-if="permissions.length || questions.length || forms.length || ((closeRequest || snooze) && !ended)" class="shrink-0 pb-2" :class="docked && 'pb-[calc(0.5rem+env(safe-area-inset-bottom))]'">
         <!-- The same width and inset as the composer below. -->
-        <div class="mx-auto max-h-[55vh] w-full max-w-[50rem] space-y-2 overflow-y-auto overscroll-contain px-4 max-sm:max-h-[75vh] max-sm:px-2 2xl:max-w-[1000px]" role="group" aria-label="Pending requests">
+        <div class="mx-auto max-h-[55vh] w-full max-w-[var(--patterm-conversation-max-width,50rem)] space-y-2 overflow-y-auto overscroll-contain px-4 max-sm:max-h-[75vh] max-sm:px-2" role="group" aria-label="Pending requests">
         <div v-if="permissions.length" class="relative pb-2">
           <div v-if="permissions.length > 2" aria-hidden="true" class="absolute inset-x-3 bottom-0 top-3 rounded-xl border border-border bg-background" />
           <div v-if="permissions.length > 1" aria-hidden="true" class="absolute inset-x-1.5 bottom-1 top-1.5 rounded-xl border border-border bg-background" />
@@ -189,7 +189,7 @@
         <CloseRequestCard v-if="closeRequest && !ended" :key="`${processId}:${closeRequest.requestedAt}`" :process-id="processId" :request="closeRequest" :subagents="closeSubagents" />
         </div>
       </div>
-      <section v-if="shownQueue.length && !ended" class="mx-auto mb-2 w-full max-w-[50rem] px-4 2xl:max-w-[1000px]" aria-label="Queued messages" data-component="integrated-queue">
+      <section v-if="shownQueue.length && !ended" class="mx-auto mb-2 w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4" aria-label="Queued messages" data-component="integrated-queue">
         <ul class="space-y-1 rounded-lg border border-border/60 px-3 py-1.5 text-xs">
           <li v-for="item in shownQueue" :key="item.id" class="flex min-w-0 items-center gap-2">
             <span v-if="item.delivery === 'held' || item.delivery === 'unconfirmed'" class="shrink-0" :class="item.error ? 'text-destructive' : 'text-muted-foreground'" :title="item.delivery === 'unconfirmed' ? `${item.error ?? ''} It may already have reached the agent; check before sending it again.`.trim() : item.error">{{ queueLabel(item) }}</span>
@@ -200,8 +200,8 @@
           </li>
         </ul>
       </section>
-      <p v-if="streamStatus === 'reconnecting'" role="status" class="mx-auto mb-2 w-full max-w-[50rem] 2xl:max-w-[1000px] px-4 text-xs text-muted-foreground">Reconnecting to the native agent…</p>
-      <div v-if="uncertain" role="status" class="mx-auto mb-3 w-full max-w-[50rem] 2xl:max-w-[1000px] rounded-lg border border-border bg-muted/20 p-3 text-sm">
+      <p v-if="streamStatus === 'reconnecting'" role="status" class="mx-auto mb-2 w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4 text-xs text-muted-foreground">Reconnecting to the native agent…</p>
+      <div v-if="uncertain" role="status" class="mx-auto mb-3 w-full max-w-[var(--patterm-conversation-max-width,50rem)] rounded-lg border border-border bg-muted/20 p-3 text-sm">
         <p class="font-medium">Delivery uncertain</p>
         <p class="mt-1 text-xs text-muted-foreground">{{ uncertain.message }} The prompt may already be running; check the transcript before sending again.</p>
         <div class="mt-2 flex gap-2">

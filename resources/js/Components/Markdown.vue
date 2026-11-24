@@ -9,10 +9,11 @@
   <div
     v-else
     ref="root"
-    class="markdown prose prose-zinc prose-invert prose-sm max-w-none text-foreground [font-size:0.875rem] [overflow-wrap:anywhere] prose-p:my-2 prose-a:text-primary prose-code:rounded prose-code:bg-secondary/50 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-background prose-pre:text-foreground prose-blockquote:border-border prose-blockquote:text-muted-foreground prose-th:border-border prose-td:border-border marker:text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+    :data-breakout="breakout ? '' : undefined"
+    class="markdown prose prose-zinc prose-invert prose-sm max-w-none text-foreground [overflow-wrap:anywhere] prose-a:text-primary prose-code:rounded prose-code:bg-secondary/50 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-background prose-pre:text-foreground prose-blockquote:border-border prose-blockquote:text-muted-foreground prose-th:border-border prose-td:border-border marker:text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
   >
     <template v-for="block in blocks" :key="block.key">
-      <div v-if="block.figure" :data-mention="block.figure.text">
+      <div v-if="block.figure" :data-mention="block.figure.text" class="markdown-figure">
         <slot name="mention" :part="block.figure" />
       </div>
       <div v-else-if="block.tail" class="markdown-text contents" v-stream-reveal="Boolean(revealAppends)" v-html="block.html" />
@@ -40,7 +41,7 @@ import { appendedTextStart } from '../lib/streamReveal';
 // keeps the surrounding providers, and moves rather than remounts as text
 // streams in. Standalone figures stay outside that replaced HTML: moving
 // an iframe between Teleport targets reloads its document.
-const props = withDefaults(defineProps<{ source: string; revealAppends?: boolean }>(), { revealAppends: false });
+const props = withDefaults(defineProps<{ source: string; revealAppends?: boolean; breakout?: boolean }>(), { revealAppends: false, breakout: false });
 const slots = useSlots();
 
 const shownText = new WeakMap<HTMLElement, string>();
@@ -403,47 +404,76 @@ function capText(value: string, limit: number): string {
 </script>
 
 <style scoped>
+.markdown {
+  font-size: var(--markdown-font-size, 0.875rem);
+  line-height: 1.7;
+}
+
 .markdown :deep(> .markdown-text:last-child > :last-child) {
   margin-bottom: 0;
 }
 
+.markdown :deep(p) {
+  margin-top: 0.85em;
+  margin-bottom: 0.85em;
+}
+
+.markdown :deep(:is(ul, ol)) {
+  margin-top: 0.9em;
+  margin-bottom: 0.9em;
+}
+
+.markdown :deep(li) {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+}
+
 .markdown :deep(h1) {
-  font-size: 1.125rem;
+  font-size: 1.2857em;
 }
 
 .markdown :deep(h2) {
-  font-size: 1rem;
+  font-size: 1.1429em;
 }
 
 .markdown :deep(h3),
 .markdown :deep(h4),
 .markdown :deep(h5),
 .markdown :deep(h6) {
-  font-size: 0.875rem;
+  font-size: 1em;
 }
 
 .markdown :deep(:is(h1, h2, h3, h4, h5, h6)) {
-  margin-top: 1.5rem;
-  margin-bottom: 0.5rem;
+  margin-top: 1.75em;
+  margin-bottom: 0.75em;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .markdown :deep(blockquote) {
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
   border-left-width: 1px;
-  padding-left: 0.5rem;
+  padding-left: 0.9em;
+  padding-top: 0.15em;
+  padding-bottom: 0.15em;
   font-style: normal;
   font-weight: 400;
   quotes: none;
 }
 
 .markdown :deep(pre) {
-  padding: 0.75rem;
-  font-size: 0.8125rem;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 0.85em 1em;
+  font-size: 0.9286em;
+  line-height: 1.6;
 }
 
 .markdown :deep(.code-block) {
   position: relative;
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
 }
 
 .markdown :deep(.code-copy) {
@@ -472,14 +502,68 @@ function capText(value: string, limit: number): string {
 
 /* Wide tables scroll sideways instead of squeezing cells to a letter wide,
    which overflow-wrap: anywhere would otherwise allow on narrow screens. */
-.markdown :deep(table) {
-  display: block;
+.markdown :deep(.markdown-table) {
   overflow-x: auto;
+  margin-top: 1.5em;
+  margin-bottom: 1.5em;
+}
+
+.markdown :deep(.markdown-table > table) {
+  display: table;
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: 0;
+  font-size: 0.9286em;
+  line-height: 1.58;
+}
+
+.markdown :deep(th) {
+  padding: 0.75em 1.25em 0.75em 0;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  vertical-align: bottom;
+}
+
+.markdown :deep(td) {
+  padding: 0.95em 1.25em 0.95em 0;
+  vertical-align: top;
 }
 
 .markdown :deep(:is(th, td)) {
   min-width: 7rem;
   overflow-wrap: normal;
+}
+
+.markdown :deep(:is(th, td):last-child) {
+  padding-right: 0;
+}
+
+.markdown :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+}
+
+.markdown > .markdown-figure,
+.markdown :deep(.markdown-image) {
+  margin-top: 1.4em;
+  margin-bottom: 1.4em;
+}
+
+/* Top-level HTML figures, tables, and standalone images can extend symmetrically
+   past a narrower prose column, bounded by the conversation viewport (100cqi). */
+.markdown[data-breakout] > .markdown-text > :deep(.markdown-table),
+.markdown[data-breakout] > .markdown-figure,
+.markdown[data-breakout] > .markdown-text > :deep(.markdown-image) {
+  --breakout-width: max(100%, min(calc(100cqi - 2rem), var(--patterm-conversation-breakout-max-width, 0px)));
+  width: var(--breakout-width);
+  max-width: none;
+  margin-inline: calc((100% - var(--breakout-width)) / 2);
+}
+
+.markdown[data-breakout] > .markdown-text > :deep(.markdown-image img) {
+  display: block;
+  margin-inline: auto;
 }
 
 .markdown :deep(> :first-child),

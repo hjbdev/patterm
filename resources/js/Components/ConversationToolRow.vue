@@ -37,8 +37,8 @@
     <span v-if="toolProcess" class="min-w-0 max-w-[60%] shrink-0 truncate"><ProcessMention :process-id="toolProcess" /></span>
     </div>
 
-    <div v-if="toolImages.length" class="mt-1 flex flex-wrap gap-2" data-component="transcript-tool-images">
-      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :gallery="toolImages" />
+    <div v-if="toolImages.length" :class="['mt-1 flex flex-wrap gap-2', breakout && 'conversation-breakout-images']" data-component="transcript-tool-images">
+      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :gallery="toolImages" :breakout="breakout" />
     </div>
 
     <div v-if="open && expandable" class="mb-1 mt-0.5 min-w-0 space-y-2 pl-3">
@@ -128,7 +128,7 @@ import ProcessMention from './ProcessMention.vue';
 const DiffPatchView = defineAsyncComponent(() => import('./DiffPatchView.vue'));
 const HtmlFigureCard = defineAsyncComponent(() => import('./HtmlFigureCard.vue'));
 
-const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; active?: boolean }>(), { active: false });
+const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; active?: boolean; breakout?: boolean }>(), { active: false, breakout: false });
 
 const tool = computed(() => props.message.tool ?? {
   name: props.message.title ?? 'Tool',

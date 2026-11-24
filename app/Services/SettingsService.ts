@@ -22,6 +22,8 @@ export type SidebarState = z.infer<typeof sidebarStateInput>;
 
 const uiFontPreset = z.enum(['inter', 'geist', 'fira-sans', 'ibm-plex-sans', 'system', 'custom']);
 const terminalFontPreset = z.enum(['jetbrains-nerd', 'jetbrains-mono', 'geist-mono', 'fira-code', 'iosevka', 'ibm-plex-mono', 'source-code-pro', 'comic-mono', 'system-mono', 'custom']);
+const conversationWidthPreset = z.enum(['narrow', 'default', 'wide', 'full']);
+const conversationBreakoutPreset = z.enum(['off', 'wider', 'full']);
 
 const fontFamilyInput = z.string().trim().max(240);
 
@@ -36,6 +38,9 @@ export const appearanceSettingsInput = z.object({
   }).default({ preset: 'jetbrains-nerd', customFamily: '' }),
   terminalFontSizePx: z.coerce.number().finite().min(10).max(24).transform(Math.round).default(14),
   terminalContainer: z.boolean().default(true),
+  conversationFontSizePx: z.coerce.number().finite().min(12).max(22).transform(Math.round).default(14),
+  conversationWidth: conversationWidthPreset.default('default'),
+  conversationBreakout: conversationBreakoutPreset.default('off'),
   historyImportToasts: z.boolean().default(true),
   // How the worktree diff viewer lays out a review: a file tree or a review deck.
   diffViewer: z.enum(['drawer', 'deck']).default('drawer'),
@@ -127,6 +132,9 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   terminalFont: { preset: 'jetbrains-nerd', customFamily: '' },
   terminalFontSizePx: 14,
   terminalContainer: true,
+  conversationFontSizePx: 14,
+  conversationWidth: 'default',
+  conversationBreakout: 'off',
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',

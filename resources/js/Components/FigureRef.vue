@@ -1,5 +1,5 @@
 <template>
-  <span v-if="figure" class="my-3 block" data-component="figure-ref"><HtmlFigureCard :key="figure.id" :message="figure" /></span>
+  <span v-if="figure" class="block" data-component="figure-ref"><HtmlFigureCard :key="figure.id" :message="figure" /></span>
   <span v-else class="text-muted-foreground" :title="`No page named ${figureId} in this conversation`">{{ text }}</span>
 </template>
 
