@@ -24,7 +24,7 @@ test('overdue timers retain their deadline and wait for runtime reconciliation',
   assert.equal(fixture.delivery.calls.length, 0, 'loading records must not deliver to unreconciled processes');
   timers.activate();
   t.mock.timers.tick(1);
-  assert.deepEqual(fixture.delivery.calls, [{ process_id: 'pty_owner', kind: 'text', text: `[Patterm timer ${original.id} (wait): time elapsed]\ndeadline`, submit: true }]);
+  assert.deepEqual(fixture.delivery.calls, [{ process_id: 'owner', kind: 'text', text: `[Patterm timer ${original.id} (wait): time elapsed]\ndeadline`, submit: true }]);
   timers.dispose();
   assert.deepEqual(fixture.create().listMcp(), [], 'delivered callbacks are not restored');
 });
@@ -258,7 +258,7 @@ test('an output watch fires once when its literal text appears', async (t) => {
   t.mock.timers.tick(5_000);
   await settle();
   assert.equal(fixture.delivery.calls.length, 1, 'a watch delivers one callback');
-  assert.equal(fixture.delivery.calls[0]!.process_id, 'pty_owner');
+  assert.equal(fixture.delivery.calls[0]!.process_id, 'owner');
   assert.equal(fixture.delivery.calls[0]!.text, `[Patterm wait_for_pattern ${watch.id} (backfill): matched]\n- child "child": printed "Done in|FAILED": Done in|FAILED marker\nRead output with get_process_output or search_output.\nsummarise it`);
   assert.deepEqual(timers.listMcp(), []);
 });
@@ -307,7 +307,7 @@ test('closing its owner ends an output watch', async (t) => {
   fixture.output.set('pty_child', 'ready');
   t.mock.timers.tick(1_000);
   await settle();
-  assert.deepEqual(fixture.delivery.calls.map((call) => call.process_id), ['pty_owner'], 'only the open owner is called back');
+  assert.deepEqual(fixture.delivery.calls.map((call) => call.process_id), ['owner'], 'only the open owner is called back');
   assert.deepEqual(timers.listMcp(), []);
   assert.equal((fixture.database.connection.prepare('select count(*) as count from runtime_timers').get() as { count: number }).count, 0, 'the closed owner\'s watch is not restored');
 });
@@ -367,7 +367,17 @@ function setup(t: TestContext) {
     output,
     terminal,
     create() {
-      const timers = new TimerService(database, terminal, { persistent: true });
+      const timers = new TimerService(database, terminal, {
+        persistent: true,
+        integrated: {
+          prompt: async (processId, text) => {
+            delivery.calls.push({ process_id: processId, kind: 'text', text: typeof text === 'string' ? text : text.text, submit: true });
+            if (delivery.fail) throw new Error('Simulated lost acknowledgement');
+            return { delivery: 'accepted' };
+          },
+          conversation: async () => ({})
+        }
+      });
       services.push(timers);
       return timers;
     },

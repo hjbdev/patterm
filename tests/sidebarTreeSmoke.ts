@@ -29,11 +29,9 @@ function session(id: string, parentId: string | null = null, activity: ActivityS
   return {
     id,
     parentId,
-    ptyProcessId: `pty-${id}`,
     processId: `process-${id}`,
     worktreeId: null,
     harness: 'claude',
-    interfaceMode: 'tui',
     sessionRole: parentId ? 'child' : 'orchestrator',
     resumeStatus: 'unknown',
     activity,
@@ -181,9 +179,9 @@ assert.deepEqual(familyTimerSummary([paused, watch], now, ownerName), {
 // build the same tree. One of its agents may also sit under a local agent.
 function remote<T extends SessionRecord | ProcessRecord>(record: T): T {
   const q = (id: string | null) => id === null ? null : `workstation:${id}`;
-  return 'parentProcessId' in record
+  return 'ptyProcessId' in record
     ? { ...record, id: q(record.id)!, parentProcessId: q(record.parentProcessId), ptyProcessId: q(record.ptyProcessId), host: 'workstation' }
-    : { ...record, id: q(record.id)!, parentId: q(record.parentId), processId: q(record.processId), ptyProcessId: q(record.ptyProcessId), host: 'workstation' };
+    : { ...record, id: q(record.id)!, parentId: q(record.parentId), processId: q(record.processId), host: 'workstation' };
 }
 const remoteSessions = [
   remote(session('lead')),

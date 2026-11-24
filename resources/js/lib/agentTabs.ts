@@ -29,8 +29,8 @@ export function activeAgentSessions(sessions: readonly SessionRecord[], now = Da
   const recentFailure = now - 24 * 60 * 60 * 1000;
   const byId = new Map(sessions.map(session => [session.id, session]));
   const visible = new Set(sessions.filter(session => session.processId && session.processStatus !== 'closed'
-    && ((!session.exitedAt && (session.interfaceMode === 'integrated' || session.ptyProcessId))
-      || (session.interfaceMode === 'integrated' && session.processStatus === 'failed' && session.exitedAt && Date.parse(session.exitedAt) >= recentFailure)))
+    && (!session.exitedAt
+      || (session.processStatus === 'failed' && session.exitedAt && Date.parse(session.exitedAt) >= recentFailure)))
     .map(session => session.id));
   for (const id of visible) {
     let parentId = byId.get(id)?.parentId;
@@ -76,9 +76,8 @@ export function selectAgentInFamilies(
   return selectedByRoot;
 }
 
-export function matchesAgentTabSelection(session: SessionRecord, activeTerminalId: string | null, activeSessionId: string | null): boolean {
-  return Boolean((activeSessionId && session.id === activeSessionId)
-    || (activeTerminalId && session.ptyProcessId === activeTerminalId));
+export function matchesAgentTabSelection(session: SessionRecord, _activeTerminalId: string | null, activeSessionId: string | null): boolean {
+  return Boolean(activeSessionId && session.id === activeSessionId);
 }
 
 export function activeAgentFamilyIndex(families: readonly AgentTabFamily[], activeTerminalId: string | null, activeSessionId: string | null = null): number {

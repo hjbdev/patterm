@@ -65,13 +65,8 @@ export class AutoSummaryService {
   start(): void {
     this.unsubscribers.push(this.terminal.onFrame((frame) => {
       if (frame.type !== 'terminal-lifecycle' || !frame.processId) return;
-      if (frame.event === 'activity') {
-        if (awaitingUser(frame.activity)) {
-          const row = this.database.connection.prepare('select id from processes where pty_process_id = ?').get(frame.processId) as { id: string } | undefined;
-          if (row) this.pending.get(row.id)?.controller?.abort();
-        } else if (this.pending.size > 0) {
-          this.dirty = true;
-        }
+      if (frame.event === 'activity' && this.pending.size > 0) {
+        this.dirty = true;
       }
       // Exit does not discard enrollment: the final history import may arrive later.
     }));

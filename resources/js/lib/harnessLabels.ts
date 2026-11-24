@@ -6,8 +6,7 @@ export const HARNESS_LABELS: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
   opencode: 'OpenCode',
-  agy: 'Antigravity',
-  rawpty: 'Raw terminal'
+  agy: 'Antigravity'
 };
 
 export function harnessLabel(id: string): string {
@@ -15,5 +14,5 @@ export function harnessLabel(id: string): string {
 }
 
 export function launchableHarnesses(harnesses: readonly HarnessInstallationRecord[]): HarnessInstallationRecord[] {
-  return harnesses.filter((harness) => harness.status === 'available' && harness.harness !== 'rawpty');
+  return harnesses.filter((harness) => harness.status === 'available');
 }

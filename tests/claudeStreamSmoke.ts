@@ -1343,7 +1343,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal(dyingState.status, 'error', 'an exited native CLI surfaces a failed turn');
     const terminal = { request: async () => ({ status: 'stopped' }) } as unknown as TerminalService;
     const dyingAgent = new IntegratedAgentService(database, { claude: dyingService });
-    await new CloseProcessAction(database, terminal, undefined, dyingAgent).execute('process_dying');
+    await new CloseProcessAction(database, terminal, dyingAgent).execute('process_dying');
     const dyingRow = database.connection.prepare(`select status, exited_at from processes where id = 'process_dying'`).get() as { status: string; exited_at: string | null };
     assert.equal(dyingRow.status, 'closed', 'the close action cleans up a dead native CLI');
     assert.ok(dyingRow.exited_at, 'the close action records the exit time');
@@ -1351,7 +1351,7 @@ process.stdin.on('data', (chunk) => {
     // A live host that refuses to stop must not be reported as stopped.
     const refusing = { stop: async () => { throw new Error('host refused to stop'); } };
     await assert.rejects(
-      new CloseProcessAction(database, terminal, undefined, refusing).execute('process_test'),
+      new CloseProcessAction(database, terminal, refusing).execute('process_test'),
       /host refused to stop/,
       'an unstoppable live host surfaces the failure'
     );

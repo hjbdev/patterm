@@ -47,7 +47,6 @@ export interface SidebarState {
 
 export type SessionRole = 'orchestrator' | 'child' | 'process' | 'assistant' | 'routine' | 'bot';
 export type ResumeStatus = 'unknown' | 'found' | 'missing' | 'imported';
-export type AgentInterface = 'tui' | 'integrated';
 
 // Live activity of an agent/process. Mirrors patterm-cli IdleState
 // (internal/app idle detection). Runtime-derived, not a persisted column.
@@ -71,15 +70,12 @@ export interface SessionRecord {
   // The parent agent's process, which may sit in another project, such as a
   // bot's.
   parentProcessId?: string | null;
-  // Sidecar PTY id backing this session, used to attach the terminal view.
-  ptyProcessId: string | null;
   // Stable processes.id row backing this session, used for lifecycle actions.
   processId: string | null;
   // Lifecycle of the backing process; older hosts omit it.
   processStatus?: string | null;
   worktreeId: string | null;
   harness: string | null;
-  interfaceMode: AgentInterface;
   sessionRole: SessionRole;
   // The bot this session runs, for role 'bot'.
   botId?: string | null;
@@ -165,7 +161,7 @@ export interface WorktreeRecord {
 }
 
 // Discovered agent-harness CLIs.
-export type HarnessId = 'claude' | 'codex' | 'opencode' | 'agy' | 'rawpty';
+export type HarnessId = 'claude' | 'codex' | 'opencode' | 'agy';
 export type HarnessStatus = 'available' | 'missing' | 'broken';
 
 export interface HarnessInstallationRecord {

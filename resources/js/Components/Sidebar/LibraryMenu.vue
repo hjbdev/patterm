@@ -1,5 +1,5 @@
 <template>
-  <!-- The project's pages and the canvas, opening above the sidebar's footer.
+  <!-- The project's pages, opening above the sidebar's footer.
        It reads what's new on each only while open. -->
   <Popover v-model:open="open">
     <PopoverTrigger as-child>

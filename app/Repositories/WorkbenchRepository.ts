@@ -62,10 +62,8 @@ export interface SessionDto {
   processId: string | null;
   // Lifecycle of the backing process; older hosts omit it.
   processStatus?: string | null;
-  ptyProcessId: string | null;
   worktreeId: string | null;
   harness: string | null;
-  interfaceMode: 'tui' | 'integrated';
   sessionRole: string;
   // The bot this session runs. Older paired hosts omit it.
   botId?: string | null;
@@ -379,7 +377,7 @@ export class WorkbenchRepository {
 
 // A session started by a bot's own session, such as a detached agent it
 // opened, names that bot. The owner may sit in the bot's hidden project.
-const SESSION_COLUMNS = 'sessions.*, processes.pty_process_id, owner.bot_id as owner_bot_id';
+const SESSION_COLUMNS = 'sessions.*, owner.bot_id as owner_bot_id';
 const SESSION_OWNER_JOIN = 'left join sessions owner on owner.id = sessions.created_by_actor';
 
 // The snapshot also carries the bots' and the assistant's hidden projects;
@@ -431,10 +429,8 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[], labels: St
       summary: session.process_id ? summaries.get(session.process_id) ?? null : null,
       closeRequest: session.process_id ? closeRequests.get(session.process_id) ?? null : null,
       snooze: session.process_id ? snoozes.get(session.process_id) ?? null : null,
-      ptyProcessId: session.pty_process_id ?? null,
       worktreeId: session.worktree_id,
       harness: session.harness,
-      interfaceMode: session.interface_mode,
       sessionRole: session.session_role,
       botId: session.bot_id ?? null,
       ownerBotId: session.owner_bot_id ?? null,

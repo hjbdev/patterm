@@ -42,9 +42,10 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     assert.equal(navigation.activeProjectId.value, 'p1');
     assert.equal(navigation.activeProject.value, null);
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/s1', 'initial loading must preserve the deep link');
-    releaseSnapshot({ projects: [{ project: { id: 'p1' }, projectSessions: [{ id: 's1', ptyProcessId: 'pty-agent', worktreeId: 'w1' }, { id: 'ended', ptyProcessId: 'reused-pty', exitedAt: '2026-09-08' }], processes: [{ id: 'p2', ptyProcessId: 'pty-shell', status: 'running' }] }] });
+    releaseSnapshot({ projects: [{ project: { id: 'p1' }, projectSessions: [{ id: 's1', processId: 'process-s1', worktreeId: 'w1' }, { id: 'ended', processId: 'process-ended', exitedAt: '2026-09-08' }], processes: [{ id: 'p2', ptyProcessId: 'pty-shell', status: 'running' }, { id: 'p_old', ptyProcessId: 'reused-pty', status: 'exited' }] }] });
     await fixture.useWorkbench().refresh();
-    assert.equal(navigation.activeTerminalId.value, 'pty-agent');
+    assert.equal(navigation.selectedAgent.value.id, 's1');
+    assert.equal(navigation.activeTerminalId.value, null);
     await navigation.selectTerminal('p1', 'pty-shell');
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/processes/p2');
     assert.equal(navigation.activeTerminalId.value, 'pty-shell');
@@ -53,7 +54,8 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
       router[direction]();
     });
     await travel('back');
-    assert.equal(navigation.activeTerminalId.value, 'pty-agent');
+    assert.equal(navigation.selectedAgent.value.id, 's1');
+    assert.equal(navigation.activeTerminalId.value, null);
     await router.push('/projects/p1/agents/s1/diffs');
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/s1', 'old Diffs page links open the agent');
     assert.equal(navigation.selectedAgent.value.worktreeId, 'w1');
@@ -84,11 +86,11 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     await router.push('/unrecognised');
     assert.equal(router.currentRoute.value.name, 'not-found');
     const beforeLaunch = fixture.useWorkbench().projects.value[0];
-    window.patterm.workbench = async () => ({ projects: [{ ...beforeLaunch, projectSessions: [
-      ...beforeLaunch.projectSessions, { id: 'fresh', ptyProcessId: 'reused-pty' }
+    window.patterm.workbench = async () => ({ projects: [{ ...beforeLaunch, processes: [
+      ...beforeLaunch.processes, { id: 'p_fresh', ptyProcessId: 'reused-pty', status: 'running' }
     ] }] });
     await navigation.selectTerminal('p1', 'reused-pty');
-    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/fresh', 'a historical PTY match must not suppress refresh or select the exited session');
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/processes/p_fresh', 'a historical PTY match must not suppress refresh or select the exited process');
     assert.equal(navigation.activeTerminalId.value, 'reused-pty');
     const workbench = fixture.useWorkbench();
     const bumpProjects = () => {
@@ -99,17 +101,18 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
       }));
     };
     workbench.projects.value[0].projectSessions = beforeLaunch.projectSessions;
+    workbench.projects.value[0].processes = beforeLaunch.processes;
     bumpProjects();
     await router.push('/projects/p1/agents/s1');
     workbench.projects.value[0].projectSessions[0].exitedAt = '2026-09-08';
     bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/processes/p2', 'agent exit selects another live terminal');
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/processes/p2', 'agent exit selects another live tab');
     workbench.projects.value[0].processes[0].status = 'exited';
     bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'last terminal exit returns to the empty project page');
-    workbench.projects.value[0].projectSessions.push({ id: 'integrated', processId: 'process-integrated', interfaceMode: 'integrated', ptyProcessId: null });
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'last tab exit returns to the empty project page');
+    workbench.projects.value[0].projectSessions.push({ id: 'integrated', processId: 'process-integrated' });
     bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'an agent launched from the empty project page opens');

@@ -52,7 +52,6 @@ export function createTestMcpRegistry(input: {
     new HarnessLauncher({
       database: input.database,
       timeline: input.timeline,
-      terminal: input.terminal,
       workbench: input.workbench,
       providers: harnessProviders,
       nodePath: process.execPath,
@@ -72,6 +71,7 @@ export function createTestMcpRegistry(input: {
     worktreeService,
     diffService,
     searchService,
+    ...(input.integrated ? { integrated: input.integrated as unknown as NonNullable<Parameters<typeof createRegistryActions>[0]['integrated']> } : {}),
     ...(input.bots ? { botAllows: (botId: string | null, projectId: string) => input.bots!.allows(botId, projectId) } : {}),
   });
 

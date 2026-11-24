@@ -426,9 +426,11 @@ function categoryFor(input: RaiseNotificationInput, process: ProcessContext | nu
   const agent = process?.kind === 'agent';
   if (input.source === 'mcp') return 'agent_requests';
   if (input.kind === 'failure') return agent ? 'agent_failures' : 'process_failures';
-  if (input.source === 'integrated') return input.kind === 'turn_finished' ? 'integrated_turn_finished' : 'integrated_permission';
-  if (input.kind === 'bell') return agent ? 'agent_bells' : 'process_bells';
-  return agent ? 'agent_terminal' : 'process_terminal';
+  if (input.source === 'integrated' || (agent && input.source === 'runtime')) {
+    return input.kind === 'turn_finished' ? 'integrated_turn_finished' : 'integrated_permission';
+  }
+  if (input.kind === 'bell') return 'process_bells';
+  return 'process_terminal';
 }
 
 function isBlocking(kind: NotificationKind): boolean {

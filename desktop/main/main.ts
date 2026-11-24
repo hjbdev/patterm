@@ -159,11 +159,10 @@ async function createWindow(): Promise<void> {
       mainWindow?.webContents.send('patterm:terminal:lifecycle', frame);
     }
   });
-  // The desktop window is the only client, so terminal copies and link opens
-  // act on this machine directly.
+  // The desktop window is the only client, so terminal copies act on this
+  // machine directly.
   const unsubscribeClientRequests = patterm.onTerminalClientRequest((request) => {
     if (request.kind === 'clipboard') clipboard.writeText(request.text);
-    else void shell.openExternal(request.url);
   });
   const unsubscribeNotifications = patterm.onNotificationsChanged((change) => {
     mainWindow?.webContents.send('patterm:notifications:changed', change);

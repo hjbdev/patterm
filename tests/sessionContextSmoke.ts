@@ -83,12 +83,18 @@ async function main(): Promise<void> {
     const shimPath = path.join(dir, 'shim.js');
     fs.writeFileSync(shimPath, '');
     db.prepare(`insert into harness_installations(id,harness,executable_path,status,discovered_at,last_checked_at) values('h','claude','/bin/true','available',?,?)`).run(now, now);
-    const requests: string[] = [];
+    const cleanups: string[] = [];
     const launcher = new HarnessLauncher({ database,
       timeline: new TimelineService(database, () => {
         if (db.prepare(`select id from timeline_events where event_type = 'session.started'`).all().length > 5) throw new Error('injected registration failure');
       }),
-      terminal: { request: async (method) => { requests.push(method); return { process_id: 'pty-failure' }; } },
+      integrated: {
+        prepare: async () => ({ resumeId: 'native', argv: ['/bin/true'] }),
+        prompt: async () => ({}),
+        stop: async () => undefined,
+        cleanupLaunch: async (harness) => { cleanups.push(harness); },
+        observe: () => undefined
+      },
       workbench: new WorkbenchRepository(database), providers: harnessProviders, nodePath: process.execPath,
       shimPath, socketPath: path.join(dir, 'socket'), runtimeDir: dir
     });
@@ -96,8 +102,7 @@ async function main(): Promise<void> {
     await assert.rejects(launcher.resume({ project_id: 'p', harness: 'claude' }, { resume_id: 'native', conversation_id: 'conversation' }), /injected registration failure/);
     assert.equal(db.prepare('select id from sessions').all().length, before);
     assert.deepEqual(db.prepare('select session_id from todo_assignments where todo_id = ?').get('open'), { session_id: resumed });
-    assert.equal(db.prepare(`select id from processes where pty_process_id = 'pty-failure'`).all().length, 0);
-    assert.deepEqual(requests, ['terminal.process.spawn', 'terminal.process.close']);
+    assert.deepEqual(cleanups, ['claude']);
 
     db.prepare('update sessions set process_id = ? where id = ?').run('pty-source', source);
     new SessionContextService(database).releaseProcessLeases('pty-source');

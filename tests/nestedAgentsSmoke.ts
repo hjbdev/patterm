@@ -50,28 +50,31 @@ async function main(): Promise<void> {
     // Runs once while the next input awaits its acknowledgement; it may throw.
     let duringInput: (() => Promise<void>) | null = null;
     const terminal = {
-      async request(method: string, params: unknown) {
-        if (method === 'terminal.process.input') {
-          inputs.push(params as { process_id: string; text: string });
-          const hook = duringInput;
-          duringInput = null;
-          if (hook) await hook();
-        } else if (method === 'terminal.process.stop' || method === 'terminal.process.close') {
-          const id = (params as { process_id: string }).process_id;
-          if (method === 'terminal.process.close') {
-            assert.equal((db.prepare('select status from processes where id = ?').get(id) as { status: string }).status, 'closed', 'persist closure before releasing terminal state');
-          }
-          lifecycle.push(`${method}:${id}`);
-        }
+      async request() {
         return { ok: true };
       }
     } as unknown as TerminalService;
+    const integrated = {
+      async prompt(processId: string, text: string | { text: string }) {
+        inputs.push({ process_id: processId, text: typeof text === 'string' ? text : text.text });
+        const hook = duringInput;
+        duringInput = null;
+        if (hook) await hook();
+        return { delivery: 'accepted' };
+      },
+      async stop(processId: string) {
+        lifecycle.push(`integrated.stop:${processId}`);
+      },
+      async conversation() {
+        return {};
+      }
+    } as unknown as Parameters<typeof createTestMcpRegistry>[0]['integrated'];
     const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
     const timeline = new TimelineService(database);
     const handled: string[] = [];
     const reported: string[] = [];
     const notifications = { userInput: (id: string) => { handled.push(id); }, reported: (id: string) => { reported.push(id); } } as unknown as NotificationActions;
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database), harnessLauncher, notifications });
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, integrated, workbench: new WorkbenchRepository(database), harnessLauncher, notifications });
     const as = (id: string) => ({ identity: `identity_${id}` });
 
     const childWho = await registry.callPublic('whoami', { include_tools: true }, as('root')) as { available_tools: string[] };
@@ -155,9 +158,9 @@ async function main(): Promise<void> {
     const beforeMessages = timelineCount();
     const longMessage = 'x'.repeat(2_232);
     await registry.call('send_message', { target_process_id: 'child', message: longMessage }, as('root'));
-    assert.deepEqual(inputs.at(-1), { process_id: 'child', kind: 'paste', text: `[message from root]\n${longMessage}`, submit: true });
+    assert.deepEqual(inputs.at(-1), { process_id: 'child', text: `[message from root]\n${longMessage}` });
     await registry.call('send_message', { target_process_id: 'parent', message: 'child reporting in' }, as('child'));
-    assert.deepEqual(inputs.at(-1), { process_id: 'root', kind: 'paste', text: '[message from child]\nchild reporting in', submit: true });
+    assert.deepEqual(inputs.at(-1), { process_id: 'root', text: '[message from child]\nchild reporting in' });
     assert.deepEqual(handled.slice(inputStart), ['child'], 'only the parent message clears the child\'s blocked episode');
     // send_input follows the same rule: user or parent input clears waiting notices, while a non-parent agent leaves them open.
     const sendInputStart = handled.length;
@@ -169,7 +172,7 @@ async function main(): Promise<void> {
     const noFindings = await registry.call('report_to_parent', { status: 'no_findings', title: 'Review complete', body: 'No findings.' }, as('child')) as { ok: boolean; event_id: string };
     assert.equal(noFindings.ok, true);
     assert.deepEqual(reported.slice(reportStart), ['child'], 'a report clears the reporter\'s turn-ended notice');
-    assert.deepEqual(inputs.at(-1), { process_id: 'root', kind: 'paste', text: '[report from child: no_findings]\nReview complete\nNo findings.', submit: true });
+    assert.deepEqual(inputs.at(-1), { process_id: 'root', text: '[report from child: no_findings]\nReview complete\nNo findings.' });
     const reportEvent = db.prepare('select event_type, process_id, session_id, metadata from timeline_events where id = ?').get(noFindings.event_id) as { event_type: string; process_id: string; session_id: string; metadata: string };
     assert.deepEqual([reportEvent.event_type, reportEvent.process_id, reportEvent.session_id, JSON.parse(reportEvent.metadata).parent_process_id], ['agent.reported', 'child', 'session_child', 'root']);
 
@@ -206,9 +209,9 @@ async function main(): Promise<void> {
     assert.ok(statuses.every((row) => row.status === 'closed'), 'every descendant is closed');
     assert.equal((db.prepare("select count(*) as count from sessions where process_id in ('root','child','grandchild','great_grandchild') and exited_at is not null").get() as { count: number }).count, 4);
     assert.equal((db.prepare("select resume_id from sessions where process_id = 'root'").get() as { resume_id: string }).resume_id, 'native-close-resume');
-    assert.deepEqual(lifecycle, ['stop', 'close'].flatMap(action => ['root', 'child', 'grandchild', 'great_grandchild'].map(id => `terminal.process.${action}:${id}`)), 'live processes stop before terminal state is released');
+    assert.deepEqual(lifecycle, ['root', 'child', 'grandchild', 'great_grandchild'].map(id => `integrated.stop:${id}`), 'live agents stop through Integrated on close');
     await registry.call('close_process', { process_id: 'root' });
-    assert.equal(lifecycle.length, 8, 'repeated close does not stop or release runtimes again');
+    assert.equal(lifecycle.length, 4, 'repeated close does not stop runtimes again');
     console.log('nested agents smoke ok');
   } finally {
     database.dispose();

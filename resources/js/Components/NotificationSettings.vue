@@ -62,13 +62,11 @@ interface Device { id: string; endpoint: string; label: string; last_success_at:
 
 const SOURCES: Array<{ key: NotificationCategory; label: string; hint: string }> = [
   { key: 'agent_requests', label: 'Agent requests', hint: 'An agent calls notify_user because it needs you.' },
-  { key: 'agent_terminal', label: 'Terminal agent notifications', hint: 'Notifications a terminal agent CLI sends itself, such as a permission prompt.' },
-  { key: 'integrated_permission', label: 'Integrated permission prompts', hint: 'An Integrated agent is waiting for approval.' },
-  { key: 'integrated_turn_finished', label: 'Integrated turn finished', hint: 'An Integrated agent finished its turn.' },
+  { key: 'integrated_permission', label: 'Permission prompts', hint: 'An agent is waiting for approval.' },
+  { key: 'integrated_turn_finished', label: 'Turn finished', hint: 'An agent finished its turn.' },
   { key: 'agent_failures', label: 'Agent failures', hint: 'An agent exits with an error.' },
   { key: 'process_terminal', label: 'Process notifications', hint: 'A command or script sends a terminal notification, for example OSC 9.' },
   { key: 'process_failures', label: 'Process failures', hint: 'A command exits with a non-zero code.' },
-  { key: 'agent_bells', label: 'Bells from agents', hint: 'The terminal bell rings in an agent.' },
   { key: 'process_bells', label: 'Bells from processes', hint: 'The terminal bell rings in a command or shell.' }
 ];
 const DELIVERY: Array<{ value: 'all' | 'in_app' | 'off'; label: string; short: string }> = [

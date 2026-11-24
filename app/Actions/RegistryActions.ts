@@ -54,7 +54,7 @@ export interface RegistryActionDeps {
   diffService: DiffService;
   searchService: SearchService;
   integrated?: Pick<IntegratedAgentService, 'stop' | 'stopIfLive'>;
-  openCodeServer?: Pick<OpenCodeServerService, 'interrupt' | 'restartService'>;
+  openCodeServer?: Pick<OpenCodeServerService, 'restartService'>;
   notifications?: Pick<NotificationService, 'resolve'>;
   onProcessesChanged?: () => void;
   // Whether a bot's purview reaches a project.
@@ -67,7 +67,7 @@ export function createRegistryActions(deps: RegistryActionDeps): RegistryActions
   return {
     projectContext,
     abandonWorktree: new AbandonWorktreeAction(deps.worktreeService),
-    closeProcess: new CloseProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated, deps.notifications, deps.onProcessesChanged),
+    closeProcess: new CloseProcessAction(deps.database, deps.terminal, deps.integrated, deps.notifications, deps.onProcessesChanged),
     createProject: new CreateProjectAction(deps.database, deps.timeline),
     renameProject: new RenameProjectAction(deps.database, deps.timeline),
     projectLogo: new ProjectLogoAction(deps.database, deps.timeline),
@@ -80,6 +80,6 @@ export function createRegistryActions(deps: RegistryActionDeps): RegistryActions
     listWorktrees: new ListWorktreesAction(deps.worktreeService),
     restartOpenCodeService: new RestartOpenCodeServiceAction(deps.database, deps.timeline, deps.openCodeServer),
     searchArtifacts: new SearchArtifactsAction(deps.searchService),
-    stopProcess: new StopProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated, deps.onProcessesChanged),
+    stopProcess: new StopProcessAction(deps.database, deps.terminal, deps.integrated, deps.onProcessesChanged),
   };
 }

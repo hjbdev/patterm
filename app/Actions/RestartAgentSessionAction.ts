@@ -60,11 +60,12 @@ interface SourceSession {
   name: string;
   activity: string | null;
   status: string;
+  interface_mode: string;
 }
 
 const SOURCE_COLUMNS = `sessions.id as session_id, sessions.project_id, sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier,
   sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user,
-  sessions.display_name, sessions.last_title, processes.name, processes.activity, processes.status, processes.id as process_id`;
+  sessions.display_name, sessions.last_title, sessions.interface_mode, processes.name, processes.activity, processes.status, processes.id as process_id`;
 const WORKING = 'This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.';
 const LIVE_INTEGRATED = `sessions.interface_mode = 'integrated' and sessions.exited_at is null and processes.status = 'running'`;
 
@@ -140,8 +141,9 @@ export class RestartAgentSessionAction {
       }
       try {
         // The native conversation can only be open in one process, so the
-        // old one stops before the new one resumes it.
-        await this.processes.stop(processId);
+        // old one stops before the new one resumes it. Historical TUI sessions
+        // have no Integrated host to stop.
+        if (source.interface_mode === 'integrated') await this.processes.stop(processId);
         launched = await this.launcher.resume({
           harness: source.harness as 'claude' | 'codex' | 'opencode' | 'agy',
           model: source.model,
@@ -152,8 +154,7 @@ export class RestartAgentSessionAction {
           ...target,
           actor_id: 'user',
           // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
-          name: source.display_name ?? undefined,
-          interface_mode: 'integrated'
+          name: source.display_name ?? undefined
         }, {
           resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id, reconnect_mcp: true,
           // A live native report wins even if saving its latest change failed.
@@ -185,7 +186,7 @@ export class RestartAgentSessionAction {
   private restartableSource(processId: string, projectId: string): SourceSession | undefined {
     return this.database.connection.prepare(`select ${SOURCE_COLUMNS}
       from sessions join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.project_id = ? and sessions.interface_mode = 'integrated' and processes.status != 'closed'
+      where sessions.process_id = ? and sessions.project_id = ? and processes.status != 'closed'
       order by sessions.started_at desc limit 1`).get(processId, projectId) as SourceSession | undefined;
   }
 

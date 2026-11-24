@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { HarnessId, HarnessProvider, HarnessStatus } from '../Harness/HarnessProvider';
 import { findExecutable, resolveCommand } from '../Platform/Executable';
-import { defaultShell } from '../Platform/Shell';
 
 export interface DiscoveredHarness {
   harness: HarnessId;
@@ -13,8 +12,6 @@ export interface DiscoveredHarness {
 export interface HarnessDiscoveryOptions {
   // Defaults to process.env. Injected in tests to point PATH at a fixture dir.
   env?: NodeJS.ProcessEnv;
-  // Shell the RawPty provider reports as available. Defaults to defaultShell().
-  shell?: string;
   // Milliseconds to wait for a `--version` probe before treating it as broken.
   versionTimeoutMs?: number;
 }
@@ -23,7 +20,6 @@ export interface HarnessDiscoveryOptions {
 // binary's version. Pure read; persistence is the caller's job.
 export class HarnessDiscoveryService {
   private readonly env: NodeJS.ProcessEnv;
-  private readonly shell: string;
   private readonly versionTimeoutMs: number;
 
   constructor(
@@ -31,7 +27,6 @@ export class HarnessDiscoveryService {
     options: HarnessDiscoveryOptions = {}
   ) {
     this.env = options.env ?? process.env;
-    this.shell = options.shell ?? defaultShell(this.env);
     this.versionTimeoutMs = options.versionTimeoutMs ?? 4000;
   }
 
@@ -40,11 +35,6 @@ export class HarnessDiscoveryService {
   }
 
   private async discoverOne(provider: HarnessProvider): Promise<DiscoveredHarness> {
-    // No binary to find: the raw terminal rides the user's shell, always present.
-    if (provider.executableCandidates.length === 0) {
-      return { harness: provider.id, executablePath: this.shell, version: null, status: 'available' };
-    }
-
     const executablePath = this.resolveOnPath(provider.executableCandidates);
     if (!executablePath) {
       return { harness: provider.id, executablePath: null, version: null, status: 'missing' };

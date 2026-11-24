@@ -7,11 +7,9 @@ function session(id: string, fields: Partial<SessionRecord> = {}): SessionRecord
   return {
     id,
     parentId: null,
-    ptyProcessId: `pty-${id}`,
     processId: `process-${id}`,
     worktreeId: null,
     harness: 'claude',
-    interfaceMode: 'tui',
     sessionRole: fields.parentId ? 'child' : 'orchestrator',
     resumeStatus: 'unknown',
     activity: 'idle' as ActivityState,

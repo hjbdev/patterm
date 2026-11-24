@@ -11,7 +11,6 @@ import { buildSync } from 'esbuild';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { McpServerActions } from '../app/Actions/McpServerActions';
-import { harnessProviders } from '../app/Harness/providers';
 import { claudeMcpServers, codexMcpOverrides, codexMcpStartupNotice, headersHelperCommand, openCodeMcpConfigs } from '../app/Harness/McpDelivery';
 import { McpHelperAccess, MCP_HELPER_CUTOVER_KEY } from '../app/MCP/McpHelperAccess';
 import { McpSocketServer } from '../app/MCP/McpSocketServer';
@@ -21,7 +20,6 @@ import { McpOAuthService } from '../app/Services/McpOAuthService';
 import { McpServerImportService } from '../app/Services/McpServerImportService';
 import { McpServerRegistry } from '../app/Services/McpServerRegistry';
 import { McpHttpProxyService } from '../app/Services/McpHttpProxyService';
-import { NativeOAuthCallbackService } from '../app/Services/NativeOAuthCallbackService';
 
 // A minimal authorization server and MCP server: discovery, dynamic client
 // registration, PKCE, rotating refresh tokens, and a tools/list endpoint that
@@ -201,15 +199,6 @@ async function main(): Promise<void> {
     assert.deepEqual(openCode['linear-acme']!.command, ['/usr/bin/node', '/opt/patterm/shim.js', '--mcp-bridge', remote.id]);
     assert.equal(openCode.open!.type, 'remote');
 
-    // Launch plans add the servers and keep Patterm's own server authoritative.
-    const runtimeDir = path.join(dir, 'runtime');
-    const provider = (id: string) => harnessProviders.find((candidate) => candidate.id === id)!;
-    const claudePlan = provider('claude').buildLaunch({ executablePath: 'claude', mcp: patterm, mcpServers: servers, runtimeDir });
-    const claudeConfig = JSON.parse(claudePlan.files[0]!.contents) as { mcpServers: Record<string, unknown> };
-    assert.deepEqual(Object.keys(claudeConfig.mcpServers), ['linear-acme', 'open', 'railway', 'patterm']);
-    const codexPlan = provider('codex').buildLaunch({ executablePath: 'codex', mcp: patterm, mcpServers: servers, runtimeDir });
-    assert.ok(codexPlan.args.includes('mcp_servers.linear-acme.enabled=true'));
-
     // Sign-in through a loopback redirect, completed by paste.
     let clock = Date.parse('2026-09-30T10:00:00.000Z');
     let changes = 0;
@@ -274,29 +263,6 @@ async function main(): Promise<void> {
     registry.save({ id: remote.id, name: 'linear-acme', transport: 'http', url: `${service.base}/mcp` });
     await oauth.completeSignIn(await authorize((await oauth.startSignIn(remote.id)).authorization_url!));
 
-    // Native sign-ins: replay only callbacks for authorize URLs seen by the
-    // xdg-open shim, to the port and path they named.
-    const received: string[] = [];
-    const listener = http.createServer((request, response) => { received.push(`${request.headers.host} ${request.url}`); response.end('ok'); });
-    await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
-    cleanups.push(() => listener.close());
-    const port = (listener.address() as AddressInfo).port;
-    let now = 0;
-    const native = new NativeOAuthCallbackService(() => now);
-    native.observe(`https://auth.example.com/authorize?response_type=code&state=abc&redirect_uri=${encodeURIComponent(`http://localhost:${port}/callback`)}`);
-    native.observe(`https://example.com/?state=zzz&redirect_uri=${encodeURIComponent('http://localhost:1/callback')}`);
-    assert.equal(native.matches(`http://localhost:${port}/callback?code=c&state=abc`), true);
-    assert.equal(native.matches(`http://localhost:${port + 1}/callback?code=c&state=abc`), false, 'other ports are refused');
-    assert.equal(native.matches(`http://localhost:${port}/other?code=c&state=abc`), false, 'other paths are refused');
-    assert.equal(native.matches('http://localhost:1/callback?code=c&state=zzz'), false, 'only authorization-code URLs are recorded');
-    assert.equal(native.matches(`http://localhost:${port}/callback?state=abc`), false, 'a callback carries a code or an error');
-    await native.replay(`http://localhost:${port}/callback?code=c&state=abc`);
-    assert.deepEqual(received, [`localhost:${port} /callback?code=c&state=abc`]);
-    await assert.rejects(native.replay(`http://localhost:${port}/callback?code=c&state=abc`), /does not belong/, 'a callback is replayed once');
-    native.observe(`https://auth.example.com/authorize?response_type=code&state=late&redirect_uri=${encodeURIComponent(`http://127.0.0.1:${port}/cb`)}`);
-    now += 11 * 60_000;
-    assert.equal(native.matches(`http://127.0.0.1:${port}/cb?code=c&state=late`), false, 'recorded sign-ins expire');
-
     // Import from each harness's own configuration.
     const home = path.join(dir, 'home');
     fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
@@ -330,7 +296,7 @@ async function main(): Promise<void> {
     assert.deepEqual(importer.import().added, [], 'importing again adds nothing');
 
     // Settings actions: test connections and complete pasted callbacks.
-    const actions = new McpServerActions(registry, oauth, importer, native, { redirectsToOrigin: false });
+    const actions = new McpServerActions(registry, oauth, importer, { redirectsToOrigin: false });
     const tested = await actions.test({ id: remote.id });
     assert.equal(tested.error, null);
     assert.deepEqual(tested.tools, ['echo']);
@@ -377,7 +343,7 @@ async function main(): Promise<void> {
     const shim = path.join(dir, 'shim.cjs');
     buildSync({ entryPoints: ['mcp/shim.ts'], outfile: shim, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
     const socketPath = path.join(dir, 'mcp.sock');
-    const socket = new McpSocketServer(socketPath, new McpToolRegistry(), undefined, undefined, undefined, handlers);
+    const socket = new McpSocketServer(socketPath, new McpToolRegistry(), undefined, undefined, handlers);
     await socket.start();
     cleanups.push(() => socket.stop());
     const env = { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'mcp_claude' } as Record<string, string>;

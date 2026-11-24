@@ -4,7 +4,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { McpHttpServer, McpServer, McpServerRegistry } from '../Services/McpServerRegistry';
 import type { McpOAuthService, McpSignInStatus } from '../Services/McpOAuthService';
 import type { McpServerImportService } from '../Services/McpServerImportService';
-import type { NativeOAuthCallbackService } from '../Services/NativeOAuthCallbackService';
 import type { McpHelperCaller, McpServerSocketHandlers } from '../MCP/McpSocketServer';
 import type { McpHelperAccess } from '../MCP/McpHelperAccess';
 
@@ -34,7 +33,6 @@ export class McpServerActions {
     private readonly registry: McpServerRegistry,
     private readonly oauth: McpOAuthService,
     private readonly importer: McpServerImportService,
-    private readonly nativeCallbacks: NativeOAuthCallbackService,
     private readonly options: { redirectsToOrigin: boolean; env?: NodeJS.ProcessEnv; onChanged?: () => void } = { redirectsToOrigin: false }
   ) {}
 
@@ -86,17 +84,13 @@ export class McpServerActions {
     return this.oauth.signOut(idInput.parse(raw).id);
   }
 
-  // A pasted address from a failed sign-in redirect: Patterm's own sign-in,
-  // or one an agent CLI started. Anything else is left for normal pasting.
-  async pasteCallback(raw: unknown): Promise<{ handled: false } | { handled: true; kind: 'patterm' | 'agent'; name?: string }> {
+  // A pasted address from a failed Patterm MCP sign-in redirect. Anything else
+  // is left for normal pasting.
+  async pasteCallback(raw: unknown): Promise<{ handled: false } | { handled: true; kind: 'patterm'; name?: string }> {
     const { url } = urlInput.parse(raw);
     if (this.oauth.matches(url)) {
       const { name } = await this.oauth.completeSignIn(url);
       return { handled: true, kind: 'patterm', name };
-    }
-    if (this.nativeCallbacks.matches(url)) {
-      await this.nativeCallbacks.replay(url);
-      return { handled: true, kind: 'agent' };
     }
     return { handled: false };
   }

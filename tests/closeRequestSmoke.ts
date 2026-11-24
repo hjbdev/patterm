@@ -40,14 +40,16 @@ async function main(): Promise<void> {
     const terminal = { request: async (method: string) => { terminalCalls.push(method); return {}; } } as unknown as TerminalService;
     let changes = 0;
     let closeChanges = 0;
-    const requests = new CloseRequestActions(database, { append: () => 'event' }, new CloseProcessAction(database, terminal, undefined, undefined, notifications, () => { closeChanges += 1; }), messageProcess, () => { changes += 1; }, notifications);
+    const requests = new CloseRequestActions(database, { append: () => 'event' }, new CloseProcessAction(database, terminal, undefined, notifications, () => { closeChanges += 1; }), messageProcess, () => { changes += 1; }, notifications);
     const sessions = () => new WorkbenchRepository(database).snapshot().projects[0]!.projectSessions;
     const closeRequest = (id: string) => sessions().find((session) => session.processId === id)?.closeRequest ?? null;
 
-    // A root TUI agent's request waits for the user and is announced at once.
+    // A root agent's request waits for turn end to announce, and is visible once idle.
     assert.deepEqual(await requests.request('root', { summary: 'Opened PR #74.' }), { status: 'requested' });
     assert.equal(closeRequest('root')?.summary, 'Opened PR #74.');
     assert.ok(changes > 0);
+    assert.equal(notifications.list({ process_id: 'root' }).total, 0);
+    await requests.announce('root');
     const open = notifications.list({ process_id: 'root' }).items;
     assert.equal(open.length, 1);
     assert.equal(open[0]!.title, 'Ready to close');
@@ -69,10 +71,10 @@ async function main(): Promise<void> {
     await requests.announce('integrated');
     assert.equal(notifications.list({ process_id: 'integrated' }).total, 1);
 
-    // User input withdraws a request, by Patterm or PTY id.
+    // User input withdraws a request.
     const actions = new NotificationActions(notifications, new SettingsService(database), new PresenceService(), {} as PushService);
     actions.onUserInput((processId) => requests.clear(processId));
-    actions.userInput('pty_integrated');
+    actions.userInput('integrated');
     assert.equal(closeRequest('integrated'), null);
     await assert.rejects(requests.answer({ process_id: 'integrated', decision: 'close' }), /no pending close request/);
 

@@ -363,7 +363,6 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.deepEqual(await service.nativeSettings('process_1'), { model: 'openai/gpt-test', reasoning: 'low' },
       'a restart reads the variant from the native session, not the launch value');
     assert.equal(await service.sessionDirectory('process_1'), fs.realpathSync(directory), 'a restart reads the directory the native session is in now');
-    database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
     assert.deepEqual(await service.prompt('process_0', { text: 'hello', references: [], attachments: [] }), { id: 'msg_test' });
     await checkMcpRestore({ database, env, directory, helped });
     // Memory lives in two instruction entries: the whole memory, and the
@@ -1098,16 +1097,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     database.connection.prepare(`update sessions set exited_at = ? where id = 'session_0'`).run(now);
     assert.equal((await client.callTool({ name: 'whoami', arguments: {}, _meta: { sessionID: first } })).isError, true, 'closed agent identity is revoked');
     assert.equal((await service.prepare({ ...input, resumeId: first })).resumeId, first, 'resume retains the native session ID');
-    const stopped: string[] = [];
-    const terminal = { request: async (_method: string, params: { process_id: string }) => {
-      const calls = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-      assert.ok(calls.some((call) => call.route === `/api/session/${second}/interrupt`), 'native session interrupted before terminating the TUI');
-      stopped.push(params.process_id);
-      return { status: 'stopped' };
-    } } as unknown as TerminalService;
+    const terminal = { request: async () => { throw new Error('Integrated OpenCode agents do not use PTY stop/close'); } } as unknown as TerminalService;
     database.connection.prepare('update processes set argv = ?, cwd = ?').run(JSON.stringify([executable, '--session', second]), directory);
     await new StopProcessAction(database, terminal, service).execute('process_1');
-    assert.deepEqual(stopped, ['process_1']);
+    const stopCalls = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.ok(stopCalls.some((call) => call.route === `/api/session/${second}/interrupt`), 'native session interrupted on stop');
     await new CloseProcessAction(database, terminal, service).execute('process_1');
     assert.equal((database.connection.prepare(`select status from processes where id = 'process_1'`).get() as { status: string }).status, 'closed');
 
@@ -1129,7 +1123,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const failingStop = new IntegratedAgentService(database, { opencode: failingInterrupt });
     await assert.rejects(failingStop.stop('process_0'), /OpenCode command failed|interrupt/i);
     await assert.rejects(
-      new CloseProcessAction(database, terminal, undefined, failingStop).execute('process_0'),
+      new CloseProcessAction(database, terminal, failingStop).execute('process_0'),
       /OpenCode command failed|interrupt/i,
       'a failed native interrupt surfaces instead of closing the process'
     );

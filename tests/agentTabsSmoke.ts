@@ -28,15 +28,13 @@ import { isNavigationModeToggle, navigationModeAction, type NavigationModeKey } 
 import { formatDuration, timerLabel, timerRemaining, timersForProcesses } from '../resources/js/lib/timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../resources/js/types';
 
-function session(id: string, parentId: string | null = null, ptyProcessId: string | null = `pty-${id}`, exitedAt: string | null = null): SessionRecord {
+function session(id: string, parentId: string | null = null, exitedAt: string | null = null): SessionRecord {
   return {
     id,
     parentId,
-    ptyProcessId,
     processId: `process-${id}`,
     worktreeId: null,
     harness: 'opencode',
-    interfaceMode: 'tui',
     sessionRole: parentId ? 'child' : 'orchestrator',
     resumeStatus: 'unknown',
     activity: 'idle',
@@ -78,8 +76,8 @@ const childA = session('child-a', 'root-a');
 const grandchildA = session('grandchild-a', 'child-a');
 const rootB = session('root-b');
 const rootC = session('root-c');
-const exited = session('exited', null, 'pty-exited', '2026-01-01T00:01:00.000Z');
-const missingPty = session('missing-pty', null, null);
+const exited = session('exited', null, '2026-01-01T00:01:00.000Z');
+const missingProcess = { ...session('missing-process', null, null), processId: null };
 
 const rootProcess = processRecord('root-process', rootA.processId);
 const childProcess = processRecord('child-process', childA.processId);
@@ -102,21 +100,21 @@ assert.deepEqual(
   'agent families include live processes directly owned by roots and nested subagents'
 );
 
-const families = buildAgentTabFamilies([rootA, childA, grandchildA, rootB, rootC, exited, missingPty], {
+const families = buildAgentTabFamilies([rootA, childA, grandchildA, rootB, rootC, exited, missingProcess], {
   'root-a': 'child-a'
 });
 
-assert.equal(families.length, 3, 'only live PTY-backed root families are shown');
-const integratedSession = { ...session('integrated', null, null), interfaceMode: 'integrated' as const };
-assert.equal(buildAgentTabFamilies([rootA, rootB, rootC, integratedSession]).length, 4, 'live Integrated sessions are shown without a PTY');
-assert.equal(matchesAgentTabSelection(integratedSession, null, null), false, 'a missing PTY and session selection do not activate an Integrated tab');
-assert.equal(matchesAgentTabSelection(integratedSession, null, integratedSession.id), true, 'the routed Integrated session activates its tab');
-assert.equal(matchesAgentTabSelection(rootA, null, integratedSession.id), false, 'a TUI tab stays inactive while Integrated is selected');
-const secondIntegrated = { ...session('integrated-b', null, null), interfaceMode: 'integrated' as const };
-const integratedChild = { ...session('integrated-child', secondIntegrated.id, null), interfaceMode: 'integrated' as const };
+assert.equal(families.length, 3, 'only live root families with a process are shown');
+const integratedSession = session('integrated', null, null);
+assert.equal(buildAgentTabFamilies([rootA, rootB, rootC, integratedSession]).length, 4, 'live Integrated sessions are shown');
+assert.equal(matchesAgentTabSelection(integratedSession, null, null), false, 'no session selection does not activate an agent tab');
+assert.equal(matchesAgentTabSelection(integratedSession, null, integratedSession.id), true, 'the routed session activates its tab');
+assert.equal(matchesAgentTabSelection(rootA, null, integratedSession.id), false, 'another tab stays inactive while integratedSession is selected');
+const secondIntegrated = session('integrated-b', null, null);
+const integratedChild = session('integrated-child', secondIntegrated.id, null);
 const mixedFamilies = buildAgentTabFamilies([rootA, integratedSession, secondIntegrated, integratedChild], { [secondIntegrated.id]: integratedChild.id });
-assert.equal(activeAgentFamilyIndex(mixedFamilies, null, integratedChild.id), 2, 'the selected Integrated child identifies its own family');
-assert.equal(agentOptionTargetByDelta(mixedFamilies, null, -1, integratedChild.id)?.session.id, secondIntegrated.id, 'vertical navigation starts from the selected Integrated child');
+assert.equal(activeAgentFamilyIndex(mixedFamilies, null, integratedChild.id), 2, 'the selected child identifies its own family');
+assert.equal(agentOptionTargetByDelta(mixedFamilies, null, -1, integratedChild.id)?.session.id, secondIntegrated.id, 'vertical navigation starts from the selected child');
 assert.equal(activeAgentFamilyIndex(mixedFamilies, null), -1, 'no routed session means no active family');
 assert.deepEqual(families.map((family) => family.rootId), ['root-a', 'root-b', 'root-c']);
 
@@ -157,13 +155,13 @@ assert.deepEqual(
 assert.equal(familyOwnerLabel(deepFamily!, grandchildProcess.parentProcessId), 'grandchild-a', 'a nested owner is named beside its process');
 assert.equal(familyOwnerLabel(deepFamily!, rootProcess.parentProcessId), null, 'root-owned processes need no owner label');
 assert.equal(families[0]?.active.id, 'child-a', 'selected child is the active tab label for its root family');
-assert.equal(activeAgentFamilyIndex(families, 'pty-child-a'), 0);
+assert.equal(activeAgentFamilyIndex(families, null, 'child-a'), 0);
 
-assert.equal(agentOptionTargetByDelta(families, 'pty-child-a', 1)?.session.id, 'grandchild-a', 'Ctrl+S moves down the active family options');
-assert.equal(agentOptionTargetByDelta(families, 'pty-child-a', -1)?.session.id, 'root-a', 'Ctrl+W moves up the active family options');
-assert.equal(agentOptionTargetByDelta(families, 'pty-root-a', -1)?.session.id, 'grandchild-a', 'vertical navigation wraps upward');
-assert.equal(agentOptionTargetByDelta(families, 'pty-grandchild-a', 1)?.session.id, 'root-a', 'vertical navigation wraps downward');
-assert.equal(agentOptionTargetByDelta(families, 'pty-unknown', 1), null, 'unknown active terminal has no vertical target');
+assert.equal(agentOptionTargetByDelta(families, null, 1, 'child-a')?.session.id, 'grandchild-a', 'Ctrl+S moves down the active family options');
+assert.equal(agentOptionTargetByDelta(families, null, -1, 'child-a')?.session.id, 'root-a', 'Ctrl+W moves up the active family options');
+assert.equal(agentOptionTargetByDelta(families, null, -1, 'root-a')?.session.id, 'grandchild-a', 'vertical navigation wraps upward');
+assert.equal(agentOptionTargetByDelta(families, null, 1, 'grandchild-a')?.session.id, 'root-a', 'vertical navigation wraps downward');
+assert.equal(agentOptionTargetByDelta(families, null, 1, 'unknown'), null, 'unknown active session has no vertical target');
 {
   const keys = (tabs: readonly StripTab[]) => tabs.map((tab) => tab.key);
   const shell = activeProcesses([processRecord('shell', null)]);

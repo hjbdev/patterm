@@ -10,12 +10,13 @@ import { registerApplicationRoutes } from '../routes/application';
 import { readIntegrated, relayingRegistrar, servePeerRoutes } from '../routes/remote';
 import { parseDamageFrame } from '../resources/js/terminal/TerminalRenderer';
 import type { VersionedWorkbench } from '../app/Services/WorkbenchSyncService';
+import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 import { debugSidecarPath } from './fixtures/Sidecar';
 import { removeTree } from './fixtures/TempTree';
 
 // Two complete Patterm hosts on loopback: a dev box server and a desktop
-// that pairs to it. Agents are raw terminals, so messages appear as typed
-// input in their terminal output.
+// that pairs to it. Agents run through a minimal fake Claude Integrated CLI,
+// while shell processes exercise cross-host PTY streaming and control.
 
 async function until<T>(check: () => T | Promise<T>, label: string, timeoutMs = 20_000): Promise<NonNullable<T>> {
   const deadline = Date.now() + timeoutMs;
@@ -43,11 +44,53 @@ interface Host {
   origin: string;
 }
 
+const FAKE_CLAUDE_SOURCE = `
+if (process.argv.includes('--version')) {
+  process.stdout.write('2.1.0\\n');
+  process.exit(0);
+}
+const out = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+let buffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const newline = buffer.indexOf('\\n');
+    if (newline < 0) break;
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line.trim()) continue;
+    const event = JSON.parse(line);
+    if (event.type === 'control_request' && event.request && event.request.subtype === 'initialize') {
+      out({ type: 'control_response', response: { subtype: 'success', request_id: event.request_id, response: { commands: [], models: [], account: {} } } });
+      continue;
+    }
+    if (event.type === 'user') {
+      const content = event.message && event.message.content;
+      const text = typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => (part && typeof part.text === 'string' ? part.text : '')).join('')
+          : '';
+      out({ type: 'system', subtype: 'init' });
+      out({ type: 'user', uuid: event.uuid, isReplay: true, message: event.message });
+      out({ type: 'assistant', user_message_uuid: event.uuid, message: { id: 'msg_' + event.uuid, content: [{ type: 'text', text: 'ACK: ' + text }] } });
+      out({ type: 'result', is_error: false, subtype: 'success', user_message_uuid: event.uuid });
+    }
+  }
+});
+`;
+
 async function main(): Promise<void> {
-  // The agents here are raw shells and the test types PowerShell on Windows. A
-  // $SHELL inherited from Git Bash would otherwise pick bash for them.
+  // The shell test types PowerShell on Windows. A $SHELL inherited from Git Bash
+  // would otherwise pick bash for it.
   if (process.platform === 'win32') delete process.env.SHELL;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ptx-'));
+  const fakeBin = path.join(root, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  writeNodeCli(path.join(fakeBin, 'claude'), FAKE_CLAUDE_SOURCE);
+  const previousPath = process.env.PATH ?? '';
+  process.env.PATH = `${fakeBin}${path.delimiter}${previousPath}`;
   const hosts: Host[] = [];
   const start = async (name: string): Promise<Host> => {
     const port = await freePort();
@@ -88,15 +131,24 @@ async function main(): Promise<void> {
     host.server = new WebServer(host.app, { port: host.port, publicOrigin: host.origin, rendererPath: path.join(host.dir, 'renderer'), appDataPath: path.join(host.dir, 'data') });
     await host.server.start();
   };
-  // An agent: a raw terminal with its own MCP identity.
+  // An Integrated Claude agent with its own MCP identity.
   const agent = async (host: Host, projectId: string) => {
-    const launched = await host.app.mcp.call('harness_launch', { project_id: projectId, harness: 'rawpty', interface_mode: 'tui' }) as { process_id: string };
+    const launched = await host.app.mcp.call('harness_launch', { project_id: projectId, harness: 'claude' }) as { process_id: string };
     // UI routes announce changes after each call; these direct calls do too.
     host.app.notifyChanged(host.app.mcp.changedTopics('harness_launch'));
     const { mcp_identity } = host.app.database.connection.prepare('select mcp_identity from sessions where process_id = ?').get(launched.process_id) as { mcp_identity: string };
     const call = (tool: string, args: unknown) => host.app.mcp.callPublic(tool, args, { identity: mcp_identity });
-    // A long prompt wraps the text typed after it, so rejoin wrapped lines.
-    const output = async () => ((await host.app.mcp.call('get_process_output', { process_id: launched.process_id }) as { content?: string }).content ?? '').replace(/\r?\n/g, '');
+    const output = async () => {
+      const conversation = await host.app.mcp.call('integrated_get', { process_id: launched.process_id, transcript_only: true }) as {
+        messages?: Array<{ text?: string }> | { data?: Array<{ text?: string; content?: Array<{ text?: string }> }> };
+      };
+      const rows = Array.isArray(conversation.messages) ? conversation.messages : (conversation.messages?.data ?? []);
+      return rows.map((message) => {
+        if (typeof message.text === 'string') return message.text;
+        const content = (message as { content?: Array<{ text?: string }> }).content;
+        return Array.isArray(content) ? content.map((part) => part.text ?? '').join('') : '';
+      }).join('\n');
+    };
     return { process_id: launched.process_id, call, output };
   };
   // A browser connected to a host's event socket.
@@ -169,7 +221,6 @@ async function main(): Promise<void> {
     const remoteRow = await until(() => deskWorkbench()?.projectSessions.find((session) => session.processId === `workstation:${developer.process_id}`), 'the dev box agent in the desktop workbench');
     assert.equal(remoteRow.host, 'workstation');
     assert.match(remoteRow.id, /^workstation:session_/);
-    assert.match(remoteRow.ptyProcessId ?? '', /^workstation:/);
     const devOnly = await project(workstation, 'workstation-only');
     await until(() => snapshot(desktop).projects.some((entry) => entry.project.id === `workstation:${devOnly}` && entry.project.host === 'workstation'), 'an unlinked dev box project');
     await until(() => snapshot(workstation).projects.find((entry) => entry.project.id === devProject)?.projectSessions.some((session) => session.processId === `desktop:${benchmarker.process_id}`), 'the desktop agent in the dev box workbench');
@@ -187,18 +238,24 @@ async function main(): Promise<void> {
     await assert.rejects(rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_unpair', arguments: { host_id: desktopId, process_id: `workstation:${developer.process_id}` } }), /not available to another host/);
     // Transcript snapshots name a tool that exists here and passes the peer gate.
     const integratedRead = (read: Promise<unknown>) => read.then(() => 'read', (error: unknown) => String(error));
-    assert.doesNotMatch(await integratedRead(readIntegrated(workstation.app, developer.process_id)), /unknown MCP tool/, 'local transcript reads reach integrated_get');
-    assert.doesNotMatch(await integratedRead(readIntegrated(desktop.app, `workstation:${developer.process_id}`)), /unknown MCP tool|not available to another host/, 'remote transcript reads reach integrated_get');
+    assert.equal(await integratedRead(readIntegrated(workstation.app, developer.process_id)), 'read', 'local transcript reads reach integrated_get');
+    assert.equal(await integratedRead(readIntegrated(desktop.app, `workstation:${developer.process_id}`)), 'read', 'remote transcript reads reach integrated_get');
 
-    // A browser on the desktop streams and types into the dev box terminal.
+    // A shell process on the dev box streams and accepts input from a browser on the desktop.
+    await rpc(workstation, 'patterm:mcp:call', { tool: 'process_create', arguments: { project_id: devProject } });
+    const shell = (workstation.app.database.connection.prepare(`select id from processes where project_id = ? and kind <> 'agent' order by created_at desc limit 1`).get(devProject) as { id: string }).id;
+    const shellOutput = async () => ((await workstation.app.mcp.call('get_process_output', { process_id: shell }) as { content?: string }).content ?? '').replace(/\r?\n/g, '');
+    const remoteShellRow = await until(() => deskWorkbench()?.processes.find((proc) => proc.id === `workstation:${shell}`), 'the dev box shell in the desktop workbench');
+    assert.match(remoteShellRow.ptyProcessId ?? '', /^workstation:/);
+
     const browser = await browserClient(desktop);
     const { frames, pushed } = browser;
     const socketCall = browser.call;
-    const remotePty = remoteRow.ptyProcessId!;
+    const remotePty = remoteShellRow.ptyProcessId!;
     await socketCall('patterm:terminal:subscribe', { process_id: remotePty, subscribed: true, cols: 90, rows: 20 });
     await until(() => frames.some((frame) => frame?.processId === remotePty), 'a relayed terminal frame');
     await socketCall('patterm:terminal:input', { process_id: remotePty, kind: 'text', text: 'echo FROM-DESKTOP-UI', submit: true });
-    await until(async () => (await developer.output()).includes('FROM-DESKTOP-UI'), 'input typed on the desktop to reach the dev box');
+    await until(async () => (await shellOutput()).includes('FROM-DESKTOP-UI'), 'input typed on the desktop to reach the dev box');
     await until(() => frames.some((frame) => frame?.processId === remotePty && frame.frameKind === 'damage'), 'damage frames from the dev box');
     // A copy made by the dev box program reaches the browser controlling it.
     const copyCommand = process.platform === 'win32'
@@ -222,7 +279,7 @@ async function main(): Promise<void> {
     await until(() => owner.pushed.some((item) => item.event === 'terminal-control' && item.payload.processId === localPty && item.payload.controlling === false), 'the dev box browser to lose control');
     await assert.rejects(owner.call('patterm:terminal:input', { process_id: localPty, kind: 'text', text: 'x' }), /Take control/);
     await socketCall('patterm:terminal:input', { process_id: remotePty, kind: 'text', text: 'echo DESKTOP-AGAIN', submit: true });
-    await until(async () => (await developer.output()).includes('DESKTOP-AGAIN'), 'the desktop typing again');
+    await until(async () => (await shellOutput()).includes('DESKTOP-AGAIN'), 'the desktop typing again');
     owner.close();
     await socketCall('patterm:terminal:subscribe', { process_id: remotePty, subscribed: false });
 
@@ -259,7 +316,7 @@ async function main(): Promise<void> {
     const reopened = await deskWindow('patterm:terminal:subscribe', { process_id: remotePty, subscribed: true }) as { controlling: boolean };
     assert.equal(reopened.controlling, true, 'reopening takes control again');
     await deskWindow('patterm:terminal:input', { process_id: remotePty, kind: 'text', text: 'echo FROM-DESKTOP-WINDOW', submit: true });
-    await until(async () => (await developer.output()).includes('FROM-DESKTOP-WINDOW'), 'the reopened desktop window typing');
+    await until(async () => (await shellOutput()).includes('FROM-DESKTOP-WINDOW'), 'the reopened desktop window typing');
     await deskWindow('patterm:terminal:subscribe', { process_id: remotePty, subscribed: false });
     devViewer.close();
 
@@ -273,7 +330,7 @@ async function main(): Promise<void> {
 
     // A linked project can launch on the other host.
     assert.deepEqual(deskWorkbench()!.project.remotes, [{ host: 'workstation', projectId: `workstation:${devProject}`, contextRevision: 0, sharesHistory: true }], 'a linked project carries the paired host\'s context revision, and that it announces history');
-    const launchedRemote = await rpc(desktop, 'patterm:mcp:call', { tool: 'harness_launch', arguments: { project_id: `workstation:${devProject}`, harness: 'rawpty', interface_mode: 'tui' } }) as { session_id: string; process_id: string };
+    const launchedRemote = await rpc(desktop, 'patterm:mcp:call', { tool: 'harness_launch', arguments: { project_id: `workstation:${devProject}`, harness: 'claude' } }) as { session_id: string; process_id: string };
     assert.match(launchedRemote.session_id, /^workstation:session_/);
     assert.ok(workstation.app.database.connection.prepare('select 1 from sessions where id = ? and project_id = ?').get(launchedRemote.session_id.slice('workstation:'.length), devProject));
     await until(() => deskWorkbench()?.projectSessions.some((session) => session.id === launchedRemote.session_id), 'the launched agent in the desktop workbench');
@@ -352,15 +409,12 @@ async function main(): Promise<void> {
     if (archived?.session) assert.equal(archived.session.id, `workstation:${developerSession}`);
 
     // Messages reach agents only: typed into a shell they would run.
-    await rpc(workstation, 'patterm:mcp:call', { tool: 'process_create', arguments: { project_id: devProject } });
-    const shell = (workstation.app.database.connection.prepare(`select id from processes where project_id = ? and kind <> 'agent' order by created_at desc limit 1`).get(devProject) as { id: string }).id;
     const toShell = await benchmarker.call('send_message', { target_process_id: `workstation:${shell}`, message: 'echo SHOULD-NOT-RUN' }) as { status: string; detail: string };
     assert.equal(toShell.status, 'bounced');
     assert.match(toShell.detail, /is not an agent/);
-    assert.ok(!((await workstation.app.mcp.call('get_process_output', { process_id: shell }) as { content?: string }).content ?? '').includes('SHOULD-NOT-RUN'));
+    assert.ok(!(await shellOutput()).includes('SHOULD-NOT-RUN'));
 
-    // A message retried while its first delivery is still running is typed
-    // once.
+    // A message retried while its first delivery is still running is delivered once.
     const twice = { peer_message_id: 'pmsg_retry', project_id: devProject, from_process_id: benchmarker.process_id, to_process_id: developer.process_id, body: 'echo ONCE' };
     const [first, second] = await Promise.all([desktop.app.peers.request(workstationId, 'agents.message', twice), desktop.app.peers.request(workstationId, 'agents.message', twice)]) as Array<{ status: string }>;
     assert.deepEqual([first!.status, second!.status], ['delivered', 'delivered']);
@@ -382,7 +436,7 @@ async function main(): Promise<void> {
     await until(() => workstation.app.hosts.overview().peers[0]?.name === 'desktop', 'the name to return');
     const sent = await developer.call('send_message', { target_process_id: `desktop:${benchmarker.process_id}`, message: 'echo RUN-BENCHMARKS' }) as { status: string; ok: boolean };
     assert.deepEqual([sent.ok, sent.status], [true, 'delivered']);
-    await until(async () => (await benchmarker.output()).includes(`[message from workstation:${developer.process_id}]`), 'the message in the benchmarker terminal');
+    await until(async () => (await benchmarker.output()).includes(`[message from workstation:${developer.process_id}]`), 'the message in the benchmarker transcript');
     const reply = await benchmarker.call('send_message', { target_process_id: `workstation:${developer.process_id}`, message: 'echo RESULTS-READY' }) as { status: string };
     assert.equal(reply.status, 'delivered');
     await until(async () => (await developer.output()).includes('BENCHMARK-REPLY-ARRIVED'), 'the report timer to fire on the dev box');
@@ -395,7 +449,7 @@ async function main(): Promise<void> {
     const bounced = await benchmarker.call('send_message', { target_process_id: 'workstation:process_999', message: 'hello?' }) as { status: string; detail: string };
     assert.equal(bounced.status, 'bounced');
     assert.match(bounced.detail, /no process process_999/);
-    await until(async () => (await benchmarker.output()).includes('[delivery failed'), 'the bounce in the sender terminal');
+    await until(async () => (await benchmarker.output()).includes('[delivery failed'), 'the bounce in the sender transcript');
     const notices = await desktop.app.mcp.call('notification_list', {}) as { items: Array<{ title: string }> };
     assert.ok(notices.items.some((item) => /bounced/.test(item.title)), JSON.stringify(notices));
 
@@ -407,7 +461,7 @@ async function main(): Promise<void> {
     assert.match(queued.detail, /not connected/);
     await serve(workstation);
     await until(() => (desktop.app.database.connection.prepare(`select status from peer_messages where direction = 'out' and body = 'echo WHILE-AWAY'`).get() as { status: string }).status === 'delivered', 'the queued message', 30_000);
-    await until(async () => (await developer.output()).includes('WHILE-AWAY'), 'the queued message in the developer terminal');
+    await until(async () => (await developer.output()).includes('WHILE-AWAY'), 'the queued message in the developer transcript');
     assert.equal((workstation.app.database.connection.prepare(`select count(*) as n from peer_messages where direction = 'in' and body = 'echo WHILE-AWAY'`).get() as { n: number }).n, 1);
 
     // A queued message whose project is unlinked bounces instead of holding
@@ -436,7 +490,7 @@ async function main(): Promise<void> {
     assert.deepEqual(restored.map((peer) => [peer.name, peer.projects.map((link) => link.project_id)]), [['workstation', [deskProject]]]);
     await serve(workstation);
     await until(() => (desktop.app.database.connection.prepare(`select status from peer_messages where direction = 'out' and body = 'echo AFTER-RESTART'`).get() as { status: string }).status === 'delivered', 'the queued message after restarting', 30_000);
-    await until(async () => (await developer.output()).includes('AFTER-RESTART'), 'the restarted host\'s message in the developer terminal');
+    await until(async () => (await developer.output()).includes('AFTER-RESTART'), 'the restarted host\'s message in the developer transcript');
     benchmarker = await agent(desktop, deskProject);
 
     // A host unpaired while the other was away refuses it, and the user
@@ -452,6 +506,7 @@ async function main(): Promise<void> {
     await until(() => (desktop.app.database.connection.prepare(`select status from peer_messages where direction = 'out' and body = 'echo NEVER'`).get() as { status: string }).status === 'bounced', 'the unpair bounce');
     console.log('cross-host smoke passed');
   } finally {
+    process.env.PATH = previousPath;
     for (const host of hosts) {
       await host.server?.stop().catch(() => undefined);
       await host.app.dispose();

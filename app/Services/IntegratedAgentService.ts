@@ -1516,7 +1516,7 @@ export class IntegratedAgentService {
         }
       }
       const now = new Date().toISOString();
-      this.database.connection.prepare(`update processes set status = 'failed', exited_at = coalesce(exited_at, ?), updated_at = ? where id = ?`).run(now, now, row.process_id);
+      this.database.connection.prepare(`update processes set status = 'failed', exited_at = coalesce(exited_at, ?), updated_at = ? where id = ? and status = 'running'`).run(now, now, row.process_id);
       this.database.connection.prepare(`update sessions set exited_at = coalesce(exited_at, ?) where process_id = ?`).run(now, row.process_id);
       return 'failed';
     }));
@@ -1570,7 +1570,7 @@ export class IntegratedAgentService {
   private sessionHarness(processId: string): string | null {
     const row = this.database.connection.prepare(`
       select harness from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated'
+      where (process_id = ? or id = ?)
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string } | undefined;
     return row?.harness ?? null;
@@ -1588,7 +1588,7 @@ export class IntegratedAgentService {
   private archiveSession(processId: string, conversation: unknown): { provider: string; resumeId: string; projectId: string; startedAt: string } | null {
     const row = this.database.connection.prepare(`
       select harness, resume_id, project_id, started_at from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex', 'opencode', 'agy') and resume_id is not null
+      where (process_id = ? or id = ?) and harness in ('claude', 'codex', 'opencode', 'agy') and resume_id is not null
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
     if (!row) return null;

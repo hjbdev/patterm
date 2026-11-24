@@ -17,38 +17,19 @@ export interface AgentInputPayload {
 }
 
 export async function sendAgentInput(database: DatabaseService, terminal: TerminalInputSink, input: AgentInputPayload, integrated?: Pick<IntegratedAgentService, 'prompt'>): Promise<unknown> {
-  const session = database.connection.prepare(`select interface_mode from sessions where process_id = ? or id = ? order by exited_at is null desc, started_at desc limit 1`)
-    .get(input.process_id, input.process_id) as { interface_mode: string } | undefined;
-  if (session?.interface_mode === 'integrated') {
+  const row = database.connection.prepare(`select kind from processes where id = ? or pty_process_id = ? order by status = 'running' desc limit 1`)
+    .get(input.process_id, input.process_id) as { kind: string } | undefined;
+  const session = row?.kind === 'agent'
+    ? true
+    : Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? or id = ? limit 1`).get(input.process_id, input.process_id));
+  if (session) {
     if (!integrated) throw new Error('Integrated agent input is unavailable');
     return integrated.prompt(input.process_id, input.preserve_attention ? { text: input.text, preserveAttention: true } : input.text);
   }
   return terminal.request('terminal.process.input', {
     process_id: resolvePtyProcessId(database, input.process_id),
-    kind: inputKindForHarness(database, input),
+    kind: input.kind ?? 'text',
     text: input.text,
     submit: input.submit
   });
-}
-
-function inputKindForHarness(database: DatabaseService, input: AgentInputPayload): TerminalInputKind {
-  if (input.submit && isFullscreenTuiHarness(database, input.process_id)) {
-    return 'paste';
-  }
-
-  return input.kind ?? 'text';
-}
-
-function isFullscreenTuiHarness(database: DatabaseService, processId: string): boolean {
-  const row = database.connection
-    .prepare(
-      `select harness
-       from sessions
-       where process_id = ? or id = ?
-       order by exited_at is null desc, started_at desc
-       limit 1`
-    )
-    .get(processId, processId) as { harness: string | null } | undefined;
-
-  return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode';
 }

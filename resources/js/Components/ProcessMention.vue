@@ -60,10 +60,9 @@ const label = computed(() => session.value ? hostLabel(agentLabel(session.value)
 const status = computed(() => session.value ? sessionStatusIcon(session.value).label : process.value ? processStatusIcon(process.value).label : '');
 const summary = computed(() => (session.value ?? process.value)?.summary?.text ?? '');
 const live = computed(() => session.value ? !session.value.exitedAt : process.value?.status === 'running');
-// Ended Integrated agents keep a read-only transcript; ended terminals have
-// nothing to show.
+// Ended agents keep a read-only transcript; ended terminals have nothing to show.
 const openable = computed(() => session.value
-  ? !session.value.exitedAt || session.value.interfaceMode === 'integrated'
+  ? true
   : Boolean(process.value?.ptyProcessId && process.value.status === 'running'));
 
 // Processes that ended before the snapshot's window are read on demand.

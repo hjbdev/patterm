@@ -82,7 +82,7 @@ import { restartBot } from '../lib/bots';
 import { harnessLabel } from '../lib/harnesses';
 import { publishedIntegratedControls } from '../lib/integratedControlsRegistry';
 import { topicGeneration } from '../lib/serverQuery';
-import { interfaceLabel, launchParams, launchSummary, presetLabel, resumeInPlace, worktreeLabel } from '../lib/paletteSources';
+import { launchParams, launchSummary, presetLabel, resumeInPlace, worktreeLabel } from '../lib/paletteSources';
 import { displayPath } from '../lib/projectOverview';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
 import { describeDuration, parseDurationSeconds, timerRemaining } from '../lib/timers';
@@ -179,7 +179,7 @@ const currentProcess = computed(() => props.context.active_process_id ? activePr
 const currentTitle = computed(() => currentSession.value ? agentLabel(currentSession.value) : currentProcess.value?.name ?? SECTION_TITLES.current);
 const currentControls = computed(() => {
   const session = currentSession.value;
-  return session?.interfaceMode === 'integrated' && !session.exitedAt ? publishedIntegratedControls(session.processId) : null;
+  return session && !session.exitedAt ? publishedIntegratedControls(session.processId) : null;
 });
 const sessionsById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))) : new Map<string, SessionRecord>());
 const processesById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))) : new Map<string, ProcessRecord>());
@@ -532,7 +532,6 @@ function applyLaunchChoice(result: CommandRunResult): void {
   if (result.field === 'harness') sources.chooseHarness(value);
   else if (result.field === 'presetId') sources.launch.presetId = value || null;
   else if (result.field === 'worktreeId') sources.launch.worktreeId = value || null;
-  else if (result.field === 'interfaceMode' && (value === 'tui' || value === 'integrated')) sources.launch.interfaceMode = value;
   popPage();
 }
 
@@ -556,8 +555,7 @@ function launchPageCommands(): CommandDescriptor[] {
     { id: 'launch:go', label: `Launch ${harnessLabel(launch.harness)}`, ...(query.value.trim() ? { hint: 'With this first message' } : {}), group: 'create', kind: 'backend' },
     setting('harness', 'Agent', harnessLabel(launch.harness), sources.launchHarnesses.value.map(item => choice('harness', item.harness, harnessLabel(item.harness), item.harness === launch.harness))),
     ...(presets.length ? [setting('presetId', 'Preset', presetLabel(presets.find(item => item.id === launch.presetId)), [choice('presetId', '', 'Agent default', launch.presetId === null), ...presets.map(item => choice('presetId', item.id, item.name, item.id === launch.presetId, item.model))])] : []),
-    ...(worktrees.length ? [setting('worktreeId', 'Runs in', worktreeLabel(worktrees.find(item => item.id === launch.worktreeId)), [choice('worktreeId', '', 'Project directory', launch.worktreeId === null), ...worktrees.map(item => choice('worktreeId', item.id, worktreeLabel(item), item.id === launch.worktreeId))])] : []),
-    setting('interfaceMode', 'Interface', interfaceLabel(launch.interfaceMode), (['integrated', 'tui'] as const).map(mode => choice('interfaceMode', mode, interfaceLabel(mode), mode === launch.interfaceMode)))
+    ...(worktrees.length ? [setting('worktreeId', 'Runs in', worktreeLabel(worktrees.find(item => item.id === launch.worktreeId)), [choice('worktreeId', '', 'Project directory', launch.worktreeId === null), ...worktrees.map(item => choice('worktreeId', item.id, worktreeLabel(item), item.id === launch.worktreeId))])] : [])
   ];
 }
 
@@ -565,10 +563,10 @@ function pageSource(command: CommandDescriptor): (() => CommandDescriptor[]) | n
   if (command.id === 'page:launch') return launchPageCommands;
   if (command.id === 'page:timers') return () => sources.timerCommands.value;
   if (command.id === 'page:conversations') {
-    // From an open Integrated agent whose conversation is still empty, the
-    // server swaps the resumed conversation in; otherwise it opens beside it.
+    // From an open agent whose conversation is still empty, the server swaps
+    // the resumed conversation in; otherwise it opens beside it.
     const session = currentSession.value;
-    const processId = session?.interfaceMode === 'integrated' && !session.exitedAt ? session.processId : null;
+    const processId = session && !session.exitedAt ? session.processId : null;
     return () => processId ? resumeInPlace(sources.conversationCommands.value, processId) : sources.conversationCommands.value;
   }
   // A timer's actions follow it, so Pause becomes Resume once it is paused.
@@ -840,11 +838,8 @@ function commandIcon(command: CommandDescriptor): Component | null {
   if (id.startsWith('integrated:configure:') || id.startsWith('launch:set:presetId:')) return null;
   if (id.startsWith('launch:set:worktreeId:')) return id === 'launch:set:worktreeId:' ? Folder : GitBranch;
   if (id === 'launch:field:worktreeId') return sources.launch.worktreeId ? GitBranch : Folder;
-  if (id.startsWith('launch:set:interfaceMode:')) return id.endsWith(':tui') ? TerminalSquare : MessagesSquare;
-  if (id === 'launch:field:interfaceMode') return sources.launch.interfaceMode === 'tui' ? TerminalSquare : MessagesSquare;
   if (id === 'launch:field:presetId') return SlidersHorizontal;
   if (id === 'page:launch' || id === 'launch:go') return Rocket;
-  if (id.startsWith('history:resume:') && command.params?.interface_mode) return command.params.interface_mode === 'tui' ? TerminalSquare : MessagesSquare;
   if (id === 'page:conversations' || id.startsWith('history:')) return History;
   if (id.startsWith('timer:pause:')) return Pause;
   if (id.startsWith('timer:resume:')) return Play;

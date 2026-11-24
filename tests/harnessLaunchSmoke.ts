@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 
-import { CLAUDE_MCP_CONFIG, harnessProviders } from '../app/Harness/providers';
+import { harnessProviders } from '../app/Harness/providers';
 import { LaunchingMcpIdentities, McpHelperAccess } from '../app/MCP/McpHelperAccess';
 import type { McpServerSpec } from '../app/Harness/HarnessProvider';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
@@ -15,15 +14,11 @@ import { NewAgentSessionAction } from '../app/Actions/NewAgentSessionAction';
 import { RestartAgentSessionAction } from '../app/Actions/RestartAgentSessionAction';
 import { TimerService } from '../app/Services/TimerService';
 import { ResumeConversationAgentAction } from '../app/Actions/ResumeConversationAgentAction';
-import { HarnessLauncher, type SpawnSink } from '../app/Services/HarnessLauncher';
+import { HarnessLauncher } from '../app/Services/HarnessLauncher';
+import type { SpawnSink } from '../app/Services/ProcessLauncher';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { prepareOpenCodeTheme } from '../app/Services/OpenCodeThemeService';
-import { openCodeTheme } from '../app/Harness/OpenCodeTheme';
-import { parse } from 'jsonc-parser';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
-import { OpenExternalUrlAction } from '../app/Actions/OpenExternalUrlAction';
-import { TerminalClientRequestService, type TerminalClientRequest } from '../app/Services/TerminalClientRequestService';
 
 interface SessionRow {
   harness: string;
@@ -33,6 +28,7 @@ interface SessionRow {
   resume_status: string;
   cwd: string | null;
   last_title: string | null;
+  interface_mode: string;
 }
 
 const MCP: McpServerSpec = {
@@ -41,171 +37,12 @@ const MCP: McpServerSpec = {
   env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: '/run/mcp.sock' }
 };
 
-function providerById(id: string) {
-  const provider = harnessProviders.find((candidate) => candidate.id === id);
-  assert.ok(provider, `provider ${id} exists`);
-  return provider;
-}
-
-function assertOpenCodeTheme(tempDir: string): void {
-  const source = path.join(tempDir, 'theme-source');
-  const runtime = path.join(tempDir, 'theme-runtime');
-  fs.mkdirSync(path.join(source, 'themes'), { recursive: true });
-  const original = '{\n// Preferences\n"tabs":{"enabled":true},"theme":{"mode":"dark"},\n}';
-  fs.writeFileSync(path.join(source, 'cli.json'), original);
-  fs.writeFileSync(path.join(source, 'themes', 'custom.json'), '{}');
-  const target = prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  const cliPath = path.join(target, 'cli.json');
-  const initial = fs.readFileSync(cliPath, 'utf8');
-  assert.match(initial, /Preferences/);
-  assert.deepEqual(parse(initial), { tabs: { enabled: true }, theme: { mode: 'dark', name: 'patterm-opencode' } });
-  assert.equal(fs.readFileSync(path.join(source, 'cli.json'), 'utf8'), original);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, 'themes', 'patterm-opencode.json'), 'utf8')), openCodeTheme);
-
-  // Bundled palette changes refresh the generated theme; matching content is left alone.
-  const themePath = path.join(target, 'themes', 'patterm-opencode.json');
-  fs.writeFileSync(themePath, JSON.stringify({ defs: { darkStep2: '#101010' } }));
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  assert.deepEqual(JSON.parse(fs.readFileSync(themePath, 'utf8')), openCodeTheme, 'stale generated themes are refreshed');
-  const formattedTheme = `${JSON.stringify(openCodeTheme, null, 2)}\n`;
-  fs.writeFileSync(themePath, formattedTheme);
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  assert.equal(fs.readFileSync(themePath, 'utf8'), formattedTheme, 'matching generated themes are not rewritten');
-
-  // Native settings writes replace the file atomically. Keep that file on relaunch.
-  const saved = '{"tabs":{"enabled":false},"animations":false,"theme":{"name":"custom","mode":"light"}}';
-  fs.writeFileSync(`${cliPath}.tmp`, saved);
-  fs.renameSync(`${cliPath}.tmp`, cliPath);
-  const updatedSource = { tabs: { enabled: true, indicators: 'numbers' }, theme: { mode: 'dark' }, scroll: { speed: 3 }, plugins: ['new-plugin'] };
-  fs.writeFileSync(path.join(source, 'cli.json'), JSON.stringify(updatedSource));
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  assert.deepEqual(parse(fs.readFileSync(cliPath, 'utf8')), {
-    ...parse(saved), tabs: { enabled: false, indicators: 'numbers' }, scroll: { speed: 3 }, plugins: ['new-plugin']
-  }, 'new source settings merge with native saved settings, including sibling fields');
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  assert.equal(parse(fs.readFileSync(cliPath, 'utf8')).tabs.enabled, false, 'local settings survive repeated launches');
-  fs.writeFileSync(path.join(source, 'cli.json'), JSON.stringify({ ...updatedSource, scroll: { speed: 5 }, plugins: ['replacement-plugin'] }));
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  const synced = parse(fs.readFileSync(cliPath, 'utf8'));
-  assert.equal(synced.scroll.speed, 5, 'source edits propagate when the setting was not changed locally');
-  assert.deepEqual(synced.plugins, ['replacement-plugin'], 'unchanged arrays accept source updates');
-  fs.writeFileSync(path.join(source, 'cli.json'), '{"tabs":{"enabled":true},"theme":{"mode":"dark"}}');
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  const removed = parse(fs.readFileSync(cliPath, 'utf8'));
-  assert.equal(removed.scroll, undefined, 'source deletions remove unmodified settings');
-  assert.equal(removed.plugins, undefined);
-  assert.deepEqual(removed.tabs, { enabled: false }, 'source deletion of a sibling keeps the local preference');
-
-
-  // Local removals and array edits also survive source updates, without losing comments.
-  fs.writeFileSync(path.join(source, 'cli.json'), '{"tabs":{"enabled":true},"scroll":{"speed":2},"plugins":["source-plugin"]}');
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  const localText = '{"tabs": {\n// Keep this comment\n"enabled": false}, "plugins":["local-plugin"],"theme":{"name":"patterm-opencode"}}';
-  fs.writeFileSync(cliPath, localText);
-  fs.writeFileSync(path.join(source, 'cli.json'), '{"tabs":{"enabled":true,"indicators":"numbers"},"scroll":{"speed":7},"plugins":["updated-source-plugin"],"theme":{"name":"tokyonight"}}');
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  const localMerged = fs.readFileSync(cliPath, 'utf8');
-  assert.match(localMerged, /Keep this comment/, 'nested JSONC comments survive sibling updates');
-  assert.equal(parse(localMerged).scroll, undefined, 'locally deleted settings stay deleted');
-  assert.deepEqual(parse(localMerged).plugins, ['local-plugin'], 'local array edits win conflicts');
-  assert.equal(parse(localMerged).theme.name, 'tokyonight', 'new source themes propagate without a local theme override');
-  const beforeInvalidSource = fs.readFileSync(cliPath, 'utf8');
-  fs.writeFileSync(path.join(source, 'cli.json'), '{broken');
-  assert.throws(() => prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source }), /valid JSONC/);
-  assert.equal(fs.readFileSync(cliPath, 'utf8'), beforeInvalidSource, 'invalid source config cannot overwrite saved preferences');
-  fs.writeFileSync(path.join(source, 'cli.json'), '{}');
-
-  // Migrate the old forced system theme without resetting tabs or other settings.
-  const oldRuntime = path.join(tempDir, 'old-theme-runtime');
-  const oldTarget = path.join(oldRuntime, 'opencode-config');
-  fs.mkdirSync(oldTarget, { recursive: true });
-  fs.writeFileSync(path.join(oldTarget, 'cli.json'), '{"tabs":{"enabled":false},"theme":{"name":"system","mode":"dark"}}');
-  prepareOpenCodeTheme(oldRuntime, { OPENCODE_CONFIG_DIR: source });
-  assert.deepEqual(parse(fs.readFileSync(path.join(oldTarget, 'cli.json'), 'utf8')), { tabs: { enabled: false }, theme: { name: 'patterm-opencode', mode: 'dark' } });
-  fs.writeFileSync(cliPath, '{broken');
-  assert.throws(() => prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source }), /valid JSONC/);
-  assert.equal(fs.readFileSync(cliPath, 'utf8'), '{broken', 'invalid saved preferences are never overwritten');
-}
-
-function assertProviderPlans(runtimeDir: string): void {
-  // Claude: MCP config file behind --mcp-config, socket lives in the file.
-  const claude = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: MCP, runtimeDir });
-  assert.equal(claude.command, '/usr/bin/claude');
-  assert.deepEqual(claude.env, {});
-  assert.deepEqual(claude.args.slice(0, 3), ['--permission-mode', 'auto', '--mcp-config']);
-  assert.equal(claude.args[3], path.join(runtimeDir, 'claude-mcp-patterm.json'));
-  const identified = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: { ...MCP, env: { ...MCP.env, PATTERM_MCP_IDENTITY: 'mcp_1' } }, runtimeDir });
-  assert.equal(identified.args[3], path.join(runtimeDir, 'claude-mcp-mcp_1.json'), 'each Claude launch gets its own MCP config');
-  assert.equal(claude.files.length, 1);
-  const claudeConfig = JSON.parse(claude.files[0]!.contents) as {
-    mcpServers: { patterm: { command: string; args: string[]; env: Record<string, string> } };
-  };
-  assert.equal(claudeConfig.mcpServers.patterm.command, '/opt/electron');
-  assert.deepEqual(claudeConfig.mcpServers.patterm.args, ['/app/dist/mcp/patterm-mcp.js']);
-  assert.equal(claudeConfig.mcpServers.patterm.env.PATTERM_MCP_SOCKET, '/run/mcp.sock');
-  const claudeWithContext = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: MCP, runtimeDir, agentContext: 'Agent startup context' });
-  assert.ok(claudeWithContext.agentContextInjected, 'claude reports agent context injection');
-  if (process.platform === 'win32') {
-    const contextPath = path.join(runtimeDir, 'claude-context-patterm.md');
-    assert.deepEqual(claudeWithContext.args.slice(-2), ['--append-system-prompt-file', contextPath], 'Windows keeps the context off the command line');
-    assert.deepEqual(claudeWithContext.files.find((file) => file.path === contextPath)?.contents, 'Agent startup context');
-  } else {
-    assert.deepEqual(
-      claudeWithContext.args.slice(-2),
-      ['--append-system-prompt', 'Agent startup context'],
-      'claude appends agent context to the system prompt'
-    );
-  }
-  const resumedClaude = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: MCP, runtimeDir, resumeId: 'claude_resume_test' });
-  assert.deepEqual(resumedClaude.args.slice(-2), ['--resume', 'claude_resume_test'], 'claude resumes the exact provider conversation');
-
-  // Codex: repeated -c TOML overrides, no files, no env.
-  const codex = providerById('codex').buildLaunch({ executablePath: '/usr/bin/codex', mcp: MCP, runtimeDir, agentContext: 'Agent startup context\nwith "quotes"' });
-  assert.deepEqual(codex.env, { PATTERM_MCP_PROXY: 'patterm-managed' });
-  assert.equal(codex.files.length, 0);
-  assert.ok(codex.args.includes('mcp_servers.patterm.command="/opt/electron"'), 'codex sets mcp command via -c');
-  assert.ok(
-    codex.args.includes('mcp_servers.patterm.env.PATTERM_MCP_SOCKET="/run/mcp.sock"'),
-    'codex passes socket via -c env override'
-  );
-  assert.ok(codex.args.includes('developer_instructions="Agent startup context\\nwith \\"quotes\\""'), 'codex injects multiline agent context as developer instructions');
-  assert.ok(codex.agentContextInjected, 'codex reports agent context injection');
-  const resumedCodex = providerById('codex').buildLaunch({ executablePath: '/usr/bin/codex', mcp: MCP, runtimeDir, resumeId: 'codex_resume_test' });
-  assert.equal(resumedCodex.args[0], 'resume', 'codex uses the resume subcommand');
-  assert.equal(resumedCodex.args.at(-1), 'codex_resume_test', 'codex passes the exact session id');
-  assert.ok(resumedCodex.args.includes('mcp_servers.patterm.command="/opt/electron"'), 'codex resume keeps MCP injection');
-
-  for (const plan of [codex, resumedCodex]) {
-    assert.ok(plan.args.includes('approval_policy="on-request"'), 'Codex enables approval requests');
-    assert.ok(plan.args.includes('approvals_reviewer="auto_review"'), 'Codex routes eligible approvals to auto-review');
-  }
-
-  // OpenCode attaches to a session prepared through the shared-server API.
-  const opencode = providerById('opencode').buildLaunch({ executablePath: '/usr/bin/opencode', mcp: MCP, runtimeDir, agentContext: 'Agent startup context' });
-  assert.deepEqual(opencode.args, []);
-  assert.deepEqual(opencode.env, {}, 'shared-server config is not injected into the TUI environment');
-  assert.deepEqual(opencode.files, []);
-  assert.deepEqual(providerById('opencode').executableCandidates, ['opencode']);
-  const resumedOpenCode = providerById('opencode').buildLaunch({ executablePath: '/usr/bin/opencode', mcp: MCP, runtimeDir, resumeId: 'opencode_resume_test' });
-  assert.deepEqual(resumedOpenCode.args, ['--session', 'opencode_resume_test'], 'opencode resumes the exact session');
-
-  // RawPty: bare shell, no injection.
-  const raw = providerById('rawpty').buildLaunch({ executablePath: '/bin/zsh', mcp: MCP, runtimeDir });
-  assert.deepEqual(raw, { command: '/bin/zsh', args: [], env: {}, files: [] });
-  assert.throws(
-    () => providerById('rawpty').buildLaunch({ executablePath: '/bin/zsh', mcp: MCP, runtimeDir, resumeId: 'raw_resume_test' }),
-    /cannot be resumed/
-  );
-}
-
 async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-launch-'));
   const runtimeDir = path.join(tempDir, 'harness');
   const shimPath = path.join(tempDir, 'patterm-mcp.js');
 
   try {
-    assertProviderPlans(runtimeDir);
-    assertOpenCodeTheme(tempDir);
     fs.writeFileSync(shimPath, '');
 
     const database = new DatabaseService(tempDir);
@@ -226,8 +63,6 @@ async function main(): Promise<void> {
          values ('proc_1', ?, 'agent', 'Old Claude', 'exited', ?, '[]', ?, ?)`
       )
       .run(projectId, projectPath, now, now);
-
-
 
     database.connection
       .prepare(
@@ -267,21 +102,21 @@ async function main(): Promise<void> {
     const repo = new WorkbenchRepository(database);
 
     const terminalRequests: Array<{ method: string; params: Record<string, unknown> }> = [];
-    let nextProcessNumber = 1;
     const terminal: SpawnSink = {
       request: async (method, params) => {
         terminalRequests.push({ method, params: params as Record<string, unknown> });
-        if (method === 'terminal.process.spawn') {
-          return { process_id: `proc_${nextProcessNumber++}` };
-        }
-        if (method === 'terminal.process.output') {
-          return { process_id: (params as { process_id?: string }).process_id, status: 'running', lines: ['codex ready'] };
-        }
         return { ok: true };
       }
     };
 
-    let openInstruction = '';
+    const preparedCalls: Array<{
+      harness: string;
+      cwd: string;
+      context: string;
+      resumeId?: string;
+      reconnectMcp?: boolean;
+      restoreSavedSettings?: boolean;
+    }> = [];
     const integratedPrompts: Array<{ processId: string; text: string; context?: string }> = [];
     const stoppedIntegrated: string[] = [];
     const observedIntegrated: string[] = [];
@@ -294,66 +129,56 @@ async function main(): Promise<void> {
     const reconnectedMcp: boolean[] = [];
     const restoredControls: boolean[] = [];
     const integratedService = {
-      prepare: async (_harness: 'claude' | 'codex' | 'opencode', input: { context: string; mcp: { env: Record<string, string> }; reconnectMcp?: boolean; restoreSavedSettings?: boolean }) => {
+      prepare: async (
+        harness: 'claude' | 'codex' | 'opencode' | 'agy',
+        input: { cwd: string; context: string; resumeId?: string | null; mcp: { env: Record<string, string> }; reconnectMcp?: boolean; restoreSavedSettings?: boolean }
+      ) => {
         reconnectedMcp.push(input.reconnectMcp === true);
         restoredControls.push(input.restoreSavedSettings === true);
         helperHarnesses.push(helperAccess.harness({ identity: input.mcp.env.PATTERM_MCP_IDENTITY!, opencodeBridge: undefined })!);
-        openInstruction = input.context; return { resumeId: 'ses_prepared', argv: ['/usr/bin/opencode'] }; },
+        preparedCalls.push({
+          harness,
+          cwd: input.cwd,
+          context: input.context,
+          ...(input.resumeId ? { resumeId: input.resumeId } : {}),
+          ...(input.reconnectMcp !== undefined ? { reconnectMcp: input.reconnectMcp } : {}),
+          ...(input.restoreSavedSettings !== undefined ? { restoreSavedSettings: input.restoreSavedSettings } : {})
+        });
+        return { resumeId: input.resumeId ?? 'ses_prepared', argv: [`/usr/bin/${harness}`] };
+      },
       prompt: async (processId: string, text: string, context?: string) => {
         assert.ok(observedIntegrated.includes(processId), 'an Integrated agent is observed before its first prompt');
         integratedPrompts.push({ processId, text, ...(context ? { context } : {}) });
         if (failIntegratedPrompt) throw new Error('Initial prompt failed');
-        return { id: 'msg_test', admittedSeq: 1 };
+        return { delivery: 'accepted' as const, id: 'msg_test', admittedSeq: 1 };
       },
       stop: async (processId: string) => { stoppedIntegrated.push(processId); },
       observe: (processId: string) => { observedIntegrated.push(processId); },
       cleanupLaunch: async () => undefined
     };
     const launcher = new HarnessLauncher({
-      settings: { agentInterface: () => 'tui', figuresEnabled: () => true },
-      openCodeServer: {
-        prepare: async (input) => { openInstruction = input.context; return { resumeId: 'ses_prepared', argv: ['/usr/bin/opencode'] }; }
-      },
+      settings: { figuresEnabled: () => true },
       integrated: integratedService,
       launchingIdentities,
       database,
       timeline,
-      terminal,
       workbench: repo,
       providers: harnessProviders,
       nodePath: MCP.command,
       shimPath,
       socketPath: MCP.env.PATTERM_MCP_SOCKET!,
-      runtimeDir,
-      inheritedPath: '/usr/bin'
+      runtimeDir
     });
 
-    // Old configs of exited Claude agents are removed; recent ones may belong
-    // to a launch that hasn't registered yet.
-    fs.mkdirSync(runtimeDir, { recursive: true });
-    const staleConfig = path.join(runtimeDir, 'claude-mcp-mcp_00000000-0000-4000-8000-000000000001.json');
-    const recentConfig = path.join(runtimeDir, 'claude-mcp-mcp_00000000-0000-4000-8000-000000000002.json');
-    const staleContext = path.join(runtimeDir, 'claude-context-mcp_00000000-0000-4000-8000-000000000001.md');
-    fs.writeFileSync(staleConfig, '{}');
-    fs.writeFileSync(recentConfig, '{}');
-    fs.writeFileSync(staleContext, 'context');
-    const hourAgo = new Date(Date.now() - 60 * 60_000);
-    fs.utimesSync(staleConfig, hourAgo, hourAgo);
-    fs.utimesSync(staleContext, hourAgo, hourAgo);
-
-    // Launch Claude: spawn carries the resolved plan; a session row is written.
+    // Launch Claude: prepares through Integrated and records a session row.
     const launched = await launcher.launch({ harness: 'claude', project_id: projectId, actor_id: null });
-    assert.equal(fs.existsSync(staleConfig), false, 'stale Claude MCP configs are removed');
-    assert.equal(fs.existsSync(staleContext), false, 'stale Claude context files are removed');
-    assert.equal(fs.existsSync(recentConfig), true, 'recent Claude MCP configs are kept');
+    assert.deepEqual(helperHarnesses, ['claude'], 'helpers started while preparing are recognised before the session is registered');
     assert.equal(launched.process_id, 'process_1');
-    assert.equal(launched.pty_process_id, 'proc_1');
-    const spawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    assert.equal(spawn.command, '/usr/bin/claude');
-    assert.equal(spawn.kind, 'agent');
-    assert.equal(spawn.cwd, projectPath, 'cwd defaults to the project path');
-    assert.ok(Array.isArray(spawn.args) && (spawn.args as string[]).includes('--mcp-config'));
-    const projectContext = claudeAppendSystemPrompt(spawn.args as string[]);
+    assert.equal(terminalRequests.length, 0, 'agent launch does not create a PTY');
+    const firstPrepare = preparedCalls.at(-1)!;
+    assert.equal(firstPrepare.harness, 'claude');
+    assert.equal(firstPrepare.cwd, projectPath, 'cwd defaults to the project path');
+    const projectContext = firstPrepare.context;
     assert.match(projectContext, new RegExp(`Project: ${projectId}`), 'project-level claude receives project identity');
     assert.match(projectContext, /Orient with get_project_status/, 'project-level claude receives an orientation pointer');
     assert.match(projectContext, /Agent-facing tools are available directly; use help/, 'project-level claude receives direct tool guidance');
@@ -367,72 +192,27 @@ async function main(): Promise<void> {
     assert.match(projectContext, /never invent labels from IDs/, 'project-level claude keeps exact process names');
     assert.match(projectContext, /call request_close with a short summary/, 'project-level claude learns when to ask to be closed');
     assert.match(projectContext, /status_set/, 'project-level claude learns to pin a status label while it waits');
+    assert.match(projectContext, /call html_render \(load them through tool search/, 'Integrated agents learn to show pages with html_render');
     // Far under OpenCode's 8 KiB instruction cap, which also holds memory.
-    assert.ok(projectContext.length < 2300, 'project-level context stays compact');
-    assert.doesNotMatch(projectContext, /html_render/, 'TUI agents are not offered figures');
-    const claudeConfigPath = (spawn.args as string[])[3]!;
-    assert.match(path.basename(claudeConfigPath), CLAUDE_MCP_CONFIG, 'claude mcp config is named for its launch');
-    assert.equal(path.dirname(claudeConfigPath), runtimeDir, 'claude mcp config written to runtime dir');
-    const claudeConfig = JSON.parse(fs.readFileSync(claudeConfigPath, 'utf8')) as {
-      mcpServers: { patterm: { env: Record<string, string> } };
-    };
-    assert.ok(claudeConfig.mcpServers.patterm.env.PATTERM_MCP_IDENTITY, 'claude mcp config carries a per-session identity');
-    assert.equal(path.basename(claudeConfigPath), `claude-mcp-${claudeConfig.mcpServers.patterm.env.PATTERM_MCP_IDENTITY}.json`);
-    const opener = path.join(runtimeDir, 'bin', 'xdg-open');
-    const spawnEnv = spawn.env as Record<string, string>;
-    const agentIdentity = claudeConfig.mcpServers.patterm.env.PATTERM_MCP_IDENTITY!;
-    assert.equal(spawnEnv.PATTERM_MCP_IDENTITY, undefined, 'nested MCP shims do not inherit the agent identity');
-    if (process.platform === 'win32') {
-      // Windows CLIs open links through the shell, never xdg-open.
-      assert.deepEqual(spawnEnv, {}, 'Windows agents get no xdg-open shim');
-      assert.equal(fs.existsSync(opener), false);
-    } else {
-      assert.equal(spawnEnv.PATH, `${path.dirname(opener)}:/usr/bin`, 'the xdg-open shim precedes the inherited PATH');
-      assert.equal(spawnEnv.BROWSER, opener);
-      assert.equal(spawnEnv.PATTERM_TERMINAL_IDENTITY, agentIdentity, 'the opener reports as the agent session');
-      assert.ok(fs.statSync(opener).mode & 0o100, 'the xdg-open shim is executable');
-      // Stand-ins for the shim and the system opener show which path each target takes.
-      const fakeBin = path.join(tempDir, 'system-bin');
-      fs.mkdirSync(fakeBin);
-      fs.writeFileSync(path.join(fakeBin, 'xdg-open'), '#!/bin/sh\necho "system $*"\n', { mode: 0o700 });
-      const fakeShim = path.join(tempDir, 'fake-shim.sh');
-      fs.writeFileSync(fakeShim, 'echo "patterm $PATTERM_MCP_SOCKET $PATTERM_MCP_IDENTITY $*"\n');
-      const fakeOpener = fs.readFileSync(opener, 'utf8')
-        .replace(`'${MCP.command}' '${shimPath}'`, `/bin/sh '${fakeShim}'`)
-        .replace(`PATH='/usr/bin'`, `PATH='${fakeBin}'`);
-      const fakeOpenerPath = path.join(tempDir, 'xdg-open-test');
-      fs.writeFileSync(fakeOpenerPath, fakeOpener, { mode: 0o700 });
-      const runOpener = (target: string) => execFileSync(fakeOpenerPath, [target], { env: { PATTERM_TERMINAL_IDENTITY: 'mcp_x' }, encoding: 'utf8' }).trim();
-      assert.equal(runOpener('https://example.com/pulls/87'), `patterm ${MCP.env.PATTERM_MCP_SOCKET} mcp_x --open https://example.com/pulls/87`);
-      assert.equal(runOpener('/tmp/report.pdf'), 'system /tmp/report.pdf', 'files still go to the system opener');
-    }
-    const clientRequests = new TerminalClientRequestService();
-    const delivered: TerminalClientRequest[] = [];
-    clientRequests.on((request) => delivered.push(request));
-    const openUrl = new OpenExternalUrlAction(database, clientRequests);
-    openUrl.execute({ identity: agentIdentity, url: 'https://example.com/pulls/87' });
-    assert.deepEqual(delivered, [{ kind: 'open-url', processId: 'proc_1', url: 'https://example.com/pulls/87' }], 'links open on the client controlling the agent PTY');
-    assert.throws(() => openUrl.execute({ identity: agentIdentity, url: 'file:///etc/passwd' }), /does not open file: links/);
-    assert.throws(() => openUrl.execute({ identity: 'mcp_unknown', url: 'https://example.com' }), /not a running Patterm terminal/);
-    assert.equal(delivered.length, 1);
+    assert.ok(projectContext.length < 2700, 'project-level context stays compact');
 
     const sessionRow = database.connection
-      .prepare(`select harness, session_role, process_id, resume_status, cwd, mcp_identity, last_title from sessions where id = ?`)
+      .prepare(`select harness, session_role, process_id, resume_status, cwd, mcp_identity, last_title, interface_mode from sessions where id = ?`)
       .get(launched.session_id) as SessionRow | undefined;
     assert.equal(sessionRow?.harness, 'claude');
     assert.equal(sessionRow?.session_role, 'orchestrator');
     assert.equal(sessionRow?.process_id, 'process_1');
-    assert.equal(sessionRow?.resume_status, 'unknown');
+    assert.equal(sessionRow?.resume_status, 'found');
     assert.equal(sessionRow?.cwd, projectPath);
     assert.equal(sessionRow?.last_title, 'Claude Code');
+    assert.equal(sessionRow?.interface_mode, 'integrated');
     assert.ok(sessionRow?.mcp_identity, 'session stores MCP identity');
     const processRow = database.connection
       .prepare(`select pty_process_id from processes where id = ?`)
       .get(launched.process_id) as { pty_process_id: string | null } | undefined;
-    assert.equal(processRow?.pty_process_id, 'proc_1', 'agent stores the reused sidecar id only as the live PTY handle');
+    assert.equal(processRow?.pty_process_id, null, 'Integrated agents have no PTY handle');
     const launchedSession = repo.snapshot().projects[0]?.projectSessions.find((session) => session.id === launched.session_id);
     assert.equal(launchedSession?.processId, 'process_1', 'workbench exposes stable session process row id');
-    assert.equal(launchedSession?.ptyProcessId, 'proc_1', 'workbench exposes live PTY id for terminal focus');
 
     const namedLaunch = await launcher.launch({ harness: 'claude', project_id: projectId, name: 'API Reviewer' });
     const namedSessionRow = database.connection
@@ -441,13 +221,11 @@ async function main(): Promise<void> {
     const namedProcessRow = database.connection
       .prepare(`select name from processes where id = ?`)
       .get(namedLaunch.process_id) as { name: string } | undefined;
-    assert.equal(lastRequest(terminalRequests, 'terminal.process.spawn').name, 'API Reviewer');
     assert.equal(namedSessionRow?.last_title, 'API Reviewer');
     assert.equal(namedProcessRow?.name, 'API Reviewer');
 
     const promptLaunch = await launcher.launch({ harness: 'claude', project_id: projectId, initial_prompt: 'Do the next step.' });
-    const promptSpawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    const promptContext = claudeAppendSystemPrompt(promptSpawn.args as string[]);
+    const promptContext = preparedCalls.at(-1)!.context;
     assert.match(promptContext, new RegExp(`Project: ${projectId}`), 'project-scoped claude receives project identity');
     for (const sentinel of [
       'worktree-sentinel-should-not-load',
@@ -456,71 +234,35 @@ async function main(): Promise<void> {
     ]) {
       assert.ok(!promptContext.includes(sentinel), `${sentinel} is not loaded into launch context`);
     }
-    assert.ok(promptContext.length < 2300, 'project-scoped context stays compact');
-    await waitFor(
-      async () => terminalRequests.filter((request) => request.method === 'terminal.process.input' && (request.params as { process_id?: string }).process_id === promptLaunch.pty_process_id).length >= 1,
-      'project-scoped launch receives explicit initial prompt'
+    assert.ok(promptContext.length < 2700, 'project-scoped context stays compact');
+    assert.deepEqual(
+      { processId: integratedPrompts.at(-1)?.processId, text: integratedPrompts.at(-1)?.text },
+      { processId: promptLaunch.process_id, text: 'Do the next step.' }
     );
-    const promptInputRequests = terminalRequests.filter(
-      (request) => request.method === 'terminal.process.input' && (request.params as { process_id?: string }).process_id === promptLaunch.pty_process_id
-    );
-    assert.deepEqual(promptInputRequests[0]?.params, {
-      process_id: promptLaunch.pty_process_id,
-      kind: 'paste',
-      text: 'Do the next step.',
-      submit: true
-    });
 
     const startedEvents = database.connection
       .prepare(`select count(*) as n from timeline_events where event_type = 'session.started'`)
       .get() as { n: number };
     assert.equal(startedEvents.n, 3, 'session.started recorded on timeline');
 
-    // Launch OpenCode: attach to the session prepared by the shared-server service.
-    const inputCountBeforeOpenCode = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
-    const previousConfigDir = process.env.OPENCODE_CONFIG_DIR;
-    const configDir = path.join(tempDir, 'launch-config');
-    fs.mkdirSync(configDir);
-    const preferences = JSON.stringify({ tabs: { enabled: false }, theme: { name: 'tokyonight', mode: 'dark' } });
-    fs.writeFileSync(path.join(configDir, 'cli.json'), preferences);
-    process.env.OPENCODE_CONFIG_DIR = configDir;
-    try { await launcher.launch({ harness: 'opencode', project_id: projectId }); }
-    finally {
-      if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
-      else process.env.OPENCODE_CONFIG_DIR = previousConfigDir;
-    }
-    const openSpawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    assert.equal((openSpawn.env as Record<string, string>).OPENCODE_CONFIG_DIR, path.join(runtimeDir, 'opencode-config'));
-    assert.equal(fs.readFileSync(path.join(configDir, 'cli.json'), 'utf8'), preferences, 'launch preserves saved tabs and theme preferences');
-    assert.equal(parse(fs.readFileSync(path.join(runtimeDir, 'opencode-config', 'cli.json'), 'utf8')).theme.name, 'tokyonight', 'a chosen native theme remains selected');
-    assert.deepEqual(openSpawn.args, ['--session', 'ses_prepared']);
-    assert.equal(openSpawn.command, '/usr/bin/opencode');
-    const storedOpenCode = database.connection.prepare(`select resume_id from sessions where harness = 'opencode'`).get() as { resume_id: string };
+    // Launch OpenCode through Integrated.
+    const openCode = await launcher.launch({ harness: 'opencode', project_id: projectId, initial_prompt: 'Use Integrated mode.' });
+    const openInstruction = preparedCalls.at(-1)!.context;
+    assert.match(openInstruction, new RegExp(`Project: ${projectId}`), 'opencode instruction includes project identity');
+    assert.match(openInstruction, /replace unavailable host-native subagents/, 'opencode instruction blocks Patterm as a host-subagent fallback');
+    assert.doesNotMatch(openInstruction, /worktree-sentinel-should-not-load/, 'opencode instruction excludes worktrees');
+    const storedOpenCode = database.connection.prepare(`select resume_id, interface_mode from sessions where id = ?`).get(openCode.session_id) as { resume_id: string; interface_mode: string };
     assert.equal(storedOpenCode.resume_id, 'ses_prepared', 'session identity is stored before model work begins');
-    assert.match(openInstruction, new RegExp(`Project: ${projectId}`), 'opencode instruction file includes project identity');
-    assert.match(openInstruction, /replace unavailable host-native subagents/, 'opencode instruction file blocks Patterm as a host-subagent fallback');
-    assert.doesNotMatch(openInstruction, /worktree-sentinel-should-not-load/, 'opencode instruction file excludes worktrees');
-    assert.equal(
-      terminalRequests.filter((request) => request.method === 'terminal.process.input').length,
-      inputCountBeforeOpenCode,
-      'opencode project context without explicit prompt is not sent through terminal input'
+    assert.equal(storedOpenCode.interface_mode, 'integrated');
+    assert.deepEqual(
+      { processId: integratedPrompts.at(-1)?.processId, text: integratedPrompts.at(-1)?.text },
+      { processId: openCode.process_id, text: 'Use Integrated mode.' }
     );
 
-    const spawnCountBeforeIntegrated = terminalRequests.filter((request) => request.method === 'terminal.process.spawn').length;
-    const integrated = await launcher.launch({ harness: 'opencode', project_id: projectId, interface_mode: 'integrated', initial_prompt: 'Use Integrated mode.' });
-    assert.deepEqual(helperHarnesses, ['opencode'], 'helpers started while preparing are recognised before the session is registered');
-    assert.equal(integrated.pty_process_id, null);
-    assert.equal(integrated.interface_mode, 'integrated');
-    assert.match(openInstruction, /call html_render \(load them through tool search/, 'Integrated agents learn to show pages with html_render');
-    assert.equal(terminalRequests.filter((request) => request.method === 'terminal.process.spawn').length, spawnCountBeforeIntegrated, 'Integrated launch does not create a PTY');
-    const integratedRow = database.connection.prepare(`select interface_mode from sessions where id = ?`).get(integrated.session_id) as { interface_mode: string };
-    assert.equal(integratedRow.interface_mode, 'integrated');
-    assert.equal(repo.snapshot().projects[0]?.projectSessions.find((session) => session.id === integrated.session_id)?.ptyProcessId, null);
-    assert.deepEqual(integratedPrompts.map(({ processId, text }) => ({ processId, text })), [{ processId: integrated.process_id, text: 'Use Integrated mode.' }]);
-
     failIntegratedPrompt = true;
-    await assert.rejects(launcher.launch({ harness: 'opencode', project_id: projectId, interface_mode: 'integrated', initial_prompt: 'Fail this prompt.' }), /Initial prompt failed/);
+    await assert.rejects(launcher.launch({ harness: 'opencode', project_id: projectId, initial_prompt: 'Fail this prompt.' }), /Initial prompt failed/);
     assert.equal(stoppedIntegrated.length, 1, 'failed initial submission stops its native Integrated runtime');
+    failIntegratedPrompt = false;
 
     // A harness that was never discovered cannot be launched.
     await assert.rejects(launcher.launch({ harness: 'codex', project_id: projectId }), /not available/);
@@ -528,9 +270,9 @@ async function main(): Promise<void> {
     const missingShimLauncher = new HarnessLauncher({
       database,
       timeline,
-      terminal,
       workbench: repo,
       providers: harnessProviders,
+      integrated: integratedService,
       nodePath: MCP.command,
       shimPath: path.join(tempDir, 'missing-mcp-shim.js'),
       socketPath: MCP.env.PATTERM_MCP_SOCKET!,
@@ -550,16 +292,17 @@ async function main(): Promise<void> {
       timeline,
       workbench: repo,
       harnessDiscovery,
-      harnessLauncher: launcher
+      harnessLauncher: launcher,
+      integrated: integratedService as never
     });
     const viaRegistry = (await registry.call('harness_launch', {
       harness: 'claude',
       project_id: projectId
-    })) as { session_id: string; pty_process_id: string };
+    })) as { session_id: string; process_id: string };
     assert.ok(viaRegistry.session_id, 'registry launch returns a session id');
-    assert.ok(viaRegistry.pty_process_id.startsWith('proc_'), 'registry launch returns the live PTY id for focus');
+    assert.ok(viaRegistry.process_id.startsWith('process_'), 'registry launch returns the process id');
 
-    const inputCountBeforeSpawnAgent = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
+    const promptCountBeforeSpawnAgent = integratedPrompts.length;
     const spawnedAgent = (await registry.call('spawn_agent', {
       agent: 'claude',
       name: 'Docs Agent',
@@ -571,12 +314,29 @@ async function main(): Promise<void> {
       .prepare(`select last_title, display_name from sessions where process_id = ?`)
       .get(spawnedAgent.process_id) as { last_title: string | null; display_name: string | null } | undefined;
     assert.equal(spawnedAgentSession?.last_title, 'Docs Agent', 'CLI spawn_agent persists the requested name');
-    assert.equal(spawnedAgentSession?.display_name, 'Docs Agent', 'CLI spawn_agent keeps the requested name separate from terminal titles');
+    assert.equal(spawnedAgentSession?.display_name, 'Docs Agent', 'CLI spawn_agent keeps the requested name separate from titles');
     database.connection.prepare(`update sessions set last_title = 'claude' where process_id = ?`).run(spawnedAgent.process_id);
     const spawnedAgentSnapshot = repo.snapshot().projects
       .flatMap((project) => [...project.projectSessions])
       .find((session) => session.processId === spawnedAgent.process_id);
-    assert.equal(spawnedAgentSnapshot?.displayName ?? spawnedAgentSnapshot?.lastTitle, 'Docs Agent', 'CLI spawn_agent name remains the UI label after a terminal title update');
+    assert.equal(spawnedAgentSnapshot?.displayName ?? spawnedAgentSnapshot?.lastTitle, 'Docs Agent', 'CLI spawn_agent name remains the UI label after a title update');
+    assert.deepEqual(
+      { processId: integratedPrompts[promptCountBeforeSpawnAgent]?.processId, text: integratedPrompts[promptCountBeforeSpawnAgent]?.text },
+      {
+        processId: spawnedAgent.process_id,
+        text: 'Review the docs\n\nThen report risks\nCheck examples\n\nWhen this delegated work is done, blocked, failed, or has no findings, call report_to_parent with your result. Do not rely on terminal idle or get_process_output as the completion signal. Stay available after reporting: your parent may send follow-ups, such as re-reviewing fixes, and you should report again after each one.'
+      }
+    );
+
+    await registry.call('send_input', { process_id: spawnedAgent.process_id, kind: 'paste', text: 'follow-up\nmessage', submit: true });
+    assert.deepEqual(
+      { processId: integratedPrompts.at(-1)?.processId, text: integratedPrompts.at(-1)?.text },
+      {
+        processId: spawnedAgent.process_id,
+        text: 'follow-up\nmessage'
+      }
+    );
+
     const parentIdentity = database.connection
       .prepare(`select mcp_identity from sessions where id = ?`)
       .get(promptLaunch.session_id) as { mcp_identity: string | null } | undefined;
@@ -632,7 +392,8 @@ async function main(): Promise<void> {
       workbench: repo,
       harnessDiscovery,
       harnessLauncher: launcher,
-      historyReadService
+      historyReadService,
+      integrated: integratedService as never
     });
     await assert.rejects(
       resumeRegistry.call('spawn_agent', { conversation_id: 'conversation_resume', agent: 'claude' }, { identity: parentIdentity.mcp_identity }),
@@ -664,9 +425,10 @@ async function main(): Promise<void> {
       prompt: 'Continue the prior work'
     }, { identity: parentIdentity.mcp_identity })) as { process_id: string; name: string };
     assert.equal(resumedAgent.name, 'Prior Claude conversation', 'resume uses the imported conversation title');
-    const resumeSpawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    assert.equal(resumeSpawn.cwd, path.join(tempDir, 'worktree'), 'resume uses the recorded conversation cwd');
-    assert.deepEqual((resumeSpawn.args as string[]).slice(-2), ['--resume', 'claude_resume_existing'], 'resume launches the exact provider conversation');
+    const resumePrepare = preparedCalls.at(-1)!;
+    assert.equal(resumePrepare.cwd, path.join(tempDir, 'worktree'), 'resume uses the recorded conversation cwd');
+    assert.equal(resumePrepare.resumeId, 'claude_resume_existing', 'resume launches the exact provider conversation');
+    assert.match(integratedPrompts.at(-1)!.text, /^Continue the prior work/);
     const resumedSession = database.connection.prepare(`
       select sessions.resume_id, sessions.resume_status, sessions.worktree_id, sessions.session_role,
         processes.parent_process_id
@@ -694,50 +456,46 @@ async function main(): Promise<void> {
       new RegExp(`already has a running Patterm agent: ${resumedAgent.process_id}`),
       'resume rejects a duplicate live Patterm process and identifies it'
     );
-    const concurrentSpawnCount = terminalRequests.filter((request) => request.method === 'terminal.process.spawn').length;
+    const concurrentPrepareCount = preparedCalls.length;
     const concurrent = await Promise.allSettled([
       resumeRegistry.call('spawn_agent', { conversation_id: 'conversation_concurrent' }, { identity: parentIdentity.mcp_identity }),
       resumeRegistry.call('spawn_agent', { conversation_id: 'conversation_concurrent' }, { identity: parentIdentity.mcp_identity })
     ]);
     assert.equal(concurrent.filter((result) => result.status === 'fulfilled').length, 1, 'one concurrent resume succeeds');
     assert.equal(concurrent.filter((result) => result.status === 'rejected').length, 1, 'one concurrent resume is rejected');
-    assert.equal(
-      terminalRequests.filter((request) => request.method === 'terminal.process.spawn').length,
-      concurrentSpawnCount + 1,
-      'concurrent resume requests create one PTY'
-    );
+    assert.equal(preparedCalls.length, concurrentPrepareCount + 1, 'concurrent resume requests prepare one agent');
     await assert.rejects(
       resumeRegistry.call('history_resume', { conversation_id: 'conversation_user' }, { identity: parentIdentity.mcp_identity }),
       /agents resume with spawn_agent/,
       'agents cannot start top-level resumes'
     );
-    const userResume = (await resumeRegistry.call('history_resume', { conversation_id: 'conversation_user', project_id: projectId, interface_mode: 'tui' }, {})) as { process_id: string; replaced_process_id: string | null };
+    const userResume = (await resumeRegistry.call('history_resume', { conversation_id: 'conversation_user', project_id: projectId }, {})) as { process_id: string; replaced_process_id: string | null };
     assert.equal(userResume.replaced_process_id, null);
     assert.deepEqual(database.connection.prepare(`
       select sessions.session_role, sessions.interface_mode, processes.parent_process_id
       from sessions join processes on processes.id = sessions.process_id where sessions.process_id = ?
-    `).get(userResume.process_id), { session_role: 'orchestrator', interface_mode: 'tui', parent_process_id: null }, 'a user resume is a top-level session in the chosen mode');
+    `).get(userResume.process_id), { session_role: 'orchestrator', interface_mode: 'integrated', parent_process_id: null }, 'a user resume is a top-level Integrated session');
 
     // Replacement closes only an empty, running Integrated tab in the project.
-    const emptyTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
-    const busyTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const emptyTab = await launcher.launch({ harness: 'claude', project_id: projectId });
+    const busyTab = await launcher.launch({ harness: 'claude', project_id: projectId });
     const closed: string[] = [];
     const replacingResume = new ResumeConversationAgentAction(database, historyReadService, launcher, {
       integrated: { isEmpty: async (processId: string) => processId === emptyTab.process_id },
       closeProcess: { execute: async (processId: string) => { closed.push(processId); return { closed: [processId] }; } }
     });
-    const kept = await replacingResume.execute({ conversation_id: 'conversation_keep', project_id: projectId, interface_mode: 'integrated', replace_process_id: busyTab.process_id });
+    const kept = await replacingResume.execute({ conversation_id: 'conversation_keep', project_id: projectId, replace_process_id: busyTab.process_id });
     assert.equal(kept.replaced_process_id, null, 'a tab with a conversation stays open');
-    const replaced = await replacingResume.execute({ conversation_id: 'conversation_replace', project_id: projectId, interface_mode: 'integrated', replace_process_id: emptyTab.process_id });
+    const replaced = await replacingResume.execute({ conversation_id: 'conversation_replace', project_id: projectId, replace_process_id: emptyTab.process_id });
     assert.equal(replaced.replaced_process_id, emptyTab.process_id, 'an empty tab is replaced');
     assert.deepEqual(closed, [emptyTab.process_id]);
 
     // A conversation resumes linked to the worktree it is in now, never to a
     // recorded one it has moved out of.
-    const movedRoot = await replacingResume.execute({ conversation_id: 'conversation_moved_root', project_id: projectId, interface_mode: 'tui' });
+    const movedRoot = await replacingResume.execute({ conversation_id: 'conversation_moved_root', project_id: projectId });
     assert.equal((database.connection.prepare('select worktree_id from sessions where id = ?').get(movedRoot.session_id) as { worktree_id: string | null }).worktree_id, null,
       'a conversation that moved to an unregistered directory has no worktree');
-    const movedWorktree = await replacingResume.execute({ conversation_id: 'conversation_moved_worktree', project_id: projectId, interface_mode: 'tui' });
+    const movedWorktree = await replacingResume.execute({ conversation_id: 'conversation_moved_worktree', project_id: projectId });
     assert.equal((database.connection.prepare('select worktree_id from sessions where id = ?').get(movedWorktree.session_id) as { worktree_id: string | null }).worktree_id, 'worktree_moved',
       'a conversation that moved into a registered worktree is linked to it');
 
@@ -746,7 +504,7 @@ async function main(): Promise<void> {
     const newSession = new NewAgentSessionAction(database, launcher, {
       execute: async (processId: string) => { newClosed.push(processId); return { closed: [processId] }; }
     });
-    const sourceTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId, interface_mode: 'integrated' });
+    const sourceTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId });
     database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(sourceTab.process_id);
     const beside = await newSession.execute({ process_id: sourceTab.process_id, project_id: projectId });
     assert.equal(beside.replaced_process_id, null, 'a working agent stays open beside the new session');
@@ -775,8 +533,8 @@ async function main(): Promise<void> {
       // The user switched model and effort after launch.
       liveSettings: async () => ({ model: 'claude-fable-5-1', reasoning: 'high' })
     });
-    const restartTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId, interface_mode: 'integrated' });
-    const restartChild = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated', parent_process_id: restartTab.process_id, session_role: 'child' });
+    const restartTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId });
+    const restartChild = await launcher.launch({ harness: 'claude', project_id: projectId, parent_process_id: restartTab.process_id, session_role: 'child' });
     // The fake Integrated host reports this native conversation for every launch.
     database.connection.prepare(`update sessions set title_set_by_user = 1, last_title = 'Fix the restart titles' where process_id = ?`).run(restartTab.process_id);
     database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(restartTab.process_id);
@@ -801,8 +559,8 @@ async function main(): Promise<void> {
 
     // A crashed parent can restart with stale working activity, retaining
     // its children, timers, and resume provenance just like a live restart.
-    const deadTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
-    const liveChild = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated', parent_process_id: deadTab.process_id, session_role: 'child' });
+    const deadTab = await launcher.launch({ harness: 'claude', project_id: projectId });
+    const liveChild = await launcher.launch({ harness: 'claude', project_id: projectId, parent_process_id: deadTab.process_id, session_role: 'child' });
     database.connection.prepare("update processes set status = 'failed', activity = 'working' where id = ?").run(deadTab.process_id);
     database.connection.prepare('update sessions set exited_at = ? where id = ?').run(new Date().toISOString(), deadTab.session_id);
     const recovered = await restart.execute({ process_id: deadTab.process_id, project_id: projectId });
@@ -818,7 +576,7 @@ async function main(): Promise<void> {
     // A turn that starts while the settings are read is not cut short, and
     // timers are held before that read.
     const raceSteps: string[] = [];
-    const raceTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const raceTab = await launcher.launch({ harness: 'claude', project_id: projectId });
     const racing2 = new RestartAgentSessionAction(database, launcher, {
       stop: async (processId: string) => { raceSteps.push(`stop:${processId}`); },
       close: async () => {},
@@ -850,7 +608,7 @@ async function main(): Promise<void> {
       stop: async () => undefined, close: async (processId: string) => { restartSteps.push(`close:${processId}`); },
       holdTimers: () => ['timer_failed'], releaseTimers: (timerIds) => { restartSteps.push(`release:${timerIds.join(',')}`); }, transferTimers: () => undefined
     });
-    const failTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const failTab = await launcher.launch({ harness: 'claude', project_id: projectId });
     database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(failTab.process_id);
     restartSteps.length = 0;
     await assert.rejects(failing.execute({ process_id: failTab.process_id, project_id: projectId }), /did not restart: resume refused/);
@@ -870,7 +628,7 @@ async function main(): Promise<void> {
       holdTimers: () => ['timer_moved'], releaseTimers: (timerIds) => { movedSteps.push(`release:${timerIds.join(',')}`); }, transferTimers: () => undefined,
       sessionDirectory: () => located()
     });
-    const movedTab = await launcher.launch({ harness: 'claude', project_id: projectId, worktree_id: 'worktree_context', interface_mode: 'integrated' });
+    const movedTab = await launcher.launch({ harness: 'claude', project_id: projectId, worktree_id: 'worktree_context' });
     database.connection.prepare(`update sessions set harness = 'opencode' where id = ?`).run(movedTab.session_id);
     database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(movedTab.process_id);
     const restartMoved = () => moving.execute({ process_id: movedTab.process_id, project_id: projectId });
@@ -918,11 +676,11 @@ async function main(): Promise<void> {
     holdingTimers.dispose();
 
     // Restart all leaves working agents running.
-    const idleTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const idleTab = await launcher.launch({ harness: 'claude', project_id: projectId });
     database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(idleTab.process_id);
     database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(restarted.process_id);
     // A turn that starts while another agent restarts is still seen.
-    const lateTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const lateTab = await launcher.launch({ harness: 'claude', project_id: projectId });
     database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(lateTab.process_id);
     const racing = new RestartAgentSessionAction(database, {
       resume: async (input, resume) => {
@@ -939,35 +697,6 @@ async function main(): Promise<void> {
     assert.ok(all.skipped.some((item) => item.process_id === restarted.process_id && item.reason === 'working'), 'a working agent is skipped');
     assert.ok(!all.skipped.some((item) => item.process_id === restartChild.process_id) && !all.restarted.some((item) => item.from === restartChild.process_id), 'subagents are not considered');
 
-    await waitFor(async () => terminalRequests.filter((request) => request.method === 'terminal.process.input').length >= inputCountBeforeSpawnAgent + 1, 'initial prompt injection sends pasted prompt and submit request');
-    const inputRequests = terminalRequests.filter((request) => request.method === 'terminal.process.input').slice(inputCountBeforeSpawnAgent, inputCountBeforeSpawnAgent + 1);
-    assert.deepEqual(inputRequests[0]?.params, {
-      process_id: inputRequests[0]?.params.process_id,
-      kind: 'paste',
-      text: 'Review the docs\n\nThen report risks\nCheck examples\n\nWhen this delegated work is done, blocked, failed, or has no findings, call report_to_parent with your result. Do not rely on terminal idle or get_process_output as the completion signal. Stay available after reporting: your parent may send follow-ups, such as re-reviewing fixes, and you should report again after each one.',
-      submit: true
-    });
-    const inputCountBeforeMcpPaste = terminalRequests.filter((request) => request.method === 'terminal.process.input').length;
-    await registry.call('send_input', { process_id: spawnedAgent.process_id, kind: 'paste', text: 'follow-up\nmessage', submit: true });
-    const mcpPasteInput = terminalRequests.filter((request) => request.method === 'terminal.process.input').slice(inputCountBeforeMcpPaste).at(0);
-    assert.deepEqual(mcpPasteInput?.params, {
-      process_id: inputRequests[0]?.params.process_id,
-      kind: 'paste',
-      text: 'follow-up\nmessage',
-      submit: true
-    });
-
-    // Resume also injects a prompt asynchronously. Wait for that launch before
-    // disposing the database used to resolve its process and harness identity.
-    const resumedPtyId = (database.connection.prepare('select pty_process_id from processes where id = ?').get(resumedAgent.process_id) as { pty_process_id: string }).pty_process_id;
-    await waitFor(
-      () => terminalRequests.some((request) => request.method === 'terminal.process.input' && request.params.process_id === resumedPtyId),
-      'resumed agent receives its initial prompt before database teardown'
-    );
-    const resumedInput = terminalRequests.find((request) => request.method === 'terminal.process.input' && request.params.process_id === resumedPtyId);
-    assert.match(String(resumedInput?.params.text), /^Continue the prior work/);
-    assert.equal(resumedInput?.params.submit, true);
-
     database.dispose();
     // eslint-disable-next-line no-console
     console.log('harness launch smoke ok');
@@ -980,21 +709,6 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-
-function lastRequest(requests: Array<{ method: string; params: Record<string, unknown> }>, method: string): Record<string, unknown> {
-  const request = requests.filter((candidate) => candidate.method === method).at(-1);
-  assert.ok(request, `${method} was requested`);
-  return request.params;
-}
-
-// Windows launches pass the context in a file the launcher has written.
-function claudeAppendSystemPrompt(args: string[]): string {
-  const file = process.platform === 'win32';
-  const index = args.indexOf(file ? '--append-system-prompt-file' : '--append-system-prompt');
-  assert.notEqual(index, -1, 'claude args include appended system prompt');
-  const value = args[index + 1] ?? '';
-  return file ? fs.readFileSync(value, 'utf8') : value;
-}
 
 function conversationRecord(overrides: Partial<ReturnType<typeof conversationRecordBase>> = {}) {
   return { ...conversationRecordBase(), ...overrides };
@@ -1024,15 +738,4 @@ function conversationRecordBase() {
     importedAt: new Date(0).toISOString(),
     messageCount: 1
   };
-}
-
-async function waitFor(predicate: () => Promise<boolean> | boolean, label: string, timeoutMs = 5000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  assert.fail(label);
 }

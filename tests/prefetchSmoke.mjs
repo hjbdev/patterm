@@ -39,7 +39,7 @@ function load({ connection = undefined, runtime = 'browser', touch = false, pref
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
-const session = (id, mode = 'integrated') => ({ id, processId: `process_${id}`, interfaceMode: mode, exitedAt: null });
+const session = (id) => ({ id, processId: `process_${id}`, exitedAt: null });
 const project = (id, sessions) => ({ project: { id }, projectSessions: sessions, processes: [], worktrees: [], timers: [] });
 
 test('link classes follow the connection', () => {
@@ -62,25 +62,25 @@ test('the preference is stored per device and defaults to automatic', () => {
 });
 
 test('at most two reads run at once, the pointer first, and none while hidden', async () => {
-  const hidden = load({ visible: false });
-  hidden.projects.value = [project('p', [session('a', 'tui')])];
+  const hidden = load({ visible: false, preference: 'never' });
+  hidden.projects.value = [project('p', [session('a')])];
   hidden.prefetch.prefetchProject('p', hidden.prefetch.Tier.Current);
   await settle();
   assert.equal(hidden.contextReads.length, 0, 'a hidden tab reads nothing');
 
-  const { prefetch, contextReads, projects } = load({});
-  projects.value = [project('p', ['a', 'b', 'c'].map((id) => session(id, 'tui'))), project('q', [session('urgent', 'tui')])];
+  const { prefetch, contextReads, projects } = load({ preference: 'never' });
+  projects.value = [project('p', ['a', 'b', 'c'].map((id) => session(id))), project('q', [session('urgent')])];
   prefetch.prefetchProject('p', prefetch.Tier.Other);
-  prefetch.prefetchTab(session('elsewhere', 'tui'));
+  prefetch.prefetchTab(session('elsewhere'));
   await settle();
   assert.deepEqual(contextReads.map((read) => read.args.session_id), ['a', 'b']);
   assert.deepEqual(contextReads[0].args, { session_id: 'a', limit: 100 }, 'the panel’s own arguments, so it finds the read cached');
-  prefetch.prefetchSession('q', session('urgent', 'tui'), prefetch.Tier.Intent);
+  prefetch.prefetchSession('q', session('urgent'), prefetch.Tier.Intent);
   contextReads[0].resolve();
   await settle();
   assert.equal(contextReads[2].args.session_id, 'urgent', 'what the pointer is on goes ahead of the queue');
   assert.ok(!contextReads.some((read) => read.args.session_id === 'elsewhere'), 'a tab no project lists reads nothing');
-  prefetch.prefetchTab(session('c', 'tui'));
+  prefetch.prefetchTab(session('c'));
   contextReads.slice(0, 3).forEach((read) => read.resolve());
   await settle();
   assert.ok(contextReads.some((read) => read.args.session_id === 'c' && read.projectId === 'p'), 'a tab reads against the project that lists it');
@@ -186,18 +186,19 @@ test('reads started together count against the budget before they finish', async
 
 test("a paired host's conversations are never read ahead, and a hovered tab past the sweep cap still is", async () => {
   const { prefetch, calls, contextReads, projects } = load({ runtime: 'desktop' });
-  const remote = { id: 'workstation:session_r', processId: 'workstation:process_r', interfaceMode: 'integrated', exitedAt: null };
+  const remote = { id: 'workstation:session_r', processId: 'workstation:process_r', exitedAt: null };
   // 13 newer live sessions push the oldest past the 12-session sweep cap.
-  const sessions = Array.from({ length: 13 }, (_, index) => session(`t${index}`, 'tui'));
+  const sessions = Array.from({ length: 13 }, (_, index) => session(`t${index}`));
   projects.value = [project('p', [remote, ...sessions])];
   prefetch.prefetchTab(remote);
   prefetch.prefetchTab(sessions[0]);
   const read = [];
-  for (let round = 0; round < 4; round++) {
+  for (let round = 0; round < 6; round++) {
     await settle();
     for (const entry of contextReads.splice(0)) { read.push(entry.args.session_id); entry.resolve(); }
+    for (const call of calls) { if (!call.done) { call.done = true; call.resolve({ messages: [], provider: 'claude' }); } }
   }
-  assert.equal(calls.length, 0, 'no integrated_get to a paired host');
+  assert.ok(!calls.some((call) => call.args.process_id === 'workstation:process_r'), 'no integrated_get to a paired host');
   assert.ok(read.includes('t0'), 'the hovered tab past the cap is read');
   assert.ok(read.includes('workstation:session_r'), "the paired host's context still is");
 });

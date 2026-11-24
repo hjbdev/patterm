@@ -33,6 +33,9 @@ export class QuitApplicationAction {
     if (errors.length) {
       throw new AggregateError(errors, 'Shutdown could not stop every managed process; check the service journal');
     }
+    const now = new Date().toISOString();
+    this.database.connection.prepare(`update sessions set exited_at = ? where exited_at is null`).run(now);
+    this.database.connection.prepare(`update processes set status = 'exited', exited_at = coalesce(exited_at, ?), updated_at = ? where status = 'running'`).run(now, now);
     new ReconcileRuntimeAction(this.database).execute();
   }
 }

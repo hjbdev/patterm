@@ -19,7 +19,6 @@ interface ProcessContext {
   project_id: string;
   session_id: string | null;
   status: string;
-  integrated: number;
   snoozed_at: string | null;
   snooze_reminder: string | null;
 }
@@ -97,18 +96,17 @@ export class SnoozeActions {
     this.timeline.append({ event_type: 'agent.woke', project_id: process.project_id, session_id: process.session_id, process_id: process.id, actor_type: reason === 'user' ? 'user' : 'agent', metadata: { reason } });
     this.onChanged();
     if (!announce) return;
-    // Only Integrated agents announce finished turns.
-    if (process.integrated) this.announced.add(process.id);
+    this.announced.add(process.id);
     // Keyed by the snooze, so each wake alerts afresh.
     this.raise({ processId: process.id, source: 'runtime', kind: 'turn_finished', body: process.snooze_reminder ? `Woke from snooze: ${process.snooze_reminder}` : 'Woke from snooze', dedupeKey: `snooze:woke:${process.snoozed_at}` });
   }
 
   private process(processId: string): ProcessContext | null {
-    return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.status, sessions.interface_mode = 'integrated' as integrated,
+    return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.status,
         processes.snoozed_at, processes.snooze_reminder, sessions.id as session_id
       from processes
       left join sessions on sessions.process_id = processes.id
-      where processes.id = ? or processes.pty_process_id = ?
-      order by processes.status = 'running' desc, sessions.started_at desc limit 1`).get(processId, processId) as ProcessContext | undefined) ?? null;
+      where processes.id = ?
+      order by processes.status = 'running' desc, sessions.started_at desc limit 1`).get(processId) as ProcessContext | undefined) ?? null;
   }
 }

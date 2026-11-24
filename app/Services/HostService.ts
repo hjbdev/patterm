@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import type { DatabaseService } from './DatabaseService';
 
 // Incompatible hosts refuse to pair or connect instead of failing partway.
-export const PEER_PROTOCOL_VERSION = 1;
+export const PEER_PROTOCOL_VERSION = 2;
 
 // Names prefix remote addresses such as `workstation:process_7`, so they are
 // short, lowercase, and never contain a colon.

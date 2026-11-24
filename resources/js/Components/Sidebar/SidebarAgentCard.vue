@@ -24,10 +24,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { computed } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { useAgentDigests } from '../../Composables/useAgentDigests';
-import { useBoardRoute } from '../../Composables/useBoard';
 import { useRowHoverCard } from '../../Composables/useRowHoverCard';
 import { Popover, PopoverContent } from '../ui/popover';
 import AgentCard from './AgentCard.vue';
@@ -35,7 +34,6 @@ import AgentCard from './AgentCard.vue';
 // The list the card watches for pointing and keyboard focus.
 const props = defineProps<{ list: HTMLElement | null }>();
 const { digests, now, show } = useAgentDigests();
-const board = useBoardRoute();
 
 // Agents have cards. Subagents and processes are rows of their own, which
 // the card lists anyway. The controls laid over a row count as the row.
@@ -50,19 +48,11 @@ show(() => Boolean(card.row.value));
 const shown = computed(() => digests.value.find((digest) => digest.key === card.last.value?.dataset.rowKey) ?? null);
 const anchor = computed(() => card.last.value ?? document.body);
 
-// The board already shows every agent.
-useEventListener(() => props.list, 'pointermove', (event: PointerEvent) => {
-  if (!board.open.value) card.onPointerMove(event);
-});
-useEventListener(() => props.list, 'focusin', (event: FocusEvent) => {
-  if (!board.open.value) card.onFocusIn(event);
-});
+useEventListener(() => props.list, 'pointermove', card.onPointerMove);
+useEventListener(() => props.list, 'focusin', card.onFocusIn);
 useEventListener(() => props.list, 'pointerleave', card.onPointerLeave);
 useEventListener(() => props.list, 'pointerdown', card.onPointerDown);
 useEventListener(() => props.list, 'focusout', card.onFocusOut);
-watch(board.open, (open) => {
-  if (open) card.close();
-});
 
 // Opening a subagent, a process or a link from the card puts it away.
 function onCardClick(event: MouseEvent): void {

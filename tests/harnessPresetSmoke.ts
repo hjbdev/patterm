@@ -10,7 +10,8 @@ import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { HarnessModelCatalogService } from '../app/Services/HarnessModelCatalogService';
 import { HarnessPresetService } from '../app/Services/HarnessPresetService';
-import { HarnessLauncher, type SpawnSink } from '../app/Services/HarnessLauncher';
+import { HarnessLauncher } from '../app/Services/HarnessLauncher';
+import type { SpawnSink } from '../app/Services/ProcessLauncher';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
@@ -58,7 +59,6 @@ function assertSelectionRules(): void {
 
   const ambiguous = harnessPresetSettingsInput.parse({ presets: [...settings.presets, { id: 'preset_clash', harness: 'codex', name: 'smartypants', model: 'gpt-5.5' }] });
   assert.throws(() => resolveHarnessLaunchSelection({ settings: ambiguous, preset: 'smartypants' }), /multiple harnesses/);
-  assert.throws(() => resolveHarnessLaunchSelection({ settings, preset: 'smartypants', harness: 'rawpty' }), /unknown preset/);
 
   // The seeded defaults pass no model, so each CLI keeps its own configuration.
   const seeded = seededHarnessPresetSettings();
@@ -167,15 +167,8 @@ async function main(): Promise<void> {
     }
   };
 
-  let preparedModel: unknown;
-  let preparedReasoning: unknown;
   const integratedLaunches: Array<{ harness: string; model: string | null | undefined; reasoning: string | null | undefined; serviceTier?: string | null | undefined }> = [];
   const launcher = new HarnessLauncher({
-    openCodeServer: { prepare: async (input) => {
-      preparedModel = input.model;
-      preparedReasoning = input.reasoning;
-      return { resumeId: 'ses_preset', argv: ['/usr/bin/opencode'] };
-    } },
     integrated: {
       prepare: async (harness, input) => {
         integratedLaunches.push({ harness, model: input.model, reasoning: input.reasoning, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) });
@@ -188,7 +181,6 @@ async function main(): Promise<void> {
     },
     database,
     timeline,
-    terminal,
     workbench: new WorkbenchRepository(database),
     providers: harnessProviders,
     nodePath: MCP.command,
@@ -199,29 +191,21 @@ async function main(): Promise<void> {
   });
 
   try {
-    // Claude applies the default preset to the CLI.
+    // Claude applies the default preset to the Integrated launch.
     const claude = await launcher.launch({ harness: 'claude', project_id: projectId });
-    const claudeSpawn = lastSpawn(terminalRequests);
-    const claudeArgs = claudeSpawn.args as string[];
-    assert.deepEqual(claudeArgs.slice(claudeArgs.indexOf('--model'), claudeArgs.indexOf('--model') + 2), ['--model', 'fable']);
-    assert.deepEqual(claudeArgs.slice(claudeArgs.indexOf('--effort'), claudeArgs.indexOf('--effort') + 2), ['--effort', 'high']);
+    assert.deepEqual(integratedLaunches.at(-1), { harness: 'claude', model: 'fable', reasoning: 'high' });
     assert.equal(sessionModel(database, claude.session_id).model, 'fable');
     assert.equal(sessionModel(database, claude.session_id).reasoning, 'high');
 
-    // Codex maps a preset to inline TOML overrides.
     // Codex still has the seeded no-override default, so a plain launch leaves
-    // the model untouched; an explicit preset pins it.
+    // the model untouched; an explicit preset pins it along with service tier.
     const codexDefault = await launcher.launch({ harness: 'codex', project_id: projectId });
-    const codexDefaultArgs = lastSpawn(terminalRequests).args as string[];
-    assert.ok(!codexDefaultArgs.some((arg) => arg.startsWith('model=')), `seeded default keeps the harness model: ${codexDefaultArgs.join(' ')}`);
+    assert.deepEqual(integratedLaunches.at(-1), { harness: 'codex', model: null, reasoning: null });
     assert.equal(sessionModel(database, codexDefault.session_id).model, null);
 
     const codex = await launcher.launch({ harness: 'codex', project_id: projectId, preset: 'deep' });
-    const codexArgs = lastSpawn(terminalRequests).args as string[];
-    assert.ok(codexArgs.includes('model="gpt-5.6-luna"'), `codex model override present: ${codexArgs.join(' ')}`);
-    assert.ok(codexArgs.includes('model_reasoning_effort="high"'), `codex reasoning override present: ${codexArgs.join(' ')}`);
+    assert.deepEqual(integratedLaunches.at(-1), { harness: 'codex', model: 'gpt-5.6-luna', reasoning: 'high', serviceTier: 'priority' });
     assert.equal(sessionModel(database, codex.session_id).reasoning, 'high');
-    assert.ok(codexArgs.includes('service_tier="priority"'), `codex service tier override present: ${codexArgs.join(' ')}`);
     assert.equal(sessionServiceTier(database, codex.session_id), 'priority');
     await assert.rejects(() => launcher.launch({ harness: 'claude', project_id: projectId, service_tier: 'priority' }), /does not support service tier/);
 
@@ -231,25 +215,10 @@ async function main(): Promise<void> {
     new HarnessPresetService(settings).create({ harness: 'opencode', name: 'luna', model: 'openai/gpt-5.6-luna', reasoning: 'max' });
     const openCode = await launcher.launch({ preset: 'LUNA', project_id: projectId });
     assert.equal(openCode.harness, 'opencode');
-    assert.equal(preparedModel, 'openai/gpt-5.6-luna');
-    assert.equal(preparedReasoning, 'max');
-    const openCodeSpawn = lastSpawn(terminalRequests);
-    assert.deepEqual(openCodeSpawn.args, ['--session', 'ses_preset']);
+    assert.deepEqual(integratedLaunches.at(-1), { harness: 'opencode', model: 'openai/gpt-5.6-luna', reasoning: 'max' });
     const stored = sessionModel(database, openCode.session_id);
     assert.equal(stored.model, 'openai/gpt-5.6-luna');
     assert.equal(stored.reasoning, 'max');
-
-    // Preset selection must reach the native Integrated provider, not just the
-    // TUI argv or the session record.
-    const integrated = await launcher.launch({ harness: 'codex', preset: 'deep', project_id: projectId, interface_mode: 'integrated' });
-    assert.equal(integrated.pty_process_id, null);
-    assert.deepEqual(integratedLaunches.at(-1), { harness: 'codex', model: 'gpt-5.6-luna', reasoning: 'high', serviceTier: 'priority' });
-    assert.equal(sessionServiceTier(database, integrated.session_id), 'priority');
-    assert.deepEqual(sessionModel(database, integrated.session_id), { model: 'gpt-5.6-luna', reasoning: 'high' });
-
-    const integratedOpenCode = await launcher.launch({ preset: 'LUNA', project_id: projectId, interface_mode: 'integrated' });
-    assert.deepEqual(integratedLaunches.at(-1), { harness: 'opencode', model: 'openai/gpt-5.6-luna', reasoning: 'max' });
-    assert.deepEqual(sessionModel(database, integratedOpenCode.session_id), { model: 'openai/gpt-5.6-luna', reasoning: 'max' });
 
     await assert.rejects(() => launcher.launch({ preset: 'ghost', project_id: projectId }), /unknown preset/);
 
@@ -288,11 +257,6 @@ function sessionServiceTier(database: DatabaseService, sessionId: string): strin
 
 function sessionModel(database: DatabaseService, sessionId: string): { model: string | null; reasoning: string | null } {
   return database.connection.prepare(`select model, reasoning from sessions where id = ?`).get(sessionId) as { model: string | null; reasoning: string | null };
-}
-
-function lastSpawn(requests: Array<{ method: string; params: Record<string, unknown> }>): Record<string, unknown> {
-  const spawns = requests.filter((request) => request.method === 'terminal.process.spawn');
-  return spawns[spawns.length - 1]?.params ?? {};
 }
 
 main().catch((error) => {

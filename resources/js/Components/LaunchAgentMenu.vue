@@ -68,7 +68,7 @@
       </CommandList>
     </Command>
 
-    <div class="flex items-center gap-1 border-t border-border px-1.5 py-1.5">
+    <div v-if="chooseProject || targets.length > 1 || composing" class="flex items-center gap-1 border-t border-border px-1.5 py-1.5">
       <DropdownMenu v-if="chooseProject || targets.length > 1">
         <DropdownMenuTrigger as-child>
           <button type="button" class="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground" :aria-label="`Start in ${targetLabel(target)}`">
@@ -92,7 +92,6 @@
         </DropdownMenuContent>
       </DropdownMenu>
       <span class="flex-1" />
-      <InterfaceModeToggle :compact="!phoneLayout" :model-value="interfaceMode" @update:model-value="saveInterface" />
       <Button v-if="composing" type="button" size="sm" class="ml-1 h-7 gap-1.5 px-2.5 text-xs" :disabled="!composed || !launchTarget" @click="startComposed">
         Start
         <CornerDownLeft class="h-3 w-3 opacity-60" />
@@ -102,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { MagnifyingGlassIcon } from '@radix-icons/vue';
 import { Check, ChevronDown, ChevronLeft, CornerDownLeft, MessageSquareText, Plus } from 'lucide-vue-next';
@@ -119,14 +118,13 @@ import { allAgents, allAgentsHiding, chosenLaunchTarget, launchTargets, type Lau
 import { cn } from '../lib/utils';
 import AgentIcon from './AgentIcon.vue';
 import HostBadge from './HostBadge.vue';
-import InterfaceModeToggle from './InterfaceModeToggle.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import ResponsivePopover from './ResponsivePopover.vue';
 import { Button } from './ui/button';
 import { Command, CommandGroup, CommandItem, CommandList } from './ui/command';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { Textarea } from './ui/textarea';
-import type { AgentInterface, HarnessInstallationRecord } from '../types';
+import type { HarnessInstallationRecord } from '../types';
 
 interface ModelCatalog { providers: Record<string, { models: Array<{ id: string; label: string; provider?: string }> } | null> }
 
@@ -252,30 +250,6 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-const interfaceMode = ref<AgentInterface>('integrated');
-const savedInterfaceMode = ref<AgentInterface>('integrated');
-
-onMounted(async () => {
-  try {
-    const result = await window.patterm.call('settings_agent_interface_get', {}) as { interface_mode?: unknown };
-    if (result.interface_mode === 'tui' || result.interface_mode === 'integrated') interfaceMode.value = savedInterfaceMode.value = result.interface_mode;
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : 'Failed to load the agent interface preference');
-  }
-});
-
-async function saveInterface(value: unknown): Promise<void> {
-  if (value !== 'tui' && value !== 'integrated') return;
-  interfaceMode.value = value;
-  try {
-    await window.patterm.call('settings_agent_interface_update', { interface_mode: value });
-    savedInterfaceMode.value = value;
-  } catch (caught) {
-    interfaceMode.value = savedInterfaceMode.value;
-    toast.error(caught instanceof Error ? caught.message : 'Failed to save the agent interface preference');
-  }
-}
-
 // Tab writes a first message for the highlighted profile. 1–9 start one
 // while the search is empty.
 function onFilterKeydown(event: KeyboardEvent): void {
@@ -348,8 +322,7 @@ function launchHarness(harness: string, presetId: string | null, target: Pick<La
     targetProjectId: target.targetProjectId,
     ...(presetId && !target.host ? { preset: presetId } : {}),
     ...(target.host ? { host: target.host } : {}),
-    ...(prompt.trim() ? { initialPrompt: prompt.trim() } : {}),
-    interfaceMode: interfaceMode.value
+    ...(prompt.trim() ? { initialPrompt: prompt.trim() } : {})
   });
   emit('started');
 }

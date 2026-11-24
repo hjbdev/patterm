@@ -58,8 +58,7 @@ export class NewAgentSessionAction {
       service_tier: source.service_tier,
       project_id: input.project_id,
       worktree_id: worktree,
-      ...(cwd ? { cwd } : {}),
-      interface_mode: 'integrated'
+      ...(cwd ? { cwd } : {})
     });
     if (!replace) return { ...launched, replaced_process_id: null };
     await this.closeProcess.execute(input.process_id);

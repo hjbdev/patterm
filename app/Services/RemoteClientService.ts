@@ -69,10 +69,7 @@ type RemoteWorkbenchRead =
 
 const rpcRequest = z.object({ channel: z.string().max(100), args: z.unknown().optional() }).strict();
 const uploadRequest = z.object({ name: z.string().min(1).max(255), data: z.string().max(15 * 1024 * 1024) }).strict();
-const clientRequest = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('clipboard'), processId: z.string().min(1).max(200), text: z.string().max(1024 * 1024) }),
-  z.object({ kind: z.literal('open-url'), processId: z.string().min(1).max(200), url: z.string().max(8192).refine((value) => /^https?:\/\//i.test(value), 'Only web links open from another host') })
-]);
+const clientRequest = z.object({ kind: z.literal('clipboard'), processId: z.string().min(1).max(200), text: z.string().max(1024 * 1024) });
 const conversationRequest = z.object({ process_id: z.string().min(1).max(200), subscribed: z.boolean() }).strict();
 const frameEvent = z.object({ process_id: z.string().min(1).max(200), payload: z.string(), frame_kind: z.enum(['snapshot', 'damage']).nullable(), frame_seq: z.number().nullable(), resize_seq: z.number().nullable() });
 
@@ -653,7 +650,7 @@ export class RemoteClientService {
       project: { ...remote.project, id: `${peer.name}:${remote.project.id}`, host: peer.name },
       projectSessions: remote.projectSessions.map((session) => ({
         ...session, id: q(session.id)!, parentId: q(session.parentId), processId: q(session.processId),
-        ptyProcessId: q(session.ptyProcessId), worktreeId: q(session.worktreeId), host: peer.name,
+        worktreeId: q(session.worktreeId), host: peer.name,
         // Bots find their helpers through it, and process IDs collide across hosts.
         ...(session.parentProcessId ? { parentProcessId: q(session.parentProcessId) } : {}),
         // Bot IDs name the host's bots, as remoteBots lists them.

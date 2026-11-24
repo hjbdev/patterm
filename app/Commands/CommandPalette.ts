@@ -105,8 +105,7 @@ const HARNESS_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
   opencode: 'OpenCode',
-  agy: 'Antigravity',
-  rawpty: 'Raw terminal'
+  agy: 'Antigravity'
 };
 
 const PROCESS_STATUS_LABELS: Record<string, string> = {
@@ -184,8 +183,8 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   if (id.startsWith('spawn:agent:')) {
     if (!projectId) throw new Error('No active project');
     const harness = id.slice('spawn:agent:'.length);
-    const result = (await callTool(application, 'harness_launch', { harness, project_id: projectId, ...launchOptions(input) })) as { session_id?: string; pty_process_id?: string | null };
-    return { navigate: { projectId, ...(result.pty_process_id ? { terminalProcessId: result.pty_process_id } : { sessionId: result.session_id }) }, refresh: true };
+    const result = (await callTool(application, 'harness_launch', { harness, project_id: projectId, ...launchOptions(input) })) as { session_id?: string };
+    return { navigate: { projectId, sessionId: result.session_id }, refresh: true };
   }
   if (id.startsWith('spawn:preset:')) {
     if (!projectId) throw new Error('No active project');
@@ -193,18 +192,16 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     const presetId = id.slice('spawn:preset:'.length);
     const preset = application.settings?.harnessPresets().presets.find((candidate) => candidate.id === presetId);
     if (!preset) throw new Error('That preset no longer exists');
-    const result = (await callTool(application, 'harness_launch', { harness: preset.harness, project_id: projectId, ...launchOptions(input), preset: preset.id })) as { session_id?: string; pty_process_id?: string | null };
-    return { navigate: { projectId, ...(result.pty_process_id ? { terminalProcessId: result.pty_process_id } : { sessionId: result.session_id }) }, refresh: true };
+    const result = (await callTool(application, 'harness_launch', { harness: preset.harness, project_id: projectId, ...launchOptions(input), preset: preset.id })) as { session_id?: string };
+    return { navigate: { projectId, sessionId: result.session_id }, refresh: true };
   }
   if (id.startsWith('history:resume:')) {
     if (!projectId) throw new Error('No active project');
-    const interfaceMode = input.interface_mode === 'tui' || input.interface_mode === 'integrated' ? input.interface_mode : undefined;
-    // An empty Integrated agent can be replaced by the resumed conversation.
+    // An empty agent can be replaced by the resumed conversation.
     const replace = stringInput(input.replace_process_id);
     const result = (await callTool(application, 'history_resume', {
       conversation_id: id.slice('history:resume:'.length),
       project_id: projectId,
-      ...(interfaceMode ? { interface_mode: interfaceMode } : {}),
       ...(replace ? { replace_process_id: replace } : {})
     })) as { session_id?: string };
     return { navigate: { projectId, sessionId: result.session_id }, refresh: true };
@@ -298,7 +295,7 @@ async function assistantRestartCommand(application: PattermApplication): Promise
 // and settings changes. Working agents are left to finish.
 function restartAgentsCommand(projects: ProjectWorkbenchDto[]): CommandDescriptor | null {
   const agents = projects.flatMap((project) => project.projectSessions)
-    .filter((session) => !session.exitedAt && session.processId && !session.host && session.sessionRole === 'orchestrator' && session.interfaceMode === 'integrated');
+    .filter((session) => !session.exitedAt && session.processId && !session.host && session.sessionRole === 'orchestrator');
   if (!agents.length) return null;
   // As the restart decides: only a finished turn is safe to stop.
   const working = agents.filter((session) => session.activity !== 'idle' && session.activity !== 'error').length;
@@ -351,20 +348,19 @@ function agentActions(
   const name = agentLabel(session);
   const group: CommandGroup = extra.current ? 'current' : 'agent';
   const live = !session.exitedAt;
-  const integrated = live && session.interfaceMode === 'integrated';
   const commands: CommandDescriptor[] = [];
 
   if (!extra.current) {
     commands.push({ id: `navigate:agent:${enc(projectId)}:${enc(session.id)}`, label: 'Switch to agent', hint: name, group, kind: 'navigate' });
   }
   // Integrated actions run in the open conversation, which owns its controls.
-  if (extra.current && integrated && RESPONDING.has(session.activity)) {
+  if (extra.current && live && RESPONDING.has(session.activity)) {
     commands.push({ id: `integrated:interrupt:${processId}`, label: 'Stop response', hint: name, group, kind: 'renderer', inline: true, result: { rendererAction: 'integrated', integrated: 'interrupt', processId } });
   }
   for (const [index, worktree] of (extra.worktrees ?? []).entries()) {
     commands.push({ id: `renderer:review:${session.id}:${worktree.id}`, label: 'Review changes', hint: worktreeName(worktree.branch, worktree.worktree_path), group, kind: 'renderer', inline: index === 0, result: { rendererAction: 'reviewChanges', sessionId: session.id, worktree } });
   }
-  if (extra.current && integrated) {
+  if (extra.current && live) {
     commands.push({ id: `integrated:new:${processId}`, label: 'New conversation', hint: name, group, kind: 'renderer', inline: true, result: { rendererAction: 'integrated', integrated: 'new', processId } });
     // Top-level agents only: a subagent's parent watches it by process ID.
     if (session.sessionRole === 'orchestrator' && !session.host) {
@@ -375,7 +371,7 @@ function agentActions(
       });
     }
   }
-  if (extra.current && !live && session.interfaceMode === 'integrated' && session.processStatus !== 'closed'
+  if (extra.current && !live && session.processStatus !== 'closed'
     && session.sessionRole === 'orchestrator' && !session.host) {
     commands.push({ id: `integrated:restart:${processId}`, label: 'Restart agent', hint: 'Resume this conversation in a new process', group, kind: 'renderer', inline: true,
       result: { rendererAction: 'integrated', integrated: 'restart', processId } });
@@ -514,7 +510,7 @@ function processRows(project: ProjectWorkbenchDto, activeProject: ProjectWorkben
 }
 
 function createCommands(harnesses: HarnessInstallationDto[], presets: HarnessPresetSettings | null, project: ProjectWorkbenchDto): CommandDescriptor[] {
-  const available = harnesses.filter((harness) => harness.status === 'available' && harness.harness !== 'rawpty').map((harness) => harness.harness);
+  const available = harnesses.filter((harness) => harness.status === 'available').map((harness) => harness.harness);
   return [
     ...available.map((harness) => spawnHarnessCommand(harness, presets)),
     ...presetCommands(presets, available),
@@ -659,24 +655,18 @@ function currentTarget(project: ProjectWorkbenchDto | null, context: CommandPale
   return terminalTarget(project, context.active_terminal_id);
 }
 
-// Older renderers identify the current item only by its terminal handle.
+// Older renderers identify the current process only by its terminal handle.
 function terminalTarget(project: ProjectWorkbenchDto, terminalId: string | null): CurrentTarget | null {
   if (!terminalId) return null;
-  // Prefer live matches across both kinds before falling back to an exited terminal.
   const procs = project.processes.filter((proc) => proc.ptyProcessId === terminalId || proc.id === terminalId);
-  const sessions = project.projectSessions.filter((session) => session.ptyProcessId === terminalId && session.processId);
-  const liveProc = procs.find((candidate) => candidate.status === 'running');
-  const liveSession = sessions.find((candidate) => !candidate.exitedAt);
-  const proc = liveProc ?? (liveSession ? undefined : procs[0]);
+  const proc = procs.find((candidate) => candidate.status === 'running') ?? procs[0];
   if (proc) return { kind: 'process', process: proc };
-  const session = liveSession ?? sessions[0];
-  if (session?.processId) return { kind: 'agent', session, processId: session.processId };
   return null;
 }
 
 // Live agents in tab order: each root followed by its subagents.
 function liveAgents(project: ProjectWorkbenchDto): SessionDto[] {
-  const live = project.projectSessions.filter((session) => !session.exitedAt && session.processId && (session.interfaceMode === 'integrated' || session.ptyProcessId));
+  const live = project.projectSessions.filter((session) => !session.exitedAt && session.processId);
   const ids = new Set(live.map((session) => session.id));
   const children = new Map<string | null, SessionDto[]>();
   for (const session of live) {
@@ -737,7 +727,6 @@ function launchOptions(input: Record<string, unknown>): Record<string, string> {
     const value = stringInput(input[key]);
     if (value) options[key] = value;
   }
-  if (input.interface_mode === 'tui' || input.interface_mode === 'integrated') options.interface_mode = input.interface_mode;
   return options;
 }
 

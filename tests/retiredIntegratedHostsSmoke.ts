@@ -85,7 +85,7 @@ async function main(): Promise<void> {
     add('child', 'amp', 'parent');
     await host('child');
     const terminal = { request: async () => { throw new Error('Integrated hosts never use PTY stop'); } } as unknown as TerminalService;
-    await new CloseProcessAction(database, terminal, undefined, service).execute('parent');
+    await new CloseProcessAction(database, terminal, service).execute('parent');
     assert.equal(state('child').status, 'closed');
     assert.equal(state('parent').status, 'closed');
     assert.equal(stopSupported, 1, 'a retired child no longer blocks closing its supported parent');

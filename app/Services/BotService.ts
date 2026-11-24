@@ -270,7 +270,6 @@ export class BotService {
       cwd,
       session_role: botRole(bot.id),
       bot_id: bot.id,
-      interface_mode: 'integrated' as const,
       name: bot.name,
       actor_id: 'user'
     };

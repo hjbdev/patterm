@@ -154,7 +154,7 @@ async function main(): Promise<void> {
     assert.equal(await crossSite('POST', 'navigate'), 403);
     // Other hosts pair with Node's fetch, which sends no Origin. Browsers
     // cannot reach the pairing route.
-    const pairBody = JSON.stringify({ protocol_version: 1, code: 'ABCD-EFGH', host_id: `host_${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`, name: 'desktop' });
+    const pairBody = JSON.stringify({ protocol_version: 2, code: 'ABCD-EFGH', host_id: `host_${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`, name: 'desktop' });
     const peer = await fetch(`${base}/api/peer/pair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: pairBody });
     assert.equal(peer.status, 400);
     assert.match((await peer.json() as { error: string }).error, /No pairing code is active/);

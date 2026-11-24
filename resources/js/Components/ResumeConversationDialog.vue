@@ -171,7 +171,6 @@ async function resume(conversation: ConversationRecord | undefined): Promise<voi
       : await window.patterm.call('history_resume', {
       conversation_id: conversation.id,
       project_id: projectId,
-      interface_mode: 'integrated',
       replace_process_id: processId
     }) as { session_id?: unknown };
     open.value = false;

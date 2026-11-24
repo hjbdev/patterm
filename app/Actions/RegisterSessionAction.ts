@@ -9,7 +9,7 @@ export const registerSessionInput = z.object({
   process_id: z.string().nullable().default(null),
   mcp_identity: z.string().nullable().default(null),
   harness: z.string().min(1),
-  interface_mode: z.enum(['tui', 'integrated']).default('tui'),
+  interface_mode: z.literal('integrated').default('integrated'),
   session_role: z.enum(['orchestrator', 'child', 'process', 'assistant', 'routine', 'bot']).default('orchestrator'),
   // The bot this session runs, for role 'bot'.
   bot_id: z.string().min(1).nullable().default(null),

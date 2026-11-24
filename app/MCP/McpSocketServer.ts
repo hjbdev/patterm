@@ -13,7 +13,6 @@ interface SocketRequest {
   tool?: unknown;
   args?: unknown;
   identity?: unknown;
-  url?: unknown;
   opencodeBridge?: unknown;
   opencodeSessionId?: unknown;
   server?: unknown;
@@ -54,8 +53,6 @@ export class McpSocketServer {
     private readonly registry: McpToolRegistry,
     private readonly notifyChanged?: (topics: readonly ChangeTopic[]) => void,
     private readonly resolveOpenCodeIdentity?: (token: unknown, sessionId: unknown) => string,
-    // The shim's `--open` mode, used as xdg-open inside agent terminals.
-    private readonly openUrl?: (input: { identity: unknown; url: unknown }) => unknown,
     private readonly mcpServers?: McpServerSocketHandlers
   ) {}
 
@@ -132,11 +129,6 @@ export class McpSocketServer {
       if (request.op === 'catalog-subscribe') {
         this.catalogSubscribers.add(socket);
         this.write(socket, { id, result: { subscribed: true } });
-        return;
-      }
-      if (request.op === 'open-url') {
-        if (!this.openUrl) throw new Error('Opening links is unavailable');
-        this.write(socket, { id, result: this.openUrl({ identity: request.identity, url: request.url }) });
         return;
       }
       if (typeof request.op === 'string' && MCP_SERVER_OPS.has(request.op)) {

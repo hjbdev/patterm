@@ -36,7 +36,6 @@ function resolveSocketPath(): string {
 type ShimRequest =
   | { op: 'catalog' }
   | { op: 'catalog-subscribe' }
-  | { op: 'open-url'; url: string }
   | { op: 'mcp-headers'; server: string; rejected?: string | null }
   | { op: 'mcp-proxy-headers'; server: string }
   | { op: 'mcp-endpoint'; server: string; rejected?: string | null }
@@ -394,13 +393,6 @@ async function main(): Promise<void> {
   setInterval(() => void refresh(), CATALOGUE_REFRESH_MS).unref();
 }
 
-// Installed as xdg-open and $BROWSER in agent terminals: `--open <url>` asks
-// Patterm to open the URL on the client viewing that terminal.
-async function openUrl(args: string[]): Promise<void> {
-  if (args.length !== 1) throw new Error('usage: xdg-open <url>');
-  await registryRequest({ op: 'open-url', url: args[0]! });
-}
-
 // Header helper for Claude Code (`headersHelper`) and Codex
 // (`http_headers_helper`): prints one server's headers as a JSON object.
 async function printHeaders(serverId: string): Promise<void> {
@@ -505,7 +497,6 @@ async function exec(serverId: string): Promise<void> {
 }
 
 const MODES: Record<string, (args: string[]) => Promise<void>> = {
-  '--open': openUrl,
   '--mcp-headers': ([serverId]) => printHeaders(required(serverId)),
   '--mcp-bridge': ([serverId]) => bridge(required(serverId)),
   '--mcp-proxy-headers': ([serverId]) => printProxyHeaders(required(serverId)),
@@ -522,7 +513,7 @@ if (require.main === module) {
   const run = MODES[mode];
   (run ? run(process.argv.slice(3)) : main()).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(mode === '--open' ? `xdg-open: ${message}\n` : `patterm-mcp ${run ? mode.slice(2) : 'shim'} failed: ${message}\n`);
+    process.stderr.write(`patterm-mcp ${run ? mode.slice(2) : 'shim'} failed: ${message}\n`);
     process.exit(1);
   });
 }

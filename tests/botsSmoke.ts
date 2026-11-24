@@ -246,7 +246,7 @@ async function main(): Promise<void> {
     // Every bot starts once, in its own folder in the hidden bots project.
     await Promise.all([bots.ensure('fable'), bots.ensure('fable')]);
     await bots.ensureAll();
-    assert.deepEqual(launches.map((launch) => [launch.input.bot_id, launch.input.session_role, launch.input.interface_mode, launch.resume]), [['fable', 'bot', 'integrated', null], ['pal', 'bot', 'integrated', null]]);
+    assert.deepEqual(launches.map((launch) => [launch.input.bot_id, launch.input.session_role, launch.resume]), [['fable', 'bot', null], ['pal', 'bot', null]]);
     // Each bot has its own hidden project, so agent scoping keeps bots apart.
     assert.equal(launches[0]!.input.project_id, botProjectId('fable'));
     assert.equal(launches[1]!.input.project_id, botProjectId('pal'));

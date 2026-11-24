@@ -188,6 +188,7 @@ async function main(): Promise<void> {
 
     // Renaming and removing are owner-only tools the UI calls; agents see neither.
     const terminalCalls: string[] = [];
+    const integratedStops: string[] = [];
     const recordingTerminal = { request: async (method: string, params: { process_id: string }) => { terminalCalls.push(`${method} ${params.process_id}`); return { status: 'exited' }; } } as unknown as TerminalService;
     const timers = new TimerService(database, fakeTerminal);
     const unlinked: string[] = [];
@@ -199,7 +200,7 @@ async function main(): Promise<void> {
       rename: new RenameProjectAction(database, timeline),
       remove: new RemoveProjectAction({
         database, timeline, timers, links: projectLinks, fence,
-        closeProcess: new CloseProcessAction(database, recordingTerminal),
+        closeProcess: new CloseProcessAction(database, recordingTerminal, { stop: async (processId) => { integratedStops.push(processId); } }),
         integrated: { stopIfLive: async () => { if (hostRefusesStop) throw new Error('host refused to stop'); } },
         unlink: { unlink: async (raw) => { const input = raw as { host_id: string; project_id: string }; unlinked.push(input.host_id); projectLinks.unlink(input.host_id, input.project_id); return []; } },
         history: { deleteProjectHistory: async (projectId) => {
@@ -232,13 +233,15 @@ async function main(): Promise<void> {
     const removedId = viaRegistry.project_id;
     const db = database.connection;
     const at = new Date().toISOString();
-    const addProcess = (id: string, status: string) => {
-      db.prepare(`insert into processes(id,project_id,kind,name,status,pty_process_id,created_at,updated_at) values(?,?,'agent',?,?,?,?,?)`).run(id, removedId, id, status, `pty_${id}`, at, at);
-      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,resume_id) values(?,?,?,'claude','tui','orchestrator',?,?)`).run(`session_${id}`, removedId, id, at, `resume_${id}`);
+    const addProcess = (id: string, status: string, kind: 'command' | 'agent' = 'command') => {
+      db.prepare(`insert into processes(id,project_id,kind,name,status,pty_process_id,created_at,updated_at) values(?,?,?,?,?,?,?,?)`).run(id, removedId, kind, id, status, kind === 'command' ? `pty_${id}` : null, at, at);
+      if (kind === 'agent') {
+        db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,resume_id) values(?,?,?,'claude','integrated','orchestrator',?,?)`).run(`session_${id}`, removedId, id, at, `resume_${id}`);
+      }
     };
-    addProcess('process_live', 'running');
-    addProcess('process_done', 'exited');
-    addProcess('process_41', 'exited');
+    addProcess('process_live', 'running', 'command');
+    addProcess('process_done', 'exited', 'command');
+    addProcess('process_41', 'exited', 'command');
     const worktreeDir = path.join(tempDir, 'other-worktree');
     fs.mkdirSync(worktreeDir);
     db.prepare(`insert into worktrees(id,project_id,repo_path,worktree_path,branch,created_by,created_at) values('worktree_x',?,?,?,'patterm/x','user',?)`).run(removedId, otherDir, worktreeDir, at);
@@ -253,8 +256,7 @@ async function main(): Promise<void> {
     db.prepare(`insert into conversations(id,provider,project_id,status,created_at,imported_at) values('legacy_conversation','claude',?,'ended',?,?)`).run(removedId, at, at);
 
     // Anything that can fail does so before a row is deleted, so the removal can be tried again.
-    addProcess('process_host', 'failed');
-    db.prepare(`update sessions set interface_mode = 'integrated' where process_id = 'process_host'`).run();
+    addProcess('process_host', 'failed', 'agent');
     hostRefusesStop = true;
     await assert.rejects(registry.call('project_remove', { project_id: removedId }), /host refused to stop/, 'an Integrated host that will not stop fails the removal');
     hostRefusesStop = false;
@@ -268,14 +270,14 @@ async function main(): Promise<void> {
 
     // Launches already starting finish first and are stopped too; new ones are refused.
     let finishLaunch!: () => void;
-    const launching = fence.run(removedId, () => new Promise<void>((resolve) => { finishLaunch = () => { addProcess('process_late', 'running'); resolve(); }; }));
+    const launching = fence.run(removedId, () => new Promise<void>((resolve) => { finishLaunch = () => { addProcess('process_late', 'running', 'agent'); resolve(); }; }));
     const removing = registry.call('project_remove', { project_id: removedId }) as Promise<{ removed: boolean; stopped: number }>;
     await new Promise((resolve) => setImmediate(resolve));
     await assert.rejects(fence.run(removedId, async () => undefined), /being removed/, 'no launch starts during a removal');
     finishLaunch();
     await launching;
     const removal = await removing;
-    assert.ok(terminalCalls.includes('terminal.process.stop pty_process_late'), 'a launch that finished during the removal is stopped');
+    assert.ok(integratedStops.includes('process_late'), 'a launch that finished during the removal is stopped');
     assert.deepEqual([removal.removed, removal.stopped], [true, 2]);
     assert.ok(terminalCalls.includes('terminal.process.stop pty_process_live'), 'running processes are stopped');
     assert.ok(terminalCalls.includes('terminal.process.close pty_process_done'), 'and every terminal is closed');

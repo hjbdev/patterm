@@ -2,7 +2,7 @@ import { pickServerDirectory } from './lib/directoryPicker';
 
 type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 type ControlState = { processId: string; controlling: boolean };
-type TerminalClientRequest = { kind: 'clipboard'; text: string } | { kind: 'open-url'; url: string };
+type TerminalClientRequest = { kind: 'clipboard'; text: string };
 type ServerSession = { password_set: boolean; signed_in: boolean; tailnet: boolean };
 
 // Whether this browser must sign in first. Null in the desktop app, or when
@@ -164,8 +164,6 @@ function createBrowserApi(): Window['patterm'] {
       // navigator.clipboard only exists on secure (HTTPS or localhost) pages.
       if (!navigator.clipboard) console.warn('Terminal copy needs an HTTPS page');
       else void navigator.clipboard.writeText(request.text).catch((error: unknown) => console.warn('Terminal copy was blocked by the browser', error));
-    } else if (request.kind === 'open-url' && /^(https?|mailto):/i.test(request.url)) {
-      window.open(request.url, '_blank', 'noopener,noreferrer');
     }
   }
 

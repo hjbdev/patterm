@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     };
     const notifications = new NotificationService(database, new SettingsService(database), { append: () => 'event' }, async () => {}, () => undefined);
     const terminal = { request: async () => ({}) } as unknown as TerminalService;
-    const closeRequests = new CloseRequestActions(database, { append: () => 'event' }, new CloseProcessAction(database, terminal, undefined, undefined, notifications, () => {}), async () => {}, () => {}, notifications);
+    const closeRequests = new CloseRequestActions(database, { append: () => 'event' }, new CloseProcessAction(database, terminal, undefined, notifications, () => {}), async () => {}, () => {}, notifications);
     const compaction = new IdleCompactionService(database, source, () => true);
     idleCompaction = compaction;
     const raised: string[] = [];
