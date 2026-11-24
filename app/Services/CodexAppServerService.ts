@@ -7,6 +7,7 @@ import type { DatabaseService } from './DatabaseService';
 import { detachedHostLauncher, hostConnectionError, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import {
   defaultAgentCapabilities,
+  thirtyMinuteCacheModel,
   type AgentAdapter,
   type AgentCapabilities,
   type AgentConversationSnapshot,
@@ -132,7 +133,7 @@ export const CODEX_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
   hibernation: { supported: true },
   archiveFallback: 'when-unavailable',
   input: { steering: true, nativeQueue: false, configureWhileBusy: true, routineDigest: false },
-  interactions: { permissions: true, questions: true, forms: true, parentReadAutoApprove: false },
+  interactions: { permissions: true, questions: true, forms: true, parentReadAutoApprove: false, choiceFormsAsQuestions: false },
   features: {
     goals: true,
     compact: true,
@@ -144,10 +145,14 @@ export const CODEX_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
     serviceTier: true,
     liveModels: true,
     sessionDirectory: false,
-    olderMessages: true
+    olderMessages: true,
+    taskOutput: true
   },
   selectors: { reasoning: 'effort', speed: 'speed' },
-  compaction: { defaultCacheTtlMs: CODEX_CACHE_TTL_MS }
+  compaction: {
+    defaultCacheTtlMs: CODEX_CACHE_TTL_MS,
+    modelCacheTtlMs: (model) => (model && thirtyMinuteCacheModel(model) ? CODEX_CACHE_TTL_MS : null)
+  }
 });
 
 export class CodexAppServerService implements AgentAdapter {

@@ -4,11 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { RegisterProcessAction } from '../Actions/RegisterProcessAction';
 import { RegisterSessionAction } from '../Actions/RegisterSessionAction';
-import type { HarnessProvider, McpServerSpec } from '../Harness/HarnessProvider';
+import type { HarnessId, HarnessProvider, McpServerSpec } from '../Harness/HarnessProvider';
 import {
+  presetHarnessInput,
   resolveHarnessLaunchSelection,
   type HarnessLaunchSelection
 } from '../Harness/HarnessPresets';
+import type { AgentCapabilities } from '../Agents/AgentProtocol';
 import type { ProjectLaunchFence } from './ProjectLaunchFence';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 import { nativePath, storedPath } from '../Platform/PathIdentity';
@@ -91,6 +93,7 @@ export interface HarnessLauncherDeps {
   debugLog?: Pick<DebugLogService, 'write'>;
   integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'> & {
     supportsHibernation?: (harness: string) => boolean;
+    capabilities?: (harness: string) => AgentCapabilities;
   };
   settings?: Pick<SettingsService, 'figuresEnabled'>;
   // A bot session's system context: its SMS-style brief and purview, or the
@@ -167,12 +170,14 @@ export class HarnessLauncher {
       display_name: string | null; cwd: string | null;
     } | undefined;
     if (!row || !row.resume_id || !row.mcp_identity) throw new Error('Hibernated Integrated session cannot be woken');
+    const parsedHarness = presetHarnessInput.safeParse(row.harness);
     const canWake = this.deps.integrated.supportsHibernation
       ? this.deps.integrated.supportsHibernation(row.harness)
-      : (row.harness === 'claude' || row.harness === 'codex' || row.harness === 'agy');
-    if (!canWake || (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'opencode' && row.harness !== 'agy')) {
+      : this.deps.integrated.capabilities?.(row.harness).hibernation.supported ?? (row.harness === 'claude' || row.harness === 'codex' || row.harness === 'agy');
+    if (!canWake || !parsedHarness.success) {
       throw new Error(`Cannot wake ${row.harness} session`);
     }
+    const harness: HarnessId = parsedHarness.data;
     const install = this.deps.workbench.listHarnesses().find((entry) => entry.harness === row.harness);
     if (!install || install.status !== 'available' || !install.executablePath) {
       throw new Error(`harness not available: ${row.harness}`);
@@ -191,7 +196,7 @@ export class HarnessLauncher {
             memory: (limit) => this.deps.assistantMemory?.snapshot(limit, { role: 'agent', projectId: row.project_id }) ?? ''
           }).trim();
     const cwd = storedPath(row.cwd ?? process.cwd());
-    const prepared = await this.deps.integrated.prepare(row.harness, {
+    const prepared = await this.deps.integrated.prepare(harness, {
       executable: install.executablePath,
       cwd,
       name: row.display_name,
@@ -227,8 +232,11 @@ export class HarnessLauncher {
   private async start(raw: LaunchHarnessInput, resume: HarnessResume | null): Promise<LaunchHarnessResult> {
     const input = launchHarnessInput.parse(raw);
     const selection = this.resolveSelection(input, Boolean(resume));
-    const key = selection.harness === 'opencode' ? resume?.resume_id : null;
-    if (key && this.attachingNativeSession.has(key)) throw new Error(`${providerName(selection.harness)} session is already being attached`);
+    const externalDaemon = this.deps.integrated?.capabilities
+      ? this.deps.integrated.capabilities(selection.harness).hostKind === 'external-daemon'
+      : selection.harness === 'opencode';
+    const key = externalDaemon ? resume?.resume_id : null;
+    if (key && this.attachingNativeSession.has(key)) throw new Error(`${this.providerName(selection.harness)} session is already being attached`);
     if (key) this.attachingNativeSession.add(key);
     // The session is registered once the harness has started, and holds the
     // identity from then on.
@@ -271,7 +279,10 @@ export class HarnessLauncher {
   private async startPrepared(input: ParsedLaunchHarnessInput, selection: HarnessLaunchSelection, resume: HarnessResume | null, identity: string): Promise<LaunchHarnessResult> {
     const timing = createLaunchTiming(this.deps.debugLog);
     const harness = selection.harness;
-    if (selection.serviceTier && harness !== 'codex') throw new Error(`${providerName(harness)} does not support service tier overrides`);
+    const supportsServiceTier = this.deps.integrated?.capabilities
+      ? this.deps.integrated.capabilities(harness).features.serviceTier
+      : harness === 'codex';
+    if (selection.serviceTier && !supportsServiceTier) throw new Error(`${this.providerName(harness)} does not support service tier overrides`);
     timing.mark('input.parsed', { harness, preset: selection.presetName, model: selection.model });
     if (!this.nativeMcpBinary() && !fs.existsSync(this.deps.shimPath)) {
       throw new Error(`Patterm MCP shim is missing at ${this.deps.shimPath}; run pnpm run build:mcp`);
@@ -307,7 +318,7 @@ export class HarnessLauncher {
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;
     const cwd = storedPath(input.cwd === undefined ? worktree?.worktree_path ?? project?.path ?? process.cwd() : nativePath(input.cwd));
     const displayName = input.name?.trim() || provider.displayName;
-    if (!this.deps.integrated) throw new Error(`${providerName(harness)} Integrated conversations are unavailable`);
+    if (!this.deps.integrated) throw new Error(`${this.providerName(harness)} Integrated conversations are unavailable`);
     const launchInput: IntegratedLaunchInput = {
       executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: resume?.resume_id ?? null,
       model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
@@ -408,13 +419,13 @@ export class HarnessLauncher {
     return row;
   }
 
+  private providerName(harness: string): string {
+    return this.deps.providers.find((provider) => provider.id === harness)?.displayName ?? harness;
+  }
+
   private initialPrompt(prompt: string | undefined): string {
     return prompt?.trim() ?? '';
   }
-}
-
-function providerName(harness: string): string {
-  return harness === 'claude' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness === 'opencode' ? 'OpenCode' : harness === 'agy' ? 'Antigravity' : harness;
 }
 
 function createLaunchTiming(debugLog: Pick<DebugLogService, 'write'> | undefined): { mark(event: string, data?: Record<string, unknown>): void } {

@@ -164,7 +164,7 @@
            that holds the pickers, and the send or stop button (order 1, 2 and 4). -->
       <div v-if="!compact" class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
         <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
-          <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
+          <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="selectorsDisabled" @select="emit('configure', selector.id, $event)" />
         </div>
         <!-- Goal mode turns the next submission into the agent's goal; the
              chip shows the goal it is working toward. It takes the free
@@ -205,7 +205,7 @@
         <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0 max-sm:order-4" :disabled="!canSend" :aria-label="goalMode ? 'Set goal' : sending ? 'Sending' : 'Send message'" :title="sendTitle">
           <ArrowUp class="h-4 w-4" />
         </Button>
-        <IntegratedControlDrawer v-if="controls.selectors.length" :selectors="controls.selectors" :disabled="!controlling || sending || ended" @select="(id, value) => emit('configure', id, value)" />
+        <IntegratedControlDrawer v-if="controls.selectors.length" :selectors="controls.selectors" :reasoning-selector-id="controls.capabilities?.selectors.reasoning" :disabled="selectorsDisabled" @select="(id, value) => emit('configure', id, value)" />
       </div>
     </div>
     <input ref="picker" type="file" multiple class="hidden" :accept="accept" @change="onPick">
@@ -241,6 +241,7 @@ import {
 } from '../lib/integratedComposer';
 import type { MentionAgent, MentionBot, MentionLauncher, MentionProcess } from '../lib/agentMentions';
 import type { IntegratedGoal, IntegratedGoalAction, IntegratedGoalSupport } from '../lib/integratedConversation';
+import type { AgentCapabilitiesDto } from '../types';
 import { harnessLabel } from '../lib/harnesses';
 import type { ComposerChip } from '../lib/composerDocument';
 import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor';
@@ -253,8 +254,7 @@ interface NativeCommand { name: string; description?: string; source?: 'patterm'
 
 const props = defineProps<{
   processId: string;
-  provider?: string | null;
-  controls: { selectors: Selector[]; commands: NativeCommand[]; goals?: IntegratedGoalSupport };
+  controls: { selectors: Selector[]; commands: NativeCommand[]; goals?: IntegratedGoalSupport; capabilities?: AgentCapabilitiesDto };
   controlling: boolean;
   sending: boolean;
   pending: boolean;
@@ -330,6 +330,7 @@ const previewSessionId = computed(() => {
   return item?.kind === 'agent' ? item.agent.session.id : null;
 });
 const goalSupport = computed(() => props.compact || !props.setGoal ? null : props.controls.goals ?? null);
+const selectorsDisabled = computed(() => !props.controlling || props.sending || props.ended || (Boolean(props.working) && props.controls.capabilities?.input.configureWhileBusy === false));
 // Goal mode borrows the editor; the message draft waits until it ends.
 const goalMode = ref(false);
 const goalBusy = ref(false);

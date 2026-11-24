@@ -13,6 +13,7 @@ import { openCodeProviderNames } from '../Harness/ModelCatalog';
 import type { IntegratedControls, IntegratedFormAction, LiveSettings, ReviewPrompt } from './IntegratedAgentService';
 import {
   defaultAgentCapabilities,
+  thirtyMinuteCacheModel,
   type AgentAdapter,
   type AgentCapabilities,
   type AgentConversationSnapshot,
@@ -180,8 +181,8 @@ export const OPENCODE_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities
   hostKind: 'external-daemon',
   hibernation: { supported: false },
   archiveFallback: 'never',
-  input: { steering: true, nativeQueue: true, configureWhileBusy: true, routineDigest: false },
-  interactions: { permissions: true, questions: false, forms: true, parentReadAutoApprove: false },
+  input: { steering: true, nativeQueue: true, configureWhileBusy: true, routineDigest: false, maxContextBytes: 6_000 },
+  interactions: { permissions: true, questions: false, forms: true, parentReadAutoApprove: false, choiceFormsAsQuestions: true },
   features: {
     goals: true,
     compact: true,
@@ -193,13 +194,19 @@ export const OPENCODE_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities
     serviceTier: false,
     liveModels: true,
     sessionDirectory: true,
-    olderMessages: true
+    olderMessages: true,
+    taskOutput: true
   },
   selectors: { reasoning: 'variant' },
   compaction: {
     defaultCacheTtlMs: 27 * 60_000,
-    modelCacheTtlMs: (model) => model && /anthropic|claude/i.test(model) ? 57 * 60_000 : 27 * 60_000
-  }
+    modelCacheTtlMs: (model) => {
+      if (!model) return null;
+      if (model.startsWith('claude-agent/')) return 57 * 60_000;
+      return model.startsWith('openai/') && thirtyMinuteCacheModel(model.slice('openai/'.length)) ? 27 * 60_000 : null;
+    }
+  },
+  messageIdPrefix: 'msg_'
 });
 
 // OpenCode owns its shared daemon. Patterm registers a runtime-only MCP bridge

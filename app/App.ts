@@ -11,6 +11,8 @@ import { StatusLabelActions } from './Actions/StatusLabelActions';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
 import { AgentAdapterRegistry } from './Agents/AgentAdapterRegistry';
+import { serializeAgentCapabilities } from './Agents/AgentProtocol';
+import type { AgentHistoryProvider } from './Services/AgentHistory/AgentHistoryTypes';
 import { integratedActivityNotifications } from './Listeners/IntegratedActivityNotifications';
 import { ParentRequestService } from './Services/ParentRequestService';
 import { integratedHistoryCheckpoints } from './Listeners/IntegratedHistoryCheckpoints';
@@ -498,7 +500,14 @@ async function createApplicationResources(
   notificationService.resumeTurns();
   debugLog.write('runtime', 'integrated.reconciled', integratedReconciled);
 
-  const workbench = new WorkbenchRepository(database, undefined, timers, Date.now, () => terminal.isAvailable());
+  const workbench = new WorkbenchRepository(
+    database,
+    undefined,
+    timers,
+    Date.now,
+    () => terminal.isAvailable(),
+    (harness) => agentAdapters.has(harness) ? serializeAgentCapabilities(agentAdapters.capabilities(harness)) : undefined
+  );
   const localSync = new WorkbenchSyncService(() => {
     localSyncDirty = false;
     return workbench.snapshot();
@@ -626,7 +635,7 @@ async function createApplicationResources(
   defer(integrated.onActivityChange(integratedHistoryCheckpoints({
     provider: (processId) => {
       const row = database.connection.prepare('select harness from sessions where process_id = ? or id = ? limit 1').get(processId, processId) as { harness: string | null } | undefined;
-      return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode' || row?.harness === 'agy' ? row.harness : null;
+      return row?.harness && agentAdapters.has(row.harness) ? row.harness as AgentHistoryProvider : null;
     },
     flush: (provider) => historyWatcher.flush(provider)
   })));
@@ -717,6 +726,7 @@ async function createApplicationResources(
     {
       log: (event, data) => debugLog.write('bots', event, data),
       conversationSaved: (harness, cwd, resumeId) => agentAdapters.capabilities(harness).hibernation.canResume?.(cwd, resumeId) ?? true,
+      capabilities: (harness) => agentAdapters.capabilities(harness),
       memory: assistantMemory,
       history: historyReadService,
       launched: (botId) => botRelay.launched(botId),
@@ -724,7 +734,7 @@ async function createApplicationResources(
     });
   botService = bots;
   const botRelay = new BotRelay(database, bots, codexAppServer, integrated, settings, assistantInbox,
-    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId), notify: raiseNotification });
+    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId), notify: raiseNotification, capabilities: (harness) => agentAdapters.capabilities(harness) });
   integrated.setHeldPromptGuard(
     (processId, prompt) => botRelay.allowHeldPrompt(processId, prompt),
     (processId, digestId) => botRelay.previewFocusDigest(processId, digestId)
@@ -851,6 +861,7 @@ async function createApplicationResources(
     toAssistant: (processId, message) => botRelay.deliverAgentMessage(ASSISTANT_BOT_ID, processId, message),
     onChanged: (workbench) => notifyChanged(workbench ? ['routines', 'workbench'] : ['routines']),
     appDataPath: options.appDataPath,
+    supportsServiceTier: (harness) => agentAdapters.capabilities(harness).features.serviceTier,
     log: (event, data) => debugLog.write('routines', event, data)
   });
   defer(() => routines.dispose());
@@ -907,7 +918,7 @@ async function createApplicationResources(
   registerBrowserTools(mcp, browserActions);
   registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);
-  registerIdleCompactionTools(mcp, settings);
+  registerIdleCompactionTools(mcp, settings, agentAdapters);
   registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data), () => remote.remoteBots());
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';

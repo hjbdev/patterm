@@ -55,7 +55,7 @@
                 <label class="text-xs text-muted-foreground" for="bot-copy-profile">Copy from</label>
                 <SettingsChoice id="bot-copy-profile" :model-value="null" :options="presetOptions" placeholder="A profile's settings…" aria-label="Copy a profile's settings" @update:model-value="copyProfile" />
               </template>
-              <HarnessProfileFields v-model:fields="editor.fields" :catalog="catalog" id-prefix="bot" />
+              <HarnessProfileFields v-model:fields="editor.fields" :catalog="catalog" :supports-service-tier="supportsServiceTier(editor.fields.harness)" id-prefix="bot" />
               <span class="text-xs text-muted-foreground">Projects</span>
               <p v-if="editorIsAssistant" class="text-xs text-muted-foreground">All projects. The assistant also adds and renames projects.</p>
               <SettingsChoice v-else v-model="editor.purviewKind" :options="PURVIEW_KINDS" aria-label="Projects" segmented />
@@ -107,7 +107,7 @@
               <label class="text-xs text-muted-foreground" for="bot-voice">Voice</label>
               <div class="flex items-center gap-2">
                 <Switch id="bot-voice" v-model="editor.voice.enabled" />
-                <span class="text-xs text-muted-foreground">{{ editorHarness === 'codex' ? 'Talk to it in a GPT-Live voice call.' : 'Voice calls need a Codex profile.' }}</span>
+                <span class="text-xs text-muted-foreground">{{ editorSupportsVoice ? 'Talk to it in a GPT-Live voice call.' : 'Voice calls are not supported by this harness.' }}</span>
               </div>
               <template v-if="editor.voice.enabled">
                 <label class="text-xs text-muted-foreground" for="bot-voice-name">Speaks as</label>
@@ -243,7 +243,7 @@ const EMOJI = ['🦊', '🐙', '🦉', '🐢', '🤖', '🌱', '⚡', '🧠', '�
 
 const route = useRoute();
 const { settings, rows, voices } = useBots();
-const { projects } = useWorkbench();
+const { projects, harnesses } = useWorkbench();
 const bots = computed(() => settings.value.bots);
 const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, agy: null } });
 const userProjects = computed(() => projects.value.map((item) => item.project).filter((project) => project.kind === 'workspace' || project.kind === 'personal' || !project.kind));
@@ -251,6 +251,10 @@ const catalog = ref<ModelCatalog>(emptyModelCatalog());
 const presetOptions = computed(() => presets.value.presets.map((preset) => ({ value: preset.id as string | null, label: `${profileName(preset)} · ${harnessLabel(preset.harness)}` })));
 const editorIsAssistant = computed(() => editor.value ? isAssistantBot(editor.value) : false);
 const editorHarness = computed(() => editor.value?.fields.harness ?? null);
+function supportsServiceTier(harness: ProfileHarness): boolean | undefined {
+  return harnesses.value.find((item) => item.harness === harness)?.capabilities?.features.serviceTier;
+}
+const editorSupportsVoice = computed(() => editorHarness.value ? (harnesses.value.find((item) => item.harness === editorHarness.value)?.capabilities?.features.voice ?? editorHarness.value === 'codex') : false);
 const voiceOptions = computed(() => [
   { value: null as string | null, label: 'Default' },
   ...voices.value.map((voice) => ({ value: voice as string | null, label: voice[0]!.toUpperCase() + voice.slice(1) }))
@@ -417,7 +421,7 @@ async function applyEditor(): Promise<void> {
   const name = current.name.trim();
   if (!name) { editorError.value = 'Give the bot a name.'; return; }
   if (bots.value.some((bot) => bot.id !== current.id && bot.name.toLowerCase() === name.toLowerCase())) { editorError.value = `A bot named '${name}' already exists.`; return; }
-  const profile = settingsFrom(current.fields);
+  const profile = settingsFrom(current.fields, supportsServiceTier(current.fields.harness));
   if ('error' in profile) { editorError.value = profile.error; return; }
   if (current.avatar.kind === 'emoji' && !(current.avatar.emoji && isSingleEmoji(current.avatar.emoji))) { editorError.value = 'Choose one emoji.'; return; }
   if (current.avatar.kind === 'picture' && !current.avatar.picture) { editorError.value = 'Choose a picture.'; return; }

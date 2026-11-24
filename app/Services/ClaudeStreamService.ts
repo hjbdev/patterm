@@ -67,19 +67,20 @@ export class ClaudeStreamService implements AgentAdapter {
       },
       archiveFallback: 'always',
       input: { steering: false, nativeQueue: true, configureWhileBusy: true, routineDigest: true },
-      interactions: { permissions: true, questions: true, forms: true, parentReadAutoApprove: false },
+      interactions: { permissions: true, questions: true, forms: true, parentReadAutoApprove: false, choiceFormsAsQuestions: false },
       features: {
         goals: true,
         compact: true,
         slashCommands: true,
-        memoryPush: true,
+        memoryPush: process.platform !== 'win32',
         quietReplies: true,
         voice: false,
         statelessGenerate: false,
         serviceTier: false,
         liveModels: true,
         sessionDirectory: false,
-        olderMessages: false
+        olderMessages: false,
+        taskOutput: true
       },
       selectors: { reasoning: 'effort' },
       compaction: { defaultCacheTtlMs: CLAUDE_CACHE_TTL_MS }

@@ -3,6 +3,8 @@
 // with `exactOptionalPropertyTypes`. Timestamps are ISO strings (stored as text).
 
 import type { StatusLabelColor } from './lib/statusLabels';
+import type { AgentCapabilitiesDto } from '../../app/Agents/AgentCapabilitiesDto';
+export type { AgentCapabilitiesDto };
 
 export type ActorType = 'human' | 'agent' | 'system';
 export interface AutoSummaryRecord { coverage?: string | null; text: string; status?: string | null; generatedAt: string; provider: string; model: string; }
@@ -172,6 +174,7 @@ export interface HarnessInstallationRecord {
   status: HarnessStatus | string;
   discoveredAt: string;
   lastCheckedAt: string;
+  capabilities?: AgentCapabilitiesDto;
 }
 
 export interface ConversationRecord {

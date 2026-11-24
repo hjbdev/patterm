@@ -8,17 +8,19 @@
   </template>
   <label class="text-xs text-muted-foreground" :for="`${idPrefix}-reasoning`">Reasoning</label>
   <SettingsChoice :id="`${idPrefix}-reasoning`" :model-value="fields.reasoning" :options="reasoningChoices(catalog, fields)" aria-label="Reasoning" :disabled="fields.model === DEFAULT_MODEL" @update:model-value="(value) => { fields.reasoning = value; }" />
-  <template v-if="fields.harness === 'codex'">
+  <template v-if="showServiceTier">
     <label class="text-xs text-muted-foreground" :for="`${idPrefix}-speed`">Speed</label>
     <SettingsChoice :id="`${idPrefix}-speed`" :model-value="fields.serviceTier" :options="speedChoices(catalog, fields)" aria-label="Speed" @update:model-value="(value) => { fields.serviceTier = value; }" />
   </template>
 </template>
 
 <script setup lang="ts">
-import { CUSTOM_MODEL, DEFAULT_MODEL, changeModel, modelChoices, reasoningChoices, speedChoices, type ModelCatalog, type ProfileFieldsState } from '../lib/profileFields';
+import { computed } from 'vue';
+import { CUSTOM_MODEL, DEFAULT_MODEL, changeModel, modelChoices, reasoningChoices, speedChoices, tiersFor, type ModelCatalog, type ProfileFieldsState } from '../lib/profileFields';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import { Input } from './ui/input';
 
-defineProps<{ catalog: ModelCatalog; idPrefix: string }>();
+const props = defineProps<{ catalog: ModelCatalog; idPrefix: string; supportsServiceTier?: boolean | undefined }>();
 const fields = defineModel<ProfileFieldsState>('fields', { required: true });
+const showServiceTier = computed(() => props.supportsServiceTier ?? (tiersFor(props.catalog, fields.value.harness, null).length > 0 || fields.value.harness === 'codex'));
 </script>

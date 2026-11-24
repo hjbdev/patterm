@@ -1,3 +1,4 @@
+import type { AgentCapabilitiesDto } from '../Agents/AgentProtocol';
 import { harnessProviders } from '../Harness/providers';
 import { commandFromShellArgv } from '../Platform/Shell';
 import type { DatabaseService } from '../Services/DatabaseService';
@@ -133,6 +134,7 @@ export interface HarnessInstallationDto {
   status: string;
   discoveredAt: string;
   lastCheckedAt: string;
+  capabilities?: AgentCapabilitiesDto;
 }
 
 export interface ProjectWorkbenchDto {
@@ -242,7 +244,8 @@ export class WorkbenchRepository {
     private readonly settings = new SettingsService(database),
     private readonly timers?: Pick<TimerService, 'list'>,
     private readonly now: () => number = Date.now,
-    private readonly terminalAvailable: () => boolean = () => false
+    private readonly terminalAvailable: () => boolean = () => false,
+    private readonly harnessCapabilities?: (harness: string) => AgentCapabilitiesDto | undefined
   ) {}
 
   private get db() {
@@ -271,7 +274,12 @@ export class WorkbenchRepository {
     const rows = this.db
       .prepare(`select * from harness_installations order by harness asc`)
       .all() as HarnessInstallationRow[];
-    return rows.filter((row) => harnessProviders.some((provider) => provider.id === row.harness)).map(mapHarness);
+    return rows
+      .filter((row) => harnessProviders.some((provider) => provider.id === row.harness))
+      .map((row) => {
+        const capabilities = this.harnessCapabilities?.(row.harness);
+        return capabilities ? { ...mapHarness(row), capabilities } : mapHarness(row);
+      });
   }
 
   snapshot(): WorkbenchSnapshotDto {

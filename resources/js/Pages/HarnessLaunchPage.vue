@@ -22,6 +22,7 @@ import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { LoaderCircle } from 'lucide-vue-next';
 import { harnessLaunches, harnessLaunchLabel } from '../lib/harnessLaunches';
+import { harnessLabel } from '../lib/harnesses';
 import { toastLaunchError } from '../lib/launchErrors';
 import { isOpenCodeVersionMismatch } from '../../../app/Services/OpenCodeServiceErrors';
 import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
@@ -37,7 +38,7 @@ function recover(): void {
   const current = launch.value;
   if (!current) return;
   // Keep the existing explicit confirmation for a shared-server restart.
-  toastLaunchError(new Error(current.error), 'Could not launch OpenCode', () => { harnessLaunches.dismiss(current.id); launchHarness(current.input); });
+  toastLaunchError(new Error(current.error), `Could not launch ${harnessLabel(current.input.harness)}`, () => { harnessLaunches.dismiss(current.id); launchHarness(current.input); });
 }
 function dismiss(): void {
   const current = launch.value;

@@ -174,6 +174,7 @@ export interface RoutineServiceDeps {
   onChanged: (workbench: boolean) => void;
   appDataPath: string;
   log?: (event: string, data: Record<string, unknown>) => void;
+  supportsServiceTier?: (harness: string) => boolean;
   now?: () => number;
   defaultTimeZone?: string;
 }
@@ -572,7 +573,8 @@ export class RoutineService {
       throw new Error(`unknown ${input.harness} preset: ${input.preset}`);
     }
     if (!input.model && (input.reasoning || input.service_tier)) throw new Error('Effort and speed need a model');
-    if (input.service_tier && input.harness !== 'codex') throw new Error('Only Codex routines choose a speed');
+    const supportsSpeed = this.deps.supportsServiceTier ? this.deps.supportsServiceTier(input.harness) : input.harness === 'codex';
+    if (input.service_tier && !supportsSpeed) throw new Error('Only Codex routines choose a speed');
     return { preset: input.preset, model: input.model, reasoning: input.model ? input.reasoning : null, service_tier: input.model ? input.service_tier : null };
   }
 

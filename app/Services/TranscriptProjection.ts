@@ -4,6 +4,7 @@
 // keeps readers free of provider branching. Everything here is pure so the
 // smoke tests can exercise it without a browser.
 
+import type { AgentCapabilitiesDto } from '../Agents/AgentCapabilitiesDto';
 import { normaliseGoal, type IntegratedGoal, type IntegratedGoalSupport } from './IntegratedGoal';
 export * from './IntegratedGoal';
 
@@ -255,7 +256,7 @@ export interface IntegratedNativeCommand { name: string; description?: string; s
 // `revision`, when the provider has one, matches the `controls_revision` its
 // snapshots report while the controls are unchanged.
 // `goals` is present for harnesses with native goals.
-export interface IntegratedControls { selectors: IntegratedControlSelector[]; commands: IntegratedNativeCommand[]; revision?: string; goals?: IntegratedGoalSupport }
+export interface IntegratedControls { selectors: IntegratedControlSelector[]; commands: IntegratedNativeCommand[]; revision?: string; goals?: IntegratedGoalSupport; capabilities?: AgentCapabilitiesDto }
 
 // The last state a pane showed for a process. Switching back paints it at once
 // and the fresh snapshot replaces it; it is never treated as authoritative.
