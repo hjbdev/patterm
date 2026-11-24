@@ -27,7 +27,9 @@ async function main(): Promise<void> {
   const executable = writeNodeCli(path.join(directory, 'agy'), String.raw`
 const fs = require('node:fs');
 const out = frame => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...frame})+'\n');
-const result = (id,value={}) => out({id,result:value});
+const open = new Set();
+const superseded = new Set();
+const result = (id,value={}) => {open.delete(id);out({id,result:value});};
 let prompt = null;
 let stopAcrossPromptEnd = false;
 const update = value => out({method:'session/update',params:{sessionId:'native-session',update:value}});
@@ -60,7 +62,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(q.method==='session/set_model') {options[1].currentValue='low';update({sessionUpdate:'config_option_update',configOptions:options});return result(q.id);}
  if(q.method==='session/set_config_option') {options.find(o=>o.id===q.params.configId).currentValue=q.params.value;return result(q.id,{configOptions:options});}
  if(q.method==='session/prompt') {
-  const text=q.params.prompt[0].text;prompt=q.id;
+  const text=q.params.prompt[0].text;
+  // agy 1.5 steers: a prompt sent into an open turn ends the earlier
+  // session/prompt and carries its work on. A refused steer leaves it open.
+  if(text!=='reject-after-background-update') for(const id of open){superseded.add(id);result(id,{stopReason:'end_turn'});}
+  open.add(q.id);prompt=q.id;
   if(text==='late') {setTimeout(()=>{echo(text);say('Late accepted');result(prompt,{stopReason:'end_turn'});prompt=null;},8300);return;}
    if(text==='failure') return out({id:q.id,error:{code:-32000,message:'Native turn failed'}});
    if(text==='no-live-echo') {
@@ -107,6 +113,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
    const ready = suffix => {
     const file = process.env.ACP_TRACE + suffix;
     const timer = setInterval(() => {
+     if(suffix==='.end-turn'&&superseded.has(q.id)) {clearInterval(timer);return;}
      if(!fs.existsSync(file)) return;
      clearInterval(timer);
       if(suffix==='.end-turn') {
@@ -337,28 +344,30 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     try {
       queue.observe('process');
       await ask('tool-outlives-prompt');
-      assert.equal((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'held-after-tool' }) as any).delivery, 'queued');
-      fs.writeFileSync(trace + '.end-turn', '');
-      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
-      // Pending, not failed: re-announcing a known running tool does not abandon it.
-      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'pending', 'a held follow-up does not wait for a tool that outlives its turn');
+      assert.notEqual((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'steer-after-tool' }) as any).delivery, 'queued', 'a prompt sent into an open turn steers it');
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'steer-after-tool'));
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'in_progress', 'the prompt a steer ends does not abandon its running tool');
+      assert.equal(state.tasks.find((task: any) => task.id === 'tool:outlives')?.stoppable, true, 'the steered turn ended, so its running command is a stoppable task');
       fs.writeFileSync(trace + '.complete-tool', '');
       await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:outlives')?.tool.state.status === 'completed');
-      fs.unlinkSync(trace + '.end-turn');
       await ask('tool-never-starts');
-      assert.equal((await queue.prompt('process', { text: 'after-unstarted-tool', messageId: 'held-after-unstarted' }) as any).delivery, 'queued');
-      fs.writeFileSync(trace + '.end-turn', '');
-      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-unstarted'));
-      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:unstarted').tool.state.status, 'failed');
-      fs.unlinkSync(trace + '.end-turn');
+      assert.notEqual((await queue.prompt('process', { text: 'after-unstarted-tool', messageId: 'steer-after-unstarted' }) as any).delivery, 'queued');
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'steer-after-unstarted'));
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:unstarted').tool.state.status, 'failed', 'the steer’s own turn end settles a tool that never started');
       await ask('tool-never-starts');
       const rejected = { text: 'reject-after-background-update', messageId: 'held-rejected' };
-      assert.equal((await queue.prompt('process', rejected) as any).delivery, 'queued');
+      assert.equal((await queue.prompt('process', rejected) as any).delivery, 'queued', 'a steer agy refuses waits for the turn it would have joined');
+      state = await provider.conversation('process');
+      assert.equal(state.status, 'working', 'a refused steer leaves the earlier turn running');
+      assert(!state.messages.data.some((row: any) => row.clientMessageId === rejected.messageId));
+      const refusedSends = () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === rejected.text).length;
+      const beforeEnd = refusedSends();
       fs.writeFileSync(trace + '.end-turn', '');
       await waitFor(provider, () => Boolean(database.connection.prepare("select 1 from integrated_held_prompts where message_id = 'held-rejected' and error is not null").get()));
       assert.equal(await provider.reconcile('process', 'held-rejected'), 'unknown');
-      assert.equal(frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === rejected.text).length, 1);
+      assert.equal(refusedSends(), beforeEnd + 1, 'it is sent once more when that turn ends, then held with its error');
       await queue.updateQueued('process', 'held-rejected', 'cancel');
+      fs.unlinkSync(trace + '.end-turn');
     } finally { queue.dispose(); }
     await ask('clear-diff');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');

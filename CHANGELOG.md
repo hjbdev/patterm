@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Messages to Antigravity now steer a running turn instead of waiting for it
+  to end. agy 1.5 keeps a turn open until its subagents and background
+  commands finish, so a message could wait for minutes. A message still waits
+  while agy asks for an approval, and goes as soon as you answer it.
+- Antigravity background commands appear on the task shelf, and can be
+  stopped, while agy holds its turn open for them. Stopping one also ends that
+  turn, because ACP has no other way to stop it.
 - Hardened integrated agent runtimes across all four adapters:
   - Unified live and archived conversation reads for hibernated sessions in
     `ConversationOutputService`, renderer prefetch, `IntegratedAgentService.isEmpty()`,
