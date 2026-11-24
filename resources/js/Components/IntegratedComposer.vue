@@ -1,8 +1,13 @@
 <template>
-  <form class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] shrink-0 p-4" @submit.prevent="submit">
+  <!-- An empty conversation centres the composer: the agent's logo above
+       (the hero slot), a one-row card, and its pickers below. The first
+       message slides it down into the full composer. -->
+  <form class="mx-auto w-full shrink-0" :class="hero ? 'my-auto max-w-[40rem] px-4 pb-[14vh] pt-4' : 'max-w-[var(--patterm-conversation-max-width,50rem)] p-4'" @submit.prevent="submit">
+    <div v-if="hero && $slots.hero" class="pb-3.5"><slot name="hero" /></div>
     <div
-      class="relative rounded-xl border bg-background shadow-sm transition-colors"
-      :class="dragging ? 'border-dashed border-primary/70' : 'border-border'"
+      ref="card"
+      class="relative border bg-muted/50 shadow-sm transition-colors"
+      :class="[hero ? 'rounded-[26px]' : 'rounded-xl', dragging ? 'border-dashed border-primary/70' : 'border-foreground/[0.07]']"
       @dragover.prevent="dragging = true"
       @dragleave="dragging = false"
       @drop.prevent="onDrop"
@@ -144,17 +149,20 @@
 
       <!-- Tiptap's editable element takes its role, classes and ARIA state from editorAttributes. -->
       <!-- A compact composer, as in a bot's chat, is one row: the text, attach and send. -->
-      <div :class="compact ? 'flex items-end gap-1 p-1.5' : ''">
-        <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', compact && 'min-w-0 flex-1')" />
-        <template v-if="compact">
-          <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground" :disabled="!controlling || ended || goalMode" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+      <div :class="hero ? 'flex items-end gap-1.5 p-2' : compact ? 'flex items-end gap-1 p-1.5' : ''">
+        <Button v-if="hero" type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 rounded-full text-muted-foreground" :disabled="!controlling || ended || goalMode" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+          <Plus class="h-4 w-4" />
+        </Button>
+        <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', (compact || hero) && 'min-w-0 flex-1 self-center')" />
+        <template v-if="compact || hero">
+          <Button v-if="compact" type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground" :disabled="!controlling || ended || goalMode" aria-label="Attach files" title="Attach files" @click="picker?.click()">
             <Paperclip class="h-4 w-4" />
           </Button>
           <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" @click="emit('takeControl')">Take control</Button>
           <Button v-else-if="stoppable" type="button" size="icon" class="h-8 w-8 shrink-0" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
             <Square class="h-3.5 w-3.5 fill-current" />
           </Button>
-          <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
+          <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0" :class="hero ? 'rounded-full' : ''" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
             <ArrowUp class="h-4 w-4" />
           </Button>
         </template>
@@ -162,7 +170,11 @@
 
       <!-- Phones keep one row: status on the left, then attach, the drawer
            that holds the pickers, and the send or stop button (order 1, 2 and 4). -->
-      <div v-if="!compact" class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
+      <div v-if="!compact && !hero" ref="toolbar" class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
+        <!-- Which agent CLI runs this conversation. -->
+        <span v-if="harness" class="-mr-1.5 hidden h-8 w-7 shrink-0 items-center justify-center sm:flex" :title="`Running on ${harnessLabel(harness)}`">
+          <AgentIcon :harness="harness" class="h-3.5 w-3.5 text-muted-foreground" />
+        </span>
         <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
           <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="selectorsDisabled" @select="emit('configure', selector.id, $event)" />
         </div>
@@ -208,6 +220,13 @@
         <IntegratedControlDrawer v-if="controls.selectors.length" :selectors="controls.selectors" :reasoning-selector-id="controls.capabilities?.selectors.reasoning" :disabled="selectorsDisabled" @select="(id, value) => emit('configure', id, value)" />
       </div>
     </div>
+    <div v-if="hero && (controls.selectors.length || $slots.meta)" class="flex flex-wrap items-center justify-center gap-0.5 pt-3.5 text-muted-foreground">
+      <template v-for="(selector, index) in controls.selectors" :key="selector.id">
+        <span v-if="index" aria-hidden="true" class="text-xs opacity-50">·</span>
+        <IntegratedControlPicker :selector="selector" :disabled="selectorsDisabled" @select="emit('configure', selector.id, $event)" />
+      </template>
+      <slot name="meta" />
+    </div>
     <input ref="picker" type="file" multiple class="hidden" :accept="accept" @change="onPick">
   </form>
 </template>
@@ -216,7 +235,7 @@
 import { cn } from '@/lib/utils';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { EditorContent } from '@tiptap/vue-3';
-import { ArrowUp, Paperclip, Square, Target, TerminalSquare } from 'lucide-vue-next';
+import { ArrowUp, Paperclip, Plus, Square, Target, TerminalSquare } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import AgentIcon from './AgentIcon.vue';
 import ComposerWorkingBorder from './ComposerWorkingBorder.vue';
@@ -248,6 +267,7 @@ import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
 import { touchScreen } from '../lib/touch';
+import { composerPlace, flipComposer, takeComposerHandoff } from '../lib/composerFlip';
 
 interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> }
 interface NativeCommand { name: string; description?: string; source?: 'patterm' }
@@ -278,6 +298,10 @@ const props = defineProps<{
   goal?: IntegratedGoal | null | undefined;
   // Sets the goal from goal mode; resolves whether it was set.
   setGoal?: ((objective: string) => Promise<boolean>) | undefined;
+  // The agent CLI, shown beside the pickers and named by an empty conversation.
+  harness?: string | null | undefined;
+  // An empty conversation's centred composer.
+  hero?: boolean;
 }>();
 const emit = defineEmits<{
   send: [request: ComposerSendPayload & { hash: string }];
@@ -292,6 +316,8 @@ const emit = defineEmits<{
 const draft = computed(() => draftFor(props.processId));
 const editor = shallowRef<ComposerEditor | null>(null);
 const menu = ref<HTMLElement>();
+const card = ref<HTMLElement>();
+const toolbar = ref<HTMLElement>();
 const listboxId = `composer-menu-${useId()}`;
 const picker = ref<HTMLInputElement>();
 const dragging = ref(false);
@@ -341,12 +367,15 @@ const placeholder = computed(() => {
   if (props.ended) return props.restartable ? 'Choose a recovery option above' : 'This session has ended';
   if (goalMode.value) return 'Describe when the work is done…';
   if (props.compact) return `Message ${props.addressee ?? 'agent'}`;
+  if (props.hero) return props.harness ? `What should ${harnessLabel(props.harness)} work on?` : 'What do you want to work on?';
   const parts = ['Message agent', ...mentionable.value ? ['type @ for agents'] : [], ...props.controls.commands.length ? ['/ for commands'] : []];
   return parts.join(', ');
 });
 // The editable element is the combobox that owns the menus.
 const editorAttributes = computed<Record<string, string>>(() => ({
-  class: props.compact
+  class: props.hero
+    ? 'block max-h-44 min-h-6 w-full overflow-y-auto bg-transparent px-1 py-1 text-[15px] leading-6 outline-none'
+    : props.compact
     ? 'block max-h-44 min-h-8 w-full overflow-y-auto bg-transparent px-2.5 py-1.5 text-sm leading-5 outline-none'
     : 'block max-h-44 min-h-14 w-full overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-sm leading-5 outline-none',
   'data-patterm-integrated-input': '',
@@ -703,10 +732,35 @@ watch(() => props.processId, () => {
   void nextTick(focusOnArrival);
 });
 watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
+// Leaving the centred layout, measure the card before the page re-lays out,
+// then slide it from there to its place at the bottom.
+watch(() => props.hero, (hero, was) => {
+  if (hero || !was || !card.value) return;
+  const from = composerPlace(card.value);
+  void nextTick(() => {
+    if (card.value) flipComposer(card.value, from, toolbar.value ? [toolbar.value] : []);
+    focusEditor();
+  });
+});
 // Created last so the editor's callbacks can read everything above, and
 // before the first render so the composer never renders without it.
 mountEditor();
-onMounted(() => void nextTick(focusOnArrival));
+onMounted(() => {
+  // An agent started from the new conversation page can open before its
+  // launch view does; its composer then slides in from the page's instead.
+  const handed = props.hero || props.compact ? null : takeComposerHandoff();
+  const element = card.value;
+  if (handed && element) {
+    // The editor renders after this, so measure the card a frame later,
+    // hidden until then so it never shows at its final place first.
+    element.style.visibility = 'hidden';
+    requestAnimationFrame(() => {
+      element.style.visibility = '';
+      flipComposer(element, handed, toolbar.value ? [toolbar.value] : []);
+    });
+  }
+  void nextTick(focusOnArrival);
+});
 onBeforeUnmount(() => {
   if (blurTimer !== null) {
     clearTimeout(blurTimer);

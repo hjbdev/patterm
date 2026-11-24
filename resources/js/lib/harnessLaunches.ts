@@ -6,6 +6,10 @@ export interface HarnessLaunchInput {
   targetProjectId: string;
   harness: string;
   preset?: string;
+  // Override the preset's model and reasoning for this launch only.
+  model?: string;
+  reasoning?: string;
+  worktreeId?: string;
   host?: string;
   // Sent as the agent's first message once it is ready.
   initialPrompt?: string;
@@ -27,6 +31,9 @@ export function harnessLaunchLabel(launch: HarnessLaunch): string {
 // Temporary renderer records, not processes or sessions. Native launch and
 // registration still belong to the backend. Never persist or replay requests.
 const launches = shallowReactive<HarnessLaunch[]>([]);
+// Agents launched with a first message. Their conversation is about to start,
+// so they skip the empty conversation's centred composer.
+const promptedSessions = new Set<string>();
 let sequence = 0;
 function update(id: string, fields: Partial<HarnessLaunch>): void {
   const index = launches.findIndex((launch) => launch.id === id);
@@ -39,10 +46,14 @@ function start(input: HarnessLaunchInput, call: (args: Record<string, unknown>) 
     harness: launch.input.harness,
     project_id: launch.input.targetProjectId,
     ...(launch.input.preset ? { preset: launch.input.preset } : {}),
+    ...(launch.input.model ? { model: launch.input.model } : {}),
+    ...(launch.input.reasoning ? { reasoning: launch.input.reasoning } : {}),
+    ...(launch.input.worktreeId ? { worktree_id: launch.input.worktreeId } : {}),
     ...(launch.input.initialPrompt ? { initial_prompt: launch.input.initialPrompt } : {})
   })).then((result) => {
     const sessionId = (result as { session_id?: unknown } | null)?.session_id;
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('The launch returned no session. Check the project’s agents before launching again.');
+    if (launch.input.initialPrompt) promptedSessions.add(sessionId);
     update(launch.id, { state: 'ready', sessionId });
     return sessionId;
   }).catch((error: unknown) => {
@@ -56,4 +67,4 @@ function dismiss(id: string): void {
   if (index >= 0 && launches[index]?.state !== 'starting') launches.splice(index, 1);
 }
 
-export const harnessLaunches = { launches, start, dismiss };
+export const harnessLaunches = { launches, start, dismiss, promptedSessions };

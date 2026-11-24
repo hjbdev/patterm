@@ -3,11 +3,11 @@
     <!-- The task drawer covers the conversation; keep focus and assistive
          technology out of what it hides. -->
     <div class="contents" :inert="openedTask ? true : undefined">
-      <div class="relative flex min-h-0 flex-1 flex-col">
+      <div class="relative flex min-h-0 flex-col" :class="!blank && 'flex-1'">
         <LoadingBar :active="loadingTranscript" label="Loading conversation" :inline="embedded === true" />
         <!-- Runs on under the composer's top padding when nothing sits
              between them, so text fades out at the card's edge. -->
-        <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
+        <div v-show="!blank" class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
           <ConversationTranscript ref="transcriptRef" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :project-id="projectId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
       </div>
@@ -239,6 +239,8 @@
         :launchers="mentionLaunchers"
         :goal="shownGoal"
         :set-goal="setGoal"
+        :harness="harness ?? provider"
+        :hero="blank"
         @send="sendRequest"
         @goal="goalAction"
         @command="runPattermCommand($event, '')"
@@ -247,6 +249,9 @@
         @configure="configure"
         @take-control="takeControl"
       >
+        <template v-if="blank && (harness ?? provider)" #hero>
+          <HarnessFan :harness="(harness ?? provider)!" :harnesses="[]" locked />
+        </template>
         <!-- Narrow screens keep the label for screen readers; the border
              comet shows the work. -->
         <template v-if="!ended" #status>
@@ -298,6 +303,7 @@ import CloseRequestCard from './CloseRequestCard.vue';
 import SnoozeCard from './SnoozeCard.vue';
 import ConversationTranscript from './ConversationTranscript.vue';
 import IntegratedComposer from './IntegratedComposer.vue';
+import HarnessFan from './HarnessFan.vue';
 import IntegratedModelActivity from './IntegratedModelActivity.vue';
 import IntegratedQuestionCard from './IntegratedQuestionCard.vue';
 import IntegratedTaskShelf from './IntegratedTaskShelf.vue';
@@ -363,7 +369,7 @@ import { isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH } from '../../../a
 // hideBackground: a bot's conversation, where its helpers' reports and
 // Patterm's messages stay out of view; the bot relays what matters.
 // compactComposer and addressee: a bot's one-row composer, named for the bot.
-const props = defineProps<{ processId: string; hideBackground?: boolean; compactComposer?: boolean; addressee?: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionBots?: MentionBot[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; hideBackground?: boolean; compactComposer?: boolean; addressee?: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionBots?: MentionBot[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void>; harness?: string | null; firstPromptPending?: boolean }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every
@@ -404,6 +410,14 @@ const composerAdjoins = computed(() => !ended.value && !displayError.value && !u
   && !tasks.value.length && !permissions.value.length && !questions.value.length && !forms.value.length && !props.closeRequest && !props.snooze
   && !(phoneLayout.value && answered.value && !props.embedded));
 watch(() => props.processId, () => { answered.value = false; });
+// A new agent with nothing said yet centres its composer, until the first
+// message slides it down. Bots, embedded panes, and agents whose first
+// message is already on its way keep the usual layout.
+const blank = computed(() => !props.compactComposer && !props.embedded && !props.hideBackground && !props.firstPromptPending
+  && transcriptLoaded.value && !loadingTranscript.value && !transcriptMessages.value.length && !historyCursor.value
+  && !ended.value && !submission.value && !queue.value.length && !tasks.value.length && streamStatus.value !== 'working'
+  && !permissions.value.length && !questions.value.length && !forms.value.length && !props.closeRequest && !props.snooze
+  && !displayError.value && !uncertain.value && streamStatus.value !== 'error');
 watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.row.delivery?.state)], () => {
   reconcileOutgoingMessages(props.processId, messages.value, queue.value);
 });

@@ -34,6 +34,8 @@ export function createWorkbenchRouter(history: RouterHistory) {
       { path: '/bots/:botId', name: 'standaloneBot', component: StandaloneBotPage },
       { path: '/projects/:projectId', name: 'project', component: ProjectPage },
       { path: '/projects/:projectId/launches/:launchId', name: 'launch', component: HarnessLaunchPage },
+      // A blank conversation: pick the agent CLI and write its first message.
+      { path: '/projects/:projectId/new', name: 'newConversation', component: TerminalPage },
       { path: '/projects/:projectId/agents/:sessionId', name: 'agent', component: TerminalPage },
       // A bot opens beside the project you're in, though it isn't part of it.
       { path: '/projects/:projectId/bots/:botId', name: 'bot', component: BotPage },
