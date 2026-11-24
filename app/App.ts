@@ -491,6 +491,7 @@ async function createApplicationResources(
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
     botReply: (processId) => turnDigests.reply(processId),
+    botSilent: (processId) => turnDigests.silent(processId),
     log: (event, data) => debugLog.write('notifications', event, data)
   })));
 
@@ -729,7 +730,7 @@ async function createApplicationResources(
     {
       stop: (processId) => actions.stopProcess.execute(processId),
       transferTimers: (from, to) => timers.transferOwner(from, to),
-      transferNotifications: (from, to) => notificationService.transferUnread(from, to),
+      transferNotifications: (from, to) => notificationService.transferUnreadReplies(from, to),
       holdTimers: (processId) => timers.holdOwner(processId),
       releaseTimers: (timerIds) => { for (const id of timerIds) timers.resume(id); }
     },

@@ -22,6 +22,8 @@ export interface IntegratedActivityNotificationContext {
   // A bot's final reply this turn, or null for other agents and turns
   // without one. Only top-level assistant text, never tools or reasoning.
   botReply(processId: string): string | null;
+  // The turn that just ended said nothing at all.
+  botSilent?(processId: string): boolean;
   log(event: string, data: Record<string, unknown>): void;
 }
 
@@ -73,7 +75,9 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       if (closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
       // A turn that reported or woke a snoozed agent is not announced, and
       // nor is a bot's turn that called bot_stay_quiet.
-      else if (!woke && !reportedThisTurn) {
+      // A bot's turn that said nothing, such as a digest it answered silently,
+      // is not news either, and leaves its earlier reply unread.
+      else if (!woke && !reportedThisTurn && !(context.isBot?.(processId) && context.botSilent?.(processId))) {
         const decision = context.triage(processId);
         if (decision.reason !== 'disabled') context.log('triage', { processId, ...decision });
         // A bot's replies are short, so its notification shows the reply.

@@ -267,13 +267,14 @@ export class NotificationService {
     return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed), preview: row.preview || null }));
   }
 
-  // Moves unread notices to another process, such as a bot's new session
-  // after a restart, so they show and are read there.
-  transferUnread(fromProcessIds: readonly string[], toProcessId: string): number {
+  // Moves unread replies to another process, such as a bot's new session
+  // after a restart, so they show and are read there. Failures and requests
+  // belong to the session that raised them.
+  transferUnreadReplies(fromProcessIds: readonly string[], toProcessId: string): number {
     const to = this.processContext(toProcessId);
     if (!to || !fromProcessIds.length) return 0;
     const moved = this.database.connection.prepare(`update notifications set process_id = ?, session_id = ?
-      where process_id in (${fromProcessIds.map(() => '?').join(', ')}) and read_at is null and resolved_at is null`)
+      where process_id in (${fromProcessIds.map(() => '?').join(', ')}) and kind = 'turn_finished' and read_at is null and resolved_at is null`)
       .run(to.id, to.session_id ?? null, ...fromProcessIds).changes;
     if (moved) this.onChange({ type: 'counts' });
     return Number(moved);

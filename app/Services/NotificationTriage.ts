@@ -77,6 +77,12 @@ export class TurnDigests {
     return turn?.reply && !turn.lost ? turn.reply : null;
   }
 
+  // The turn that just ended was followed throughout and said nothing.
+  silent(processId: string): boolean {
+    const turn = this.turns.get(processId);
+    return Boolean(turn && !turn.lost && !turn.reply);
+  }
+
   get(processId: string): TurnDigest | null {
     const turn = this.turns.get(processId);
     return turn?.finalMessage && !turn.lost ? { startedBy: turn.startedBy, finalMessage: turn.finalMessage, tools: turn.tools, toolCount: turn.toolCount } : null;
