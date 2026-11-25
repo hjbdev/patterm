@@ -143,7 +143,7 @@ async function waitForPidExit(pid: number, timeoutMs = 5_000): Promise<void> {
 async function removeTempDir(directory: string): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      removeTree(directory);
+      fs.rmSync(directory, { recursive: true, force: true });
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 50));

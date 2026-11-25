@@ -4,10 +4,12 @@ import path from 'node:path';
 
 // Removes a test directory. On Windows a just-stopped child or a closing SQLite
 // handle can hold a file for a moment (EBUSY/EPERM), and on a loaded CI runner
-// that moment lasts seconds, so retry for up to ten seconds before giving up.
+// that moment lasts seconds, so retry for about ten seconds before giving up.
+// Node waits retryDelay longer before each retry: 13 retries at 100 ms sleep
+// 9.1 s in total.
 export function removeTree(target: string): void {
   try {
-    fs.rmSync(target, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
+    fs.rmSync(target, { recursive: true, force: true, maxRetries: 13, retryDelay: 100 });
   } catch (error) {
     if (process.platform === 'win32') reportHolders(target);
     throw error;
