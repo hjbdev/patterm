@@ -1,8 +1,8 @@
 <template>
   <!-- The panels pinned beside the conversation, tiled in columns. The gap
-       before them sets their width. Dragging a tile opens a slot where it
-       would land and the rest move aside; it lifts as a small copy of
-       itself that follows the pointer. -->
+       before them sets their width. A dragged tile lifts out of the layout
+       as a small copy of itself that follows the pointer, and the rest hold
+       still until it drops. -->
   <template v-if="visible">
     <div
       role="separator"
@@ -25,9 +25,6 @@
     </div>
     <section ref="zone" aria-label="Pinned panels" class="relative min-h-0 shrink-0" :style="{ width: `${zoneWidth}px` }" :data-pinned-resizing="resizing || zoneResize ? '' : undefined">
       <template v-if="size.w">
-        <!-- Where the dragged tile came from, and where it would land. -->
-        <div v-if="originRect" class="pointer-events-none absolute left-0 top-0 rounded-xl border border-dashed border-white/[0.12]" :style="rectStyle(originRect)" />
-        <div v-if="slotRect" class="pointer-events-none absolute left-0 top-0 rounded-xl border border-dashed border-white/40 bg-white/[0.04] transition-[translate,width,height] duration-200 ease-out" :style="rectStyle(slotRect)" />
         <PinnedTile
           v-for="entry in rendered"
           :key="entry.tile.id"
@@ -88,7 +85,7 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue';
 import type { PinnedPanels } from '../../Composables/usePinnedPanels';
 import {
-  find, hitTest, layout, place, preview, removeTab, removeTile, SLOT, targetKey, tileOf, tileWithKind, TILE_MIN,
+  find, hitTest, layout, place, removeTab, removeTile, targetKey, tileOf, tileWithKind, TILE_MIN,
   type Column, type DropTarget, type GutterSpec, type PinKind, type Rect, type Tile
 } from '../../lib/tiling';
 import PinnedTile from './PinnedTile.vue';
@@ -105,7 +102,13 @@ const GHOST = { w: 280, h: 180 } as const;
 const zone = ref<HTMLElement | null>(null), ghost = ref<HTMLElement | null>(null);
 
 // ---- Dragging ---------------------------------------------------------------
-type Source = { type: 'tile'; tileId: string } | { type: 'tab'; tileId: string; kind: PinKind } | { type: 'chip'; kind: PinKind };
+// Whatever is dragged floats, as a window dragged with SUPER does in Hyprland:
+// a tile or tab leaves the layout, the rest close up behind it and hold still,
+// and they make room only when it drops. Only a tile that would take it as a
+// tab says so. A drop on nothing, or Escape, puts it back. Alt lifts a tile as
+// it's pressed; otherwise a drag starts once the pointer has moved, so a click
+// still switches a tab or opens a chip.
+type Source = { type: 'tile'; tileId: string; liftOnPress: boolean } | { type: 'tab'; tileId: string; kind: PinKind } | { type: 'chip'; kind: PinKind };
 // Only what changes the layout is reactive; the pointer's position isn't, so
 // following it repaints the floating copy and nothing else.
 const source = shallowRef<Source | null>(null);
@@ -113,24 +116,37 @@ const started = ref(false);
 const target = shallowRef<DropTarget | null>(null);
 let pointer = { x: 0, y: 0 }, start = { x: 0, y: 0 }, grab = { x: 0, y: 0 }, lift = { w: 0, h: 0, scale: 1 };
 let zoneBox: DOMRect | null = null, frame = 0;
+// Whether the pointer has moved far enough to be a drag, not a click.
+let moved = false;
 
 const visible = computed(() => columns.value.length > 0 || started.value);
 const lifted = computed(() => started.value && source.value?.type === 'tile' ? source.value.tileId : null);
 const ghostKind = computed(() => started.value && source.value && source.value.type !== 'tile' ? source.value.kind : null);
-const shown = computed<Column[]>(() => started.value ? preview(columns.value, target.value) : columns.value);
+// The layout shown, and dropped into: without what's being dragged.
+const shown = computed<Column[]>(() => {
+  const from = source.value;
+  if (!started.value || !from) return columns.value;
+  if (from.type === 'tile') return removeTile(columns.value, from.tileId);
+  if (from.type === 'tab') return removeTab(columns.value, from.tileId, from.kind);
+  return columns.value;
+});
 const shownGeometry = computed(() => layout(shown.value, size.w, size.h));
-const originRect = computed(() => lifted.value ? shownGeometry.value.rects.get(lifted.value) ?? null : null);
-const slotRect = computed(() => shownGeometry.value.rects.get(SLOT) ?? null);
+// Tiles as shown: a group a tab is dragged from shows the tabs it has left.
+const shownTiles = computed(() => {
+  if (shown.value === columns.value) return tiles.value;
+  const byId = new Map(shown.value.flatMap((column) => column.tiles).map((tile) => [tile.id, tile]));
+  return tiles.value.map((tile) => byId.get(tile.id) ?? tile);
+});
 
 function grabTile(tile: Tile, kind: PinKind | null, event: PointerEvent): void {
   // A single tab, or the header itself, carries the whole tile.
-  begin(kind && tile.tabs.length > 1 ? { type: 'tab', tileId: tile.id, kind } : { type: 'tile', tileId: tile.id }, event);
+  begin(kind && tile.tabs.length > 1 ? { type: 'tab', tileId: tile.id, kind } : { type: 'tile', tileId: tile.id, liftOnPress: event.altKey }, event);
 }
 // A chip dragged from the conversation's header pins its panel where it lands;
 // one already pinned moves.
 function grabChip(kind: PinKind, event: PointerEvent): void {
   const tile = tileWithKind(columns.value, kind);
-  begin(!tile ? { type: 'chip', kind } : tile.tabs.length === 1 ? { type: 'tile', tileId: tile.id } : { type: 'tab', tileId: tile.id, kind }, event);
+  begin(!tile ? { type: 'chip', kind } : tile.tabs.length === 1 ? { type: 'tile', tileId: tile.id, liftOnPress: false } : { type: 'tab', tileId: tile.id, kind }, event);
 }
 function begin(next: Source, event: PointerEvent): void {
   if (event.button !== 0 || source.value) return;
@@ -142,6 +158,8 @@ function begin(next: Source, event: PointerEvent): void {
   window.addEventListener('pointercancel', stopDrag);
   window.addEventListener('keydown', dragKey, true);
   document.addEventListener('selectstart', preventSelect);
+  // Alt lifts a tile as it's pressed.
+  if (next.type === 'tile' && next.liftOnPress) void lift_(next);
 }
 function pointerMove(event: PointerEvent): void {
   pointer = { x: event.clientX, y: event.clientY };
@@ -160,7 +178,10 @@ function follow(): void {
   if (!zoneBox) return;
   const x = pointer.x - zoneBox.left, y = pointer.y - zoneBox.top;
   place_(x, y);
-  const next = hitTest(columns.value, shownGeometry.value.rects, x, y, target.value, lifted.value, size, maxColumns.value);
+  // A tile pressed with Alt and let go where it is goes back.
+  moved ||= Math.hypot(pointer.x - start.x, pointer.y - start.y) >= 5;
+  if (!moved) return;
+  const next = hitTest(shown.value, shownGeometry.value.rects, x, y, target.value, size, maxColumns.value);
   if (targetKey(next) !== targetKey(target.value)) target.value = next;
 }
 // Lifting takes the tile's size from where it sits, and shrinks it with a
@@ -208,6 +229,7 @@ function stopDrag(): void {
   if (from?.type === 'tile' && started.value) settle(from.tileId);
   source.value = null;
   started.value = false;
+  moved = false;
   target.value = null;
   dragging.value = false;
   zoneBox = null;
@@ -328,7 +350,7 @@ const order = new Map<string, number>();
 let nextOrder = 0;
 const rendered = computed(() => {
   const entries = [
-    ...tiles.value.map((tile) => ({ tile, leaving: null as Rect | null })),
+    ...shownTiles.value.map((tile) => ({ tile, leaving: null as Rect | null })),
     ...leaving.value.filter((entry) => !tiles.value.some((tile) => tile.id === entry.tile.id)).map((entry) => ({ tile: entry.tile, leaving: entry.rect }))
   ];
   const present = new Set(entries.map((entry) => entry.tile.id));

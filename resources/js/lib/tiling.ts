@@ -34,7 +34,6 @@ export const MAX_COLUMNS = 3;
 export const CONVERSATION_MIN = 440;
 export const ZONE_MIN = 280;
 export const TILE_MIN = { w: 200, h: 100 } as const;
-export const SLOT = '__slot';
 // The narrowest zone that holds `count` columns, and how many columns fit in a width.
 export function zoneMinWidth(count: number): number {
   return Math.max(ZONE_MIN, count * TILE_MIN.w + GAP * Math.max(0, count - 1));
@@ -42,8 +41,6 @@ export function zoneMinWidth(count: number): number {
 export function columnsThatFit(width: number): number {
   return Math.max(1, Math.min(MAX_COLUMNS, Math.floor((width + GAP) / (TILE_MIN.w + GAP))));
 }
-const SLOT_COLUMN = '__slot-column';
-
 let sequence = 0;
 // Unique across reloads, since saved layouts keep their ids.
 export function newId(prefix: string): string {
@@ -141,60 +138,32 @@ export function place(columns: Column[], target: DropTarget, tile: Tile): Column
   return next;
 }
 
-// The layout while dragging: the source keeps its place, and an empty slot
-// opens where it would land.
-export function preview(columns: Column[], target: DropTarget | null): Column[] {
-  if (!target || target.type === 'join') return columns;
-  const slot: Tile = { id: SLOT, tabs: [], active: 'todos', weight: 1 };
-  if (target.type === 'column') {
-    const next = [...columns];
-    const index = target.before ? next.findIndex((column) => column.id === target.before) : -1;
-    next.splice(index < 0 ? next.length : index, 0, { id: SLOT_COLUMN, tiles: [slot], weight: average(columns.map((column) => column.weight)) });
-    return next;
-  }
-  return place(columns, target, slot);
-}
-
 const inside = (x: number, y: number, rect: Rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
 
-// What the pointer is over, in the zone's coordinates. Over the open slot, or
-// in a gap, the current target holds, so the layout doesn't flicker.
+// Where a drop would land, by what the pointer is over, in the zone's
+// coordinates, in a layout that holds still while dragging. A tile's edges
+// open a column beside it while there's room, its middle takes the drop as a
+// tab, and its top and bottom halves put it above or below. In a gap, the
+// current target holds.
 export function hitTest(
   columns: Column[], rects: Map<string, Rect>, x: number, y: number,
-  current: DropTarget | null, origin: string | null, size: { w: number; h: number }, maxColumns = MAX_COLUMNS
+  current: DropTarget | null, size: { w: number; h: number }, maxColumns = MAX_COLUMNS
 ): DropTarget | null {
   if (x < 0 || y < 0 || x > size.w || y > size.h) return null;
   if (!columns.length) return { type: 'column', before: null };
-  const slot = rects.get(SLOT);
-  if (slot && inside(x, y, slot)) return current;
+  const roomForColumn = columns.length < maxColumns;
   for (const [ci, column] of columns.entries()) {
     for (const [ti, tile] of column.tiles.entries()) {
       const rect = rects.get(tile.id);
       if (!rect || !inside(x, y, rect)) continue;
-      if (tile.id === origin) return null;
       const rx = (x - rect.x) / Math.max(1, rect.w), ry = (y - rect.y) / Math.max(1, rect.h);
-      const originAlone = origin ? find(columns, origin)?.column.tiles.length === 1 : false;
-      const roomForColumn = columns.length < maxColumns || originAlone;
-      let target: DropTarget;
-      if (roomForColumn && rx < 0.22) target = { type: 'column', before: column.id };
-      else if (roomForColumn && rx > 0.78) target = { type: 'column', before: columns[ci + 1]?.id ?? null };
-      else if (rx >= 0.22 && rx <= 0.78 && ry >= 0.3 && ry <= 0.7) target = { type: 'join', tileId: tile.id };
-      else target = { type: 'insert', columnId: column.id, before: ry < 0.5 ? tile.id : column.tiles[ti + 1]?.id ?? null };
-      return lands(columns, target, origin) ? target : null;
+      if (roomForColumn && rx < 0.22) return { type: 'column', before: column.id };
+      if (roomForColumn && rx > 0.78) return { type: 'column', before: columns[ci + 1]?.id ?? null };
+      if (rx >= 0.22 && rx <= 0.78 && ry >= 0.3 && ry <= 0.7) return { type: 'join', tileId: tile.id };
+      return { type: 'insert', columnId: column.id, before: ry < 0.5 ? tile.id : column.tiles[ti + 1]?.id ?? null };
     }
   }
   return current;
-}
-
-// A tile dropped next to itself goes nowhere.
-function lands(columns: Column[], target: DropTarget, origin: string | null): boolean {
-  if (!origin) return true;
-  const from = find(columns, origin);
-  if (!from) return true;
-  const next = from.column.tiles[from.ti + 1]?.id ?? null;
-  if (target.type === 'insert') return !(target.columnId === from.column.id && (target.before === origin || target.before === next));
-  if (target.type === 'column' && from.column.tiles.length === 1) return !(target.before === from.column.id || target.before === (columns[from.ci + 1]?.id ?? null));
-  return true;
 }
 
 // The nearest tile in a direction, by geometry, as a tiler finds it.
@@ -203,7 +172,7 @@ export function neighbour(rects: Map<string, Rect>, from: string, direction: Dir
   if (!a) return null;
   let best: { id: string; score: number } | null = null;
   for (const [id, b] of rects) {
-    if (id === from || id === SLOT) continue;
+    if (id === from) continue;
     const ahead = direction === 'right' ? b.x - (a.x + a.w) : direction === 'left' ? a.x - (b.x + b.w)
       : direction === 'down' ? b.y - (a.y + a.h) : a.y - (b.y + b.h);
     if (ahead < -1) continue;

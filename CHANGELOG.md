@@ -44,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pin a chip's list (todos, scratchpads, links, servers, subagents and more)
   from its popover, or drag the chip beside the conversation. Each pin is its
   own card: drag a header or tab to move it, drop it on another card's centre
-  to make tabs, and drag the gaps to resize. While panels are pinned,
+  to make tabs, and drag the gaps to resize. A dragged panel floats free and
+  the rest hold still until it drops. While panels are pinned,
   `Alt+H/J/K/L` or `Alt+arrows` move focus, `Alt+Shift` moves the
   panel, `Alt+=`/`Alt+-` resize it across, `Alt+Shift+=`/`Alt+Shift+-` resize it
   up and down, `Alt+F` maximises, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
