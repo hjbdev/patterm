@@ -6,9 +6,11 @@
     :data-tile-id="tile.id"
     tabindex="-1"
     class="pinned-tile group/tile absolute left-0 top-0 flex flex-col overflow-hidden rounded-xl border bg-background outline-none"
-    :class="[focused ? 'border-white/30' : 'border-white/[0.06]', lifted && 'shadow-2xl shadow-black/70 ring-1 ring-white/20', flashing && 'pinned-tile-flash']"
+    :class="[focused ? 'border-white/30' : 'border-white/[0.06]', lifted && 'shadow-2xl shadow-black/70 ring-1 ring-white/20', entering && 'pinned-tile-enter', flashing && 'pinned-tile-flash']"
     :aria-label="tile.tabs.length > 1 ? `Pinned: ${tile.tabs.map((kind) => PIN_META[kind].title).join(', ')}` : `Pinned: ${PIN_META[tile.active].title}`"
     @pointerdown.capture="altGrab"
+    @animationend.self="entered"
+    @animationcancel.self="entered"
   >
     <header class="flex h-10 shrink-0 cursor-grab select-none items-center gap-1 border-b border-white/[0.04] pl-2 pr-1.5 active:cursor-grabbing" @pointerdown="emit('grab', $event, null)" @dblclick="emit('maximise')">
       <template v-if="tile.tabs.length === 1">
@@ -50,13 +52,23 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue';
 import { Maximize2, Minimize2, PinOff, X } from 'lucide-vue-next';
 import type { PinKind, Tile } from '../../lib/tiling';
 import { PIN_META } from './pinMeta';
 
-const props = defineProps<{ tile: Tile; focused: boolean; maximised: boolean; lifted: boolean; joining: boolean; flashing: boolean }>();
+// `enter` animates the tile in as it mounts.
+const props = defineProps<{ tile: Tile; enter: boolean; focused: boolean; maximised: boolean; lifted: boolean; joining: boolean; flashing: boolean }>();
 const emit = defineEmits<{ grab: [event: PointerEvent, kind: PinKind | null]; activate: [kind: PinKind]; close: [kind: PinKind]; maximise: [] }>();
 const ICON_BUTTON = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+
+// The entrance plays once. Its class goes when it ends, or when a flash
+// replaces it: left on, the entrance would run again as the flash ends.
+const entering = ref(props.enter);
+function entered(event: AnimationEvent): void {
+  if (event.animationName === 'pinned-tile-enter') entering.value = false;
+}
+watch(() => props.flashing, (flashing) => { if (flashing) entering.value = false; });
 
 function altGrab(event: PointerEvent): void {
   if (!event.altKey || event.button !== 0) return;

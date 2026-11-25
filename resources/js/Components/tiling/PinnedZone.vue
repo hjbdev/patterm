@@ -31,7 +31,8 @@
         <PinnedTile
           v-for="entry in rendered"
           :key="entry.tile.id"
-          :class="entry.leaving ? 'pinned-tile-leave' : !spawned.has(entry.tile.id) && 'pinned-tile-enter'"
+          :class="entry.leaving && 'pinned-tile-leave'"
+          :enter="!spawned.has(entry.tile.id)"
           :style="entry.leaving ? rectStyle(entry.leaving) : tileStyle(entry.tile)"
           :tile="entry.tile"
           :focused="!entry.leaving && focus === entry.tile.id"
@@ -320,10 +321,21 @@ watch(columns, (next, before) => {
   leaving.value = [...leaving.value, ...entries];
   setTimeout(() => { leaving.value = leaving.value.filter((entry) => !entries.includes(entry)); }, 200);
 });
-const rendered = computed(() => [
-  ...tiles.value.map((tile) => ({ tile, leaving: null as Rect | null })),
-  ...leaving.value.filter((entry) => !tiles.value.some((tile) => tile.id === entry.tile.id)).map((entry) => ({ tile: entry.tile, leaving: entry.rect }))
-]);
+// Tiles keep their place in the DOM, in the order they were pinned, however
+// they move about the layout: moving an element restarts its animations and
+// resets its scrolling.
+const order = new Map<string, number>();
+let nextOrder = 0;
+const rendered = computed(() => {
+  const entries = [
+    ...tiles.value.map((tile) => ({ tile, leaving: null as Rect | null })),
+    ...leaving.value.filter((entry) => !tiles.value.some((tile) => tile.id === entry.tile.id)).map((entry) => ({ tile: entry.tile, leaving: entry.rect }))
+  ];
+  const present = new Set(entries.map((entry) => entry.tile.id));
+  for (const id of order.keys()) if (!present.has(id)) order.delete(id);
+  for (const id of present) if (!order.has(id)) order.set(id, nextOrder++);
+  return entries.sort((a, b) => order.get(a.tile.id)! - order.get(b.tile.id)!);
+});
 
 // The zone's size drives the layout.
 let observer: ResizeObserver | undefined;
