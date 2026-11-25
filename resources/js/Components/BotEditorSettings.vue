@@ -18,11 +18,11 @@
       </template>
 
       <div v-if="restart" class="flex flex-col gap-2 py-4 [@container(min-width:36rem)]:flex-row [@container(min-width:36rem)]:items-center [@container(min-width:36rem)]:justify-between">
-        <p class="text-xs text-muted-foreground">{{ restart.need === 'harness' ? `${bot.name} moves to ${harnessLabel(bot.harness)} when it restarts, on a new conversation or the last one it had there.` : `Its new settings apply when ${bot.name} restarts.` }}<span v-if="restartError" class="block text-destructive">{{ restartError }}</span></p>
+        <p class="text-xs text-muted-foreground">{{ restart.need === 'harness' ? `${bot.name} moves to ${harnessLabel(bot.harness)} when it restarts, on a new conversation or the last one it had there.` : `Its new settings apply when ${bot.name} restarts.` }}<span v-if="restart.error" class="block text-destructive">{{ restart.error }}</span></p>
         <div class="flex shrink-0 items-center gap-2">
-          <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" :disabled="restarting" @click="restart = null">Later</Button>
-          <Button v-if="restart.need !== 'harness'" type="button" variant="outline" size="sm" class="h-7 text-xs" :disabled="restarting" @click="restartNow(true)">New conversation</Button>
-          <Button type="button" size="sm" class="h-7 text-xs" :disabled="restarting" @click="restartNow(false)">{{ restart.need === 'harness' ? 'Restart' : 'Resume conversation' }}</Button>
+          <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" :disabled="restart.busy" @click="emit('dismissRestart')">Later</Button>
+          <Button v-if="restart.need !== 'harness'" type="button" variant="outline" size="sm" class="h-7 text-xs" :disabled="restart.busy" @click="emit('restart', true)">New conversation</Button>
+          <Button type="button" size="sm" class="h-7 text-xs" :disabled="restart.busy" @click="emit('restart', false)">{{ restart.need === 'harness' ? 'Restart' : 'Resume conversation' }}</Button>
         </div>
       </div>
 
@@ -40,11 +40,11 @@
       <SettingsSection title="Avatar" :scope="`${scope}.avatar`" keywords="face emoji picture">
         <div class="flex items-center gap-4">
           <div class="flex h-20 w-20 shrink-0 items-center justify-center rounded-full" :style="halo">
-            <BotAvatar :avatar="bot.avatar" :size="64" motion />
+            <BotAvatar :avatar="{ ...bot.avatar, look }" :size="64" motion />
           </div>
           <div class="flex min-w-0 flex-col items-start gap-2">
             <SettingsChoice :model-value="avatarKind" :options="AVATAR_KINDS" aria-label="Avatar" segmented @update:model-value="chooseKind" />
-            <Button v-if="avatarKind === 'face'" type="button" size="sm" variant="outline" class="h-7 gap-1.5 text-xs" @click="saveAvatar({ look: newFace() })">
+            <Button v-if="avatarKind === 'face'" type="button" size="sm" variant="outline" class="h-7 gap-1.5 text-xs" @click="saveLook(newFace())">
               <Dices class="h-3.5 w-3.5" />
               Shuffle
             </Button>
@@ -55,7 +55,7 @@
           </div>
         </div>
         <p v-if="avatarError" role="alert" class="text-xs text-destructive">{{ avatarError }}</p>
-        <FaceMaker v-if="avatarKind === 'face'" :model-value="bot.avatar.look" @update:model-value="(look) => saveAvatar({ look })" />
+        <FaceMaker v-if="avatarKind === 'face'" :model-value="look" @update:model-value="saveLook" />
         <div v-else-if="avatarKind === 'emoji'" class="flex flex-wrap items-center gap-1">
           <button v-for="emoji in EMOJI" :key="emoji" type="button" :class="cn('flex h-8 w-8 items-center justify-center rounded-md text-lg hover:bg-muted/60', bot.avatar.emoji === emoji && 'bg-white/[0.1] ring-1 ring-inset ring-white/[0.16]')" :aria-label="`Use ${emoji}`" @click="saveAvatar({ kind: 'emoji', emoji })">{{ emoji }}</button>
           <Input :model-value="customEmoji" class="h-8 w-16 text-center text-base" placeholder="🙂" autocomplete="off" aria-label="Any emoji" @update:model-value="typeEmoji(String($event))" />
@@ -168,7 +168,7 @@ import { cn } from '@/lib/utils';
 import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { botPicture } from '../lib/botPicture';
-import { botProcess, discordStatus, isAssistantBot, parseDiscordIds, restartBotFromSettings, restartNeed, saveDiscordToken, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice, type DiscordBotStatus } from '../lib/bots';
+import { discordStatus, isAssistantBot, parseDiscordIds, saveDiscordToken, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice, type DiscordBotStatus } from '../lib/bots';
 import { facePalette, randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
 import { CUSTOM_MODEL, DEFAULT_MODEL, PROFILE_HARNESSES, changeModel, fieldsFrom, modelChoices, reasoningChoices, settingsFrom, speedChoices, tiersFor, type ModelCatalog, type ProfileFieldsState, type ProfileHarness } from '../lib/profileFields';
@@ -200,9 +200,13 @@ const props = defineProps<{
   harnesses: HarnessInstallationRecord[];
   voices: string[];
   projects: Array<{ id: string; name: string }>;
-  persist: (next: Bot[]) => Promise<void>;
+  // Saves a change to this bot. The list owns one queue for every save, so
+  // each builds on the last, whichever page made it.
+  update: (key: string, patch: (bot: Bot) => Partial<Bot>) => Promise<boolean>;
+  // A saved change that applies once the running bot restarts.
+  restart: { need: 'harness' | 'settings'; busy: boolean; error: string } | null;
 }>();
-const emit = defineEmits<{ back: []; remove: [] }>();
+const emit = defineEmits<{ back: []; remove: []; restart: [fresh: boolean]; dismissRestart: [] }>();
 
 const AVATAR_KINDS = [
   { value: 'face' as const, label: 'Face' },
@@ -244,16 +248,8 @@ const summary = computed(() => {
 });
 
 // Saving
-let chain: Promise<unknown> = Promise.resolve();
 function save(key: string, patch: Partial<Bot> | ((bot: Bot) => Partial<Bot>)): Promise<boolean> {
-  const next = chain.then(() => autosave(`${scope}.${key}`, async () => {
-    const before = current();
-    const after = { ...before, ...(typeof patch === 'function' ? patch(before) : patch) } as Bot;
-    await props.persist(props.bots.map((candidate) => candidate.id === id ? after : candidate));
-    void offerRestart(before, after);
-  }));
-  chain = next;
-  return next;
+  return props.update(key, typeof patch === 'function' ? patch : () => patch);
 }
 
 // Text fields save once typing pauses, or when they lose focus.
@@ -270,32 +266,6 @@ function now(key: string): void {
   pending.run();
 }
 onBeforeUnmount(() => { for (const key of [...timers.keys()]) now(key); });
-
-// Restarting
-const restart = ref<{ processId: string; need: 'harness' | 'settings' } | null>(null);
-const restartError = ref('');
-const restarting = ref(false);
-async function offerRestart(before: Bot, after: Bot): Promise<void> {
-  const need = after.enabled ? restartNeed(before, after) : null;
-  if (!need) return;
-  const processId = await botProcess(props.host ? `${props.host}:${id}` : id).catch(() => null);
-  if (!processId) return;
-  restartError.value = '';
-  restart.value = { processId, need: restart.value?.need === 'harness' ? 'harness' : need };
-}
-async function restartNow(fresh: boolean): Promise<void> {
-  const target = restart.value;
-  if (!target) return;
-  restarting.value = true;
-  try {
-    await restartBotFromSettings(target.processId, fresh);
-    restart.value = null;
-  } catch (caught) {
-    restartError.value = caught instanceof Error ? caught.message : String(caught);
-  } finally {
-    restarting.value = false;
-  }
-}
 
 function saveEnabled(enabled: boolean): void {
   void save('enabled', { enabled });
@@ -322,15 +292,24 @@ const avatarKind = ref<Avatar['kind']>(props.bot.avatar.kind);
 const avatarError = ref('');
 const pictureInput = ref<HTMLInputElement | null>(null);
 const customEmoji = ref(props.bot.avatar.emoji && !EMOJI.includes(props.bot.avatar.emoji) ? props.bot.avatar.emoji : '');
-const halo = computed(() => ({ background: `radial-gradient(circle at 50% 40%, ${facePalette(props.bot.avatar.look.color).halo}, transparent 70%)` }));
+const halo = computed(() => ({ background: `radial-gradient(circle at 50% 40%, ${facePalette(look.value.color).halo}, transparent 70%)` }));
 function newFace(): Avatar['look'] {
   return randomLook(Math.floor(Math.random() * 2 ** 32));
 }
 function saveAvatar(patch: Partial<Avatar>): void {
   avatarError.value = '';
-  const next = { ...current().avatar, ...patch };
-  avatarKind.value = next.kind;
-  void save('avatar', { avatar: { ...next, look: { ...next.look } } });
+  if (patch.kind) avatarKind.value = patch.kind;
+  void save('avatar', (bot) => ({ avatar: { ...bot.avatar, ...patch, look: { ...(patch.look ?? bot.avatar.look) } } }));
+}
+// The face shows each change at once. A save sends only the parts that
+// changed, so quick changes to different parts all stick.
+const look = ref<Avatar['look']>({ ...props.bot.avatar.look });
+function saveLook(next: Avatar['look']): void {
+  const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => look.value[key as keyof Avatar['look']] !== value)) as Partial<Avatar['look']>;
+  look.value = { ...next };
+  avatarKind.value = 'face';
+  avatarError.value = '';
+  void save('avatar', (bot) => ({ avatar: { ...bot.avatar, kind: 'face', look: { ...bot.avatar.look, ...changed } } }));
 }
 // A picture saves once one is chosen; the other kinds save straight away.
 function chooseKind(kind: Avatar['kind']): void {

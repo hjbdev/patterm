@@ -11,9 +11,12 @@
     :harnesses="harnesses"
     :voices="voices"
     :projects="userProjects"
-    :persist="persist"
+    :update="(key, patch) => updateBot(openBot!.id, key, patch)"
+    :restart="restarts[openBot.id] ?? null"
     @back="closeBot(false)"
     @remove="removeBot(openBot)"
+    @restart="(fresh) => restartNow(openBot!.id, fresh)"
+    @dismiss-restart="delete restarts[openBot.id]"
   />
   <SettingsPanel v-else title="Bots" description="Bots are persistent companions you text with. Each one runs an agent CLI with its own model settings, which you can copy from a profile. It keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view. The assistant is the built-in bot: it oversees every project and lists first.">
     <template #actions>
@@ -74,11 +77,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { isAssistantBot, plainBot, readBots, saveBots, type Bot, type BotPurview, type BotSettings } from '../lib/bots';
+import { botProcess, isAssistantBot, plainBot, readBots, restartBotFromSettings, restartNeed, saveBots, type Bot, type BotPurview, type BotSettings } from '../lib/bots';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
@@ -154,7 +157,7 @@ function flushName(): void {
   clearTimeout(nameTimer);
   nameTimer = undefined;
   const next = userName.value.trim() || null;
-  void autosave('bots.userName', async () => { await persist(bots.value, next); });
+  void autosave('bots.userName', () => queued(() => write(bots.value, next)));
 }
 onBeforeUnmount(flushName);
 
@@ -208,24 +211,67 @@ function statusLabel(botId: string): string {
   return session.exitedAt ? 'Stopped' : 'Running';
 }
 
+// Every save, from the list or a bot's page, runs one at a time and sends
+// the whole list built from the last one saved, so none undoes another.
+let queue: Promise<unknown> = Promise.resolve();
+function queued<T>(task: () => Promise<T>): Promise<T> {
+  const next = queue.then(task, task);
+  queue = next.catch(() => undefined);
+  return next;
+}
+
 // Throws on failure, so autosave shows the reason beside the setting.
-async function persist(next: Bot[], name = activeSettings.value.userName): Promise<void> {
+async function write(next: Bot[], name = activeSettings.value.userName): Promise<void> {
   const saved = await saveBots({ bots: next.map(plainBot), userName: name }, host);
   if (host) remoteSettings.value = saved;
   else localSettings.value = saved;
   error.value = '';
 }
 
+function updateBot(botId: string, key: string, patch: (bot: Bot) => Partial<Bot>): Promise<boolean> {
+  return autosave(`bots.${botId}.${key}`, () => queued(async () => {
+    const before = bots.value.find((candidate) => candidate.id === botId);
+    if (!before) throw new Error('That bot no longer exists.');
+    const after = { ...before, ...patch(before) } as Bot;
+    await write(bots.value.map((candidate) => candidate.id === botId ? after : candidate));
+    void offerRestart(before, after);
+  }));
+}
+
 function toggleEnabled(bot: Bot, enabled: boolean): void {
-  if (bot.enabled === enabled) return;
-  void autosave(`bots.${bot.id}.enabled`, () => persist(bots.value.map((candidate) => candidate.id === bot.id ? { ...candidate, enabled } : candidate)));
+  if (bot.enabled !== enabled) void updateBot(bot.id, 'enabled', () => ({ enabled }));
+}
+
+// Saved changes that apply once a running bot restarts. They're kept here
+// rather than on the bot's page, so leaving the page doesn't lose them.
+const restarts = reactive<Record<string, { processId: string; need: 'harness' | 'settings'; busy: boolean; error: string }>>({});
+async function offerRestart(before: Bot, after: Bot): Promise<void> {
+  const need = after.enabled ? restartNeed(before, after) : null;
+  if (!need) return;
+  const processId = await botProcess(host ? `${host}:${after.id}` : after.id).catch(() => null);
+  if (!processId) return;
+  restarts[after.id] = { processId, need: restarts[after.id]?.need === 'harness' ? 'harness' : need, busy: false, error: '' };
+}
+async function restartNow(botId: string, fresh: boolean): Promise<void> {
+  const target = restarts[botId];
+  if (!target) return;
+  target.busy = true;
+  try {
+    await restartBotFromSettings(target.processId, fresh);
+    delete restarts[botId];
+  } catch (caught) {
+    target.error = caught instanceof Error ? caught.message : String(caught);
+  } finally {
+    target.busy = false;
+  }
 }
 
 // Deleting closes its page; the list stays mounted to finish it.
 async function removeBot(bot: Bot): Promise<void> {
   if (!window.confirm(`Delete ${bot.name}? Its conversation stops, and its helpers keep running in their projects.`)) return;
   try {
-    await persist(bots.value.filter((candidate) => candidate.id !== bot.id));
+    await queued(() => write(bots.value.filter((candidate) => candidate.id !== bot.id)));
+    delete restarts[bot.id];
     closeBot(true);
   } catch (caught) {
     window.alert(caught instanceof Error ? caught.message : String(caught));
@@ -267,7 +313,7 @@ async function createBot(): Promise<void> {
   };
   creating.value = true;
   try {
-    await persist([...bots.value, bot]);
+    await queued(() => write([...bots.value, bot]));
     adding.value = false;
     showBot(bot.id);
   } catch (caught) {

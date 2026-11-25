@@ -242,14 +242,20 @@ function open(value: string): void {
   tab.value = value;
   scroller.value?.scrollTo({ top: 0 });
   // A page within a page, such as one bot's settings, closes back to its list.
+  // The address names the page too, so Back returns to the bot.
   if (router.currentRoute.value.query.bot !== undefined) {
     const nextQuery = { ...router.currentRoute.value.query };
+    nextQuery.tab = value;
     delete nextQuery.bot;
     void router.push({ query: nextQuery });
   }
 }
 
-watch(() => router.currentRoute.value.query.bot, () => scroller.value?.scrollTo({ top: 0 }));
+// Opening a bot from search results ends the search, so its page shows.
+watch(() => router.currentRoute.value.query.bot, (bot) => {
+  if (typeof bot === 'string') query.value = '';
+  scroller.value?.scrollTo({ top: 0 });
+});
 
 function clearSearch(): void {
   query.value = '';
