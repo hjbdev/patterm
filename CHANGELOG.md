@@ -276,6 +276,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An agent on a paired host can reach an agent or process that another host's
+  composer mentioned, such as `workstation:process_7` sent to Workstation.
+  It used to read its own name as a peer's and fail.
 - A Claude or Codex agent started on a busy machine no longer fails at once
   with "host is no longer running". Patterm now waits until the new host
   accepts connections, not just until its socket file appears.

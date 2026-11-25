@@ -102,7 +102,16 @@ export class CrossHostService {
     const name = value.slice(0, separator);
     const processId = value.slice(separator + 1);
     if (!HOST_NAME_PATTERN.test(name) || !processId || processId.includes(':')) return null;
+    // A peer writes this host's own processes with its name, as in a prompt
+    // mentioning them. Those are local.
+    if (name === this.hosts.identity().name) return null;
     return { host: this.host(name), process_id: processId, address: `${name}:${processId}` };
+  }
+
+  // A process ID as this host stores it, without its own name in front.
+  localProcessId(value: string): string {
+    const prefix = `${this.hosts.identity().name}:`;
+    return value.startsWith(prefix) ? value.slice(prefix.length) : value;
   }
 
   host(name: string): PeerHost {
