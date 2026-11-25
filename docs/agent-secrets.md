@@ -31,8 +31,9 @@ sending the key somewhere else; the other uses keep it out of transcripts.
 
 - **Scope.** A secret belongs to one session and moves to the next session when
   its conversation resumes. The tools find the session from the caller's MCP
-  identity, so another agent can't use it. A paired
-  host can't list or enter them.
+  identity, so another agent can't use it. For an agent on a paired host,
+  requests and entry are available in the local UI; values go to the owning
+  host’s vault and are not returned to clients.
 - **Hosts.** The proxy forwards only to the allowed hosts (`*.example.com`
   wildcards allowed; an entry without a port allows any port) and only over
   HTTPS, except for `localhost` and `127.0.0.1`. It refuses requests that carry

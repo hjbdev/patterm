@@ -1,9 +1,9 @@
 # Terminal notifications from agent CLIs
 
 This page records which terminal notification sequences each agent CLI emits
-under Patterm-like conditions, with default settings. The notification scanner
-and its settings defaults depend on these findings. The behaviour is
-version-dependent, so re-run the capture when you upgrade a CLI.
+under Patterm-like conditions, with default settings. This is a historical
+capture: Patterm now runs agents as Integrated conversations, not terminal
+TUIs. Behaviour is version-dependent.
 
 Captured on 30 September 2026.
 
@@ -132,18 +132,9 @@ them in their own CLI configuration.
   dialog recorded the temporary directories as trusted projects in
   `~/.claude.json`.
 
-## What Patterm does with these findings
+## Patterm today
 
-- Patterm reports focus like a terminal window. When a program enables focus
-  reporting (DECSET 1004), the sidecar sends `CSI I` when a client focuses that
-  terminal's input and `CSI O` when it loses focus, the window blurs, or the
-  tab is switched away. A program that enables reporting while nobody is
-  viewing it receives `CSI O` straight away. This lets Codex send its BEL
-  without any change to its settings.
-- Patterm does not pass notification flags, set `TERM_PROGRAM`, or answer
-  XTVERSION or the OSC 99 capability query. Claude Code and OpenCode therefore
-  send nothing under defaults. Users can set Claude Code's
-  `preferredNotifChannel` to `iterm2`, `kitty`, `ghostty`, or `terminal_bell`,
-  or turn on OpenCode's `attention.notifications`, and Patterm captures the
-  result. Integrated mode raises permission and turn-finished notifications for
-  every harness regardless.
+Integrated agents raise permission and turn-finished notifications from native
+activity. Shells and command processes still use the terminal; process bell
+notifications are off by default. The sidecar also reports terminal focus when a
+program requests it with DECSET 1004.

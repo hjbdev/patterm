@@ -26,8 +26,9 @@ on the assistant's Memory in Settings › Bots.
 
 ## Reading and recording
 
-Patterm keeps the assistant's and bots' memory current in their conversations,
-so they never spend a tool call checking it. Before each message reaches one of
+For OpenCode, Codex and Claude, Patterm keeps the assistant's and bots' memory
+current in their conversations. Antigravity does not support hidden memory
+updates; its assistant and bots are instructed to check with the memory tools. Before each message reaches one of
 them, Patterm compares the memory with what that conversation last received:
 the first message brings the whole memory, later ones only what changed, and a
 message after nothing changed brings nothing. Turning the Memory switch on or
@@ -35,7 +36,7 @@ off reaches the conversation the same way, with the next message. Patterm
 remembers what each running session received only in memory, so after a
 restart the next message brings the whole memory again.
 
-The memory travels in each CLI's hidden context, which Patterm's transcripts
+For these harnesses, memory travels in hidden context, which Patterm's transcripts
 and history never show:
 
 - OpenCode: two session instruction entries, the whole memory
