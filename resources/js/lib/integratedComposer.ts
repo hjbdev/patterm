@@ -26,6 +26,9 @@ export interface ComposerAttachment {
   error?: string | undefined;
   serverPath?: string | undefined;
   previewUrl?: string | undefined;
+  // Routes the upload when it differs from the draft's key, as on the new
+  // conversation page, where the launch target's machine decides.
+  route?: string | undefined;
 }
 
 export interface ComposerSubmission {
@@ -72,6 +75,9 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   json: 'application/json', md: 'text/markdown', pdf: 'application/pdf', toml: 'application/toml',
   yaml: 'application/yaml', yml: 'application/yaml'
 };
+
+// The file picker's filter; drops and pastes are checked by attachmentMime.
+export const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env';
 
 function fileExtension(name: string): string {
   const index = name.lastIndexOf('.');
@@ -378,7 +384,7 @@ export function addReference(processId: string, path: string, name: string): voi
   if (!draft.references.some((reference) => reference.path === path)) draft.references.push({ path, name });
 }
 
-export async function addFiles(processId: string, incoming: File[]): Promise<void> {
+export async function addFiles(processId: string, incoming: File[], route?: string): Promise<void> {
   const draft = draftFor(processId);
   for (const file of incoming) {
     const mime = attachmentMime(file);
@@ -391,6 +397,7 @@ export async function addFiles(processId: string, incoming: File[]): Promise<voi
     const attachment: ComposerAttachment = {
       id, name: file.name, mime, size: file.size, image: isImageMime(mime),
       status: 'uploading',
+      ...(route ? { route } : {}),
       ...(isImageMime(mime) && typeof URL !== 'undefined' && URL.createObjectURL ? { previewUrl: URL.createObjectURL(file) } : {})
     };
     draft.attachments.push(attachment);
@@ -412,6 +419,42 @@ export function removeAttachment(processId: string, attachmentId: string): void 
   if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
   files.delete(attachmentId);
   draft.attachments = draft.attachments.filter((item) => item.id !== attachmentId);
+}
+
+// Uploads a draft's files again for another machine, such as when the new
+// conversation page's launch target moves to another host. A file whose
+// original is gone keeps its upload, which works again on its own machine.
+export function rerouteAttachments(key: string, route: string): void {
+  for (const attachment of draftFor(key).attachments) {
+    if ((attachment.route ?? key) === route || !files.has(attachment.id)) continue;
+    attachment.route = route;
+    attachment.serverPath = undefined;
+    attachment.status = 'uploading';
+    attachment.error = undefined;
+    void uploadAttachment(key, attachment.id);
+  }
+}
+
+// Takes the ready attachments out of a draft for a message sent elsewhere,
+// such as a new agent's first message.
+export function takeAttachments(key: string): Array<{ path: string; name: string; mime: string }> {
+  const draft = draftFor(key);
+  const taken = draft.attachments.map((attachment) => ({ path: attachment.serverPath as string, name: attachment.name, mime: attachment.mime }));
+  for (const attachment of draft.attachments) {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    files.delete(attachment.id);
+  }
+  draft.attachments = [];
+  return taken;
+}
+
+// Puts uploaded attachments back, as when a launch that failed is dismissed.
+export function restoreAttachments(key: string, attachments: Array<{ path: string; name: string; mime: string }>, route?: string): void {
+  const draft = draftFor(key);
+  for (const attachment of attachments) {
+    if (draft.attachments.some((item) => item.serverPath === attachment.path)) continue;
+    draft.attachments.push({ id: randomId(), name: attachment.name, mime: attachment.mime, size: 0, image: isImageMime(attachment.mime), status: 'ready', serverPath: attachment.path, ...(route ? { route } : {}) });
+  }
 }
 
 export function payloadFor(processId: string): { ok: true; payload: ComposerSendPayload; hash: string } | { ok: false; error: string } {
@@ -509,9 +552,11 @@ export function clearDrafts(): void {
 async function uploadAttachment(processId: string, attachmentId: string): Promise<void> {
   const file = files.get(attachmentId);
   const draft = draftFor(processId);
+  const route = draft.attachments.find((item) => item.id === attachmentId)?.route ?? processId;
+  // An upload for a machine the attachment has since moved off is dropped.
   const update = (fields: Partial<ComposerAttachment>): void => {
     const current = draft.attachments.find((item) => item.id === attachmentId);
-    if (current) Object.assign(current, fields);
+    if (current && (current.route ?? processId) === route) Object.assign(current, fields);
   };
   if (!file) {
     update({ status: 'error', error: 'The file is no longer available. Remove it and add it again.' });
@@ -520,7 +565,7 @@ async function uploadAttachment(processId: string, attachmentId: string): Promis
   try {
     const upload = window.patterm.uploadFile;
     if (!upload) throw new Error('Attachments are unavailable in this client.');
-    const path = await upload(file, processId);
+    const path = await upload(file, route);
     update({ serverPath: path, status: 'ready', error: undefined });
   } catch (cause) {
     update({ status: 'error', error: cause instanceof Error ? cause.message : String(cause) });

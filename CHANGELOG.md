@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New conversation page. The top bar's "+" opens a centred composer: pick the
   agent CLI by hovering its logo, choose the model, thinking level, project and
   worktree, and write the first message. Sending starts the agent with that
-  message and the composer slides down into place.
+  message and the composer slides down into place. Its paperclip button attaches
+  files to the first message, as do dropping and pasting them.
 
 ### Changed
 

@@ -43,7 +43,14 @@ export const launchHarnessInput = z.object({
   // The bot a 'bot' session runs; its context comes from the bot's settings.
   bot_id: z.string().min(1).nullable().default(null),
   name: z.string().optional(),
-  initial_prompt: z.string().optional()
+  initial_prompt: z.string().optional(),
+  // Managed upload paths sent with the first message; the agent's input
+  // resolver checks each one before it reaches the CLI.
+  initial_attachments: z.array(z.object({
+    path: z.string().min(1),
+    name: z.string().optional(),
+    mime: z.string().optional()
+  })).max(20).optional()
 }).superRefine((value, context) => {
   if (!value.harness && !value.preset) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['harness'], message: 'harness or preset is required' });
@@ -402,11 +409,12 @@ export class HarnessLauncher {
       });
     }
     const initialPrompt = this.initialPrompt(input.initial_prompt);
-    if (initialPrompt) {
+    const initialAttachments = input.initial_attachments ?? [];
+    if (initialPrompt || initialAttachments.length) {
       const service = this.deps.integrated;
       if (!service) throw new Error('Integrated messaging is unavailable');
       try {
-        await service.prompt(registered.process_id, initialPrompt, agentContext);
+        await service.prompt(registered.process_id, initialAttachments.length ? { text: initialPrompt, attachments: initialAttachments } : initialPrompt, agentContext);
       } catch (error) {
         const now = new Date().toISOString();
         this.deps.database.connection.prepare(`update processes set status = 'failed', exited_at = ?, updated_at = ? where id = ?`).run(now, now, registered.process_id);
