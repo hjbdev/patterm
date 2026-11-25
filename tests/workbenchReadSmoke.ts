@@ -605,7 +605,7 @@ async function main(): Promise<void> {
     database.connection.prepare(`update sessions set interface_mode = 'integrated' where mcp_identity = 'identity_test'`).run();
     const integratedCatalog = (await callOverSocket(socketPath, { id: 3, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
     assert.ok(integratedCatalog.result.some(({ name }) => name === 'html_render'), 'agents are offered figures');
-    assert.ok(!integratedCatalog.result.some(({ name }) => name === 'bot_stay_quiet'), 'non-bot agents are not offered bot-only tools');
+    assert.ok(integratedCatalog.result.some(({ name }) => name === 'stay_quiet'), 'agents can end a turn quietly');
     assert.ok(!publicNames.includes('html_preview'), 'only the desktop app, which can draw pages off screen, offers previews');
     const directContext = (await callOverSocket(socketPath, { id: 4, version: 2, tool: 'get_project_status', args: {}, identity: 'identity_test' })) as {
       result: { current_process_id: string };
@@ -623,7 +623,7 @@ async function main(): Promise<void> {
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [shimPath], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'identity_test' }, stderr: 'pipe' }));
       const listed = await client.listTools();
-      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames.filter((name) => name !== 'bot_stay_quiet'), 'the catalogue an agent lists is valid over modern MCP tools/list');
+      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames, 'the catalogue an agent lists is valid over modern MCP tools/list');
       assert.match(JSON.stringify(await client.callTool({ name: 'list_processes', arguments: {} })), /proc_identity/, 'new clients call the backend directly with caller identity');
       assert.equal((await client.callTool({ name: 'spawn_agent', arguments: {} })).isError, true, 'agent launch validates its cross-field requirement before forwarding');
       assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo_create' } })), /title/, 'help reads the public catalogue');
