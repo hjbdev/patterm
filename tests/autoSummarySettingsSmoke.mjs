@@ -17,7 +17,9 @@ test('summary settings save and test send plain, deeply cloneable payloads', asy
     outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue'],
     plugins: [{ name: 'ui-stubs', setup(builder) {
       builder.onResolve({ filter: /^\.\/ui\/|^\.\/settings\// }, (args) => ({ path: args.path, namespace: 'stub' }));
-      builder.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ contents: args.path.startsWith('./settings/') ? 'export default {};' : 'export const Button = {}; export const Input = {}; export const Switch = {};' }));
+      builder.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ contents: args.path.includes('settingsHost')
+        ? 'export const useSettingsHost = () => ({ value: null });'
+        : args.path.startsWith('./settings/') ? 'export default {};' : 'export const Button = {}; export const Input = {}; export const Switch = {};' }));
     } }]
   });
   const settings = { enabled: false, provider: 'claude', models: { claude: 'haiku', codex: 'gpt-5.6-luna', opencode: 'gpt-5.6-luna' }, intervalSeconds: 30 };

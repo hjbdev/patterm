@@ -1,4 +1,4 @@
-import { computed, readonly, ref, shallowRef } from 'vue';
+import { computed, onScopeDispose, readonly, ref, shallowRef, watch } from 'vue';
 import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
 
 export type McpHarness = 'claude' | 'codex' | 'opencode' | 'agy';
@@ -63,12 +63,12 @@ export function errorMessage(caught: unknown): string {
   return caught instanceof Error ? caught.message : String(caught);
 }
 
-function call<T>(tool: string, args: Record<string, unknown> = {}): Promise<T> {
-  return window.patterm.call(tool, args) as Promise<T>;
+function call<T>(tool: string, args: Record<string, unknown> = {}, host?: string | null): Promise<T> {
+  return window.patterm.call(tool, args, host ?? undefined) as Promise<T>;
 }
 
-// One list is shared by every view. Other clients catch up through the
-// change that saving and sign-in announce.
+// One list is shared by every view of this host. Other clients catch up
+// through the change that saving and sign-in announce.
 const servers = shallowRef<McpServerView[]>([]);
 const redirect = ref<McpRedirectMode>('loopback');
 const loaded = ref(false);
@@ -100,15 +100,129 @@ function reloadMcpServers(): Promise<void> {
   return loadMcpServers();
 }
 
-export function useMcpServers() {
-  useTopicRefresh(['mcp-servers'], () => void loadMcpServers());
-  void loadMcpServers();
+export function useMcpServers(host?: string | null) {
+  if (!host) {
+    useTopicRefresh(['mcp-servers'], () => void loadMcpServers());
+    void loadMcpServers();
+    return {
+      servers: computed(() => servers.value),
+      redirect: readonly(redirect),
+      loaded: readonly(loaded),
+      error: readonly(listError),
+      tests: computed(() => tests.value),
+      save: (draft: McpServerDraft) => saveMcpServer(draft),
+      setEnabled: (server: McpServerView, enabled: boolean) => setMcpServerEnabled(server, enabled),
+      remove: (id: string) => deleteMcpServer(id),
+      importAll: () => importMcpServers(),
+      test: (id: string) => testMcpServer(id),
+      startSignIn: (id: string, via: 'auto' | 'loopback' = 'auto') => startMcpSignIn(id, via),
+      completeSignIn: (url: string) => completeMcpSignIn(url),
+      cancelSignIn: (id: string) => cancelMcpSignIn(id),
+      signOut: (id: string) => signOutMcpServer(id)
+    };
+  }
+  const remoteServers = shallowRef<McpServerView[]>([]);
+  const remoteRedirect = ref<McpRedirectMode>('loopback');
+  const remoteLoaded = ref(false);
+  const remoteError = ref('');
+  const remoteTests = shallowRef<Record<string, McpTestState>>({});
+  let remoteReads = 0;
+  let pendingReads = 0;
+  let disposed = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const clearPoll = (): void => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+  const loadRemote = (): Promise<void> => {
+    if (disposed) return Promise.resolve();
+    const read = ++remoteReads;
+    pendingReads++;
+    return call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list', {}, host)
+      .then((value) => {
+        if (disposed || read !== remoteReads) return;
+        remoteServers.value = value.servers;
+        remoteRedirect.value = value.redirect;
+        remoteError.value = '';
+      })
+      .catch((caught) => { if (!disposed && read === remoteReads) remoteError.value = errorMessage(caught); })
+      .finally(() => {
+        pendingReads--;
+        remoteLoaded.value = true;
+      });
+  };
+  const syncPoll = (list: McpServerView[]): void => {
+    const active = !disposed && list.some((server) => Boolean(server.sign_in?.pending));
+    if (active && !timer) {
+      timer = setInterval(() => { if (pendingReads === 0) void loadRemote(); }, 2000);
+    } else if (!active) {
+      clearPoll();
+    }
+  };
+  watch(remoteServers, syncPoll);
+  onScopeDispose(() => {
+    disposed = true;
+    clearPoll();
+  });
+  void loadRemote();
+
   return {
-    servers: computed(() => servers.value),
-    redirect: readonly(redirect),
-    loaded: readonly(loaded),
-    error: readonly(listError),
-    tests: computed(() => tests.value)
+    servers: computed(() => remoteServers.value),
+    redirect: readonly(remoteRedirect),
+    loaded: readonly(remoteLoaded),
+    error: readonly(remoteError),
+    tests: computed(() => remoteTests.value),
+    save: async (draft: McpServerDraft): Promise<McpServerView> => {
+      const saved = await call<McpServerView>('mcp_servers_save', payloadFromDraft(draft), host);
+      await loadRemote();
+      return saved;
+    },
+    setEnabled: async (server: McpServerView, enabled: boolean): Promise<void> => {
+      await call('mcp_servers_save', { ...payloadFromDraft(draftFromServer(server)), enabled }, host);
+      await loadRemote();
+    },
+    remove: async (id: string): Promise<void> => {
+      await call('mcp_servers_delete', { id }, host);
+      const { [id]: _removed, ...rest } = remoteTests.value;
+      remoteTests.value = rest;
+      await loadRemote();
+    },
+    importAll: async (): Promise<McpImportResult> => {
+      const result = await call<McpImportResult>('mcp_servers_import', {}, host);
+      await loadRemote();
+      return result;
+    },
+    test: async (id: string): Promise<void> => {
+      remoteTests.value = { ...remoteTests.value, [id]: { status: 'running' } };
+      let result: McpTestResult;
+      try {
+        result = await call<McpTestResult>('mcp_servers_test', { id }, host);
+      } catch (caught) {
+        result = { ok: false, tools: [], error: errorMessage(caught) };
+      }
+      remoteTests.value = { ...remoteTests.value, [id]: { status: 'done', result } };
+    },
+    startSignIn: async (id: string, via: 'auto' | 'loopback' = 'auto'): Promise<void> => {
+      const started = await call<{ authorization_url: string | null; signed_in: boolean }>('mcp_servers_signin_start', { id, via }, host);
+      if (started.authorization_url) openSignInPage(started.authorization_url);
+      await loadRemote();
+    },
+    completeSignIn: async (url: string): Promise<string> => {
+      const result = await call<{ server_id: string; name: string }>('mcp_servers_signin_complete', { url: url.trim() }, host);
+      await loadRemote();
+      return result.name;
+    },
+    cancelSignIn: async (id: string): Promise<void> => {
+      await call('mcp_servers_signin_cancel', { id }, host);
+      await loadRemote();
+    },
+    signOut: async (id: string): Promise<void> => {
+      await call('mcp_servers_signout', { id }, host);
+      await loadRemote();
+    }
   };
 }
 

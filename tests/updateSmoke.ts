@@ -81,7 +81,7 @@ function install(version: string, key: Signer, platform: ReleaseInstall['platfor
   return { platform, arch, root: '/opt/patterm/versions/' + version, version, publicKey: key.publicKey };
 }
 
-function service(options: { install: ReleaseInstall | null; releases: FakeReleases; settings?: MemorySettings; applier?: UpdateApplier | null }) {
+function service(options: { install: ReleaseInstall | null; releases: FakeReleases; settings?: MemorySettings; applier?: UpdateApplier | null; requiresQuit?: boolean }) {
   const notices: Array<{ version: string; canApply: boolean }> = [];
   let changes = 0;
   const settings = options.settings ?? new MemorySettings();
@@ -89,6 +89,7 @@ function service(options: { install: ReleaseInstall | null; releases: FakeReleas
     install: options.install,
     settings,
     applier: options.applier === undefined ? { unavailable: () => null, apply: async () => ({ quit: true, log: '/tmp/update.log' }) } : options.applier,
+    requiresQuit: options.requiresQuit ?? false,
     restartDetail: () => 'Patterm quits.',
     notify: (release) => notices.push(release),
     changed: () => { changes++; },
@@ -158,12 +159,14 @@ async function testChecks(): Promise<void> {
   assert.equal((await source.updates.check()).supported, false);
   assert.deepEqual(releases.requests, []);
 
-  const run = service({ install: install('1.2.0', key), releases });
+  const run = service({ install: install('1.2.0', key), releases, requiresQuit: true });
   const state = await run.updates.check();
   assert.equal(state.status, 'available');
   assert.equal(state.latest?.version, '1.3.0');
   assert.equal(state.latest?.notesUrl, 'https://releases.test/tag/v1.3.0');
   assert.equal(state.canApply, true);
+  assert.equal(state.requiresQuit, true, 'desktop updates report that applying requires quitting locally');
+  assert.equal(service({ install: install('1.2.0', key), releases }).updates.state().requiresQuit, false, 'server updates report that applying restarts in place');
   assert.deepEqual(run.notices, [{ version: '1.3.0', canApply: true }]);
   await run.updates.check();
   assert.equal(run.notices.length, 1, 'a release is announced once');

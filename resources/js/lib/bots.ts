@@ -53,7 +53,8 @@ export interface BotSettings { bots: Bot[]; userName: string | null }
 export interface BotState { bot_id: string; process_id: string | null; session_id: string | null }
 
 // `remote` holds paired hosts' bots, which list here but are saved there.
-export function readBots(): Promise<BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] }> {
+export function readBots(host?: string | null): Promise<BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] }> {
+  if (host) return window.patterm.call('settings_bots_get', {}, host) as Promise<BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] }>;
   return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] });
 }
 
@@ -61,9 +62,9 @@ export function isAssistantBot(bot: Pick<Bot, 'id'> | null | undefined): boolean
   return bot?.id === ASSISTANT_BOT_ID;
 }
 
-export async function saveBots(settings: BotSettings): Promise<BotSettings> {
-  const saved = await window.patterm.call('settings_bots_update', settings) as BotSettings;
-  topicChanged('settings');
+export async function saveBots(settings: BotSettings, host?: string | null): Promise<BotSettings> {
+  const saved = await window.patterm.call('settings_bots_update', settings, host ?? undefined) as BotSettings;
+  if (!host) topicChanged('settings');
   return saved;
 }
 
@@ -95,13 +96,15 @@ export async function restartBot(processId: string, fresh = false): Promise<void
 }
 
 // Restarts a running bot from a page that isn't showing its conversation,
-// such as Settings › Bots. A browser takes control of the session first, as
-// the user asked for the restart, and lets go of it afterwards.
+// such as Settings › Bots. A browser (or desktop acting on a paired host's
+// bot) takes control of the session first, as the user asked for the restart,
+// and lets go of it afterwards.
 export async function restartBotFromSettings(processId: string, fresh = false): Promise<void> {
   const takeControl = window.patterm.terminalTakeControl;
-  if (window.patterm.runtime !== 'browser' || !takeControl) return restartBot(processId, fresh);
+  const needsControl = window.patterm.runtime === 'browser' || processId.includes(':');
+  if (!needsControl || !takeControl) return restartBot(processId, fresh);
   try {
-    const subscribed = await window.patterm.terminalSubscribe({ process_id: processId, subscribed: true }) as { error?: string; controlling?: boolean } | undefined;
+    const subscribed = await window.patterm.terminalSubscribe({ process_id: processId, subscribed: true, ...(processId.includes(':') ? { take_control: true } : {}) }) as { error?: string; controlling?: boolean } | undefined;
     if (subscribed?.error) throw new Error(subscribed.error);
     if (!subscribed?.controlling) {
       const result = await takeControl({ process_id: processId }) as { error?: string } | undefined;

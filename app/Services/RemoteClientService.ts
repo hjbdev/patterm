@@ -26,13 +26,15 @@ const ID_KEYS = new Set([
   // Project context records, assignees and attachment targets, timers, and
   // imported conversations.
   'todo_id', 'scratchpad_id', 'reference_id', 'target_id', 'assignee_id', 'blocker_id', 'timer_id', 'conversation_id',
-  // A paired host's bot, which its UI starts and reads.
-  'bot_id'
+  // A paired host's bot, which its UI starts and reads, and write-only session secrets.
+  'bot_id', 'secret_id'
 ]);
 // A generic `id` field is qualified only when it names a Patterm record, so
 // unrelated IDs, such as an Integrated control's, pass through unchanged.
-const RECORD_ID = /^(?:todo|scratchpad|reference|worktree|session|process|notification|conversation|timer)_[A-Za-z0-9-]+$/;
+const RECORD_ID = /^(?:todo|scratchpad|reference|worktree|session|process|notification|conversation|timer|secret)_[A-Za-z0-9-]+$/;
 const PROJECT_KEYS = new Set(['project_id', 'projectId']);
+// Lists of project IDs, such as a bot's purview in settings_bots_get/update.
+const PROJECT_LIST_KEYS = new Set(['projectIds']);
 // Lists of record IDs, such as a todo's assigned sessions or the processes a
 // timer watches.
 const ID_LIST_KEYS = new Set(['assignments', 'watched']);
@@ -1181,6 +1183,7 @@ export class RemoteClientService {
     for (const [key, item] of Object.entries(value)) {
       if (typeof item === 'string' && (ID_KEYS.has(key) || (key === 'id' && (conversation || RECORD_ID.test(item))))) out[key] = this.qualifyId(item, peer);
       else if (typeof item === 'string' && (PROJECT_KEYS.has(key) || (key === 'id' && item.startsWith('project_')))) out[key] = this.links.localProjectFor(peer.host_id, item) ?? `${peer.name}:${item}`;
+      else if (PROJECT_LIST_KEYS.has(key) && Array.isArray(item)) out[key] = item.map((id) => typeof id === 'string' ? (this.links.localProjectFor(peer.host_id, id) ?? `${peer.name}:${id}`) : id);
       else if (ID_LIST_KEYS.has(key) && Array.isArray(item)) out[key] = item.map((id) => typeof id === 'string' ? this.qualifyId(id, peer) : id);
       else out[key] = this.qualify(item, peer, depth + 1, CONVERSATION_KEYS.has(key));
     }
@@ -1195,8 +1198,9 @@ export class RemoteClientService {
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
       if (typeof item === 'string' && PROJECT_KEYS.has(key)) {
-        const link = this.links.links(peer.host_id).find((candidate) => candidate.project_id === item);
-        out[key] = item.startsWith(`${peer.name}:`) ? item.slice(peer.name.length + 1) : link ? link.remote_project_id : item;
+        out[key] = this.unqualifyProjectId(item, peer);
+      } else if (PROJECT_LIST_KEYS.has(key) && Array.isArray(item)) {
+        out[key] = item.map((id) => typeof id === 'string' ? this.unqualifyProjectId(id, peer) : id);
       } else if (typeof item === 'string' && ID_KEYS.has(key)) out[key] = this.unqualifyId(item, peer);
       else if (ID_LIST_KEYS.has(key) && Array.isArray(item)) out[key] = item.map((id) => typeof id === 'string' ? this.unqualifyId(id, peer) : id);
       else out[key] = this.unqualify(item, peer, depth + 1);

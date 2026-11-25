@@ -74,7 +74,7 @@
 
 <script setup lang="ts">
 import { randomId } from '../lib/randomId';
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
@@ -85,12 +85,14 @@ import HarnessProfileFields from './HarnessProfileFields.vue';
 import SettingsItem from './settings/SettingsItem.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
 import { harnessModels, topicChanged } from '../lib/serverQuery';
 import type { ProfileLook } from '../lib/faces';
 import { DEFAULT_MODEL, PROFILE_HARNESSES, emptyModelCatalog, fieldsFrom, modelsFor, settingsFrom, settingsSummary, type ModelCatalog, type ProfileFieldsState, type ProfileHarness } from '../lib/profileFields';
+import type { HarnessInstallationRecord } from '../types';
 
 type PresetHarness = ProfileHarness;
 type Harness = PresetHarness;
@@ -120,7 +122,10 @@ interface EditorState {
 
 const PRESET_HARNESSES = PROFILE_HARNESSES;
 
-const { harnesses } = useWorkbench();
+const host = useSettingsHost().value;
+const { harnesses: localHarnesses } = useWorkbench();
+const remoteHarnesses = ref<HarnessInstallationRecord[]>([]);
+const harnesses = computed(() => host ? remoteHarnesses.value : localHarnesses.value);
 function supportsServiceTier(harness: PresetHarness): boolean | undefined {
   return harnesses.value.find((item) => item.harness === harness)?.capabilities?.features.serviceTier;
 }
@@ -142,6 +147,18 @@ onMounted(() => {
 async function load(): Promise<void> {
   error.value = '';
   try {
+    if (host) {
+      const [harnessResult, presetResponse, modelResponse] = await Promise.all([
+        window.patterm.call('harness_list', {}, host) as Promise<{ harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[]>,
+        window.patterm.call('settings_harness_presets_get', {}, host) as Promise<PresetSettings>,
+        window.patterm.call('harness_models', {}, host) as Promise<ModelCatalog>
+      ]);
+      remoteHarnesses.value = Array.isArray(harnessResult) ? harnessResult : harnessResult?.harnesses ?? [];
+      applySettings(presetResponse);
+      catalog.value = modelResponse;
+      loaded.value = true;
+      return;
+    }
     const [presetResponse, modelResponse] = await Promise.all([
       window.patterm.harnessPresets() as Promise<PresetSettings>,
       harnessModels<ModelCatalog>()
@@ -177,7 +194,9 @@ let revision = 0;
 async function save(): Promise<void> {
   if (!loaded.value) return;
   const current = ++revision;
-  const response = await window.patterm.harnessPresetsUpdate(snapshot()) as PresetSettings;
+  const response = await (host
+    ? window.patterm.call('settings_harness_presets_update', snapshot(), host)
+    : window.patterm.harnessPresetsUpdate(snapshot())) as PresetSettings;
   if (current === revision) applySettings(response);
 }
 
@@ -191,12 +210,16 @@ async function refreshModels(): Promise<void> {
   refreshBusy.value = true;
   error.value = '';
   try {
-    catalog.value = await window.patterm.harnessModelsRefresh() as ModelCatalog;
+    catalog.value = await (host
+      ? window.patterm.call('harness_models_refresh', {}, host)
+      : window.patterm.harnessModelsRefresh()) as ModelCatalog;
     // Other views read the catalog again.
-    topicChanged('settings');
+    if (!host) topicChanged('settings');
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
-    catalog.value = await harnessModels<ModelCatalog>();
+    catalog.value = await (host
+      ? window.patterm.call('harness_models', {}, host) as Promise<ModelCatalog>
+      : harnessModels<ModelCatalog>());
   } finally {
     refreshBusy.value = false;
   }

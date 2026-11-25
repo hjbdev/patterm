@@ -20,8 +20,9 @@ test('preset settings send a plain, cloneable payload through Electron IPC', asy
       builder.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ contents: args.path.includes('useWorkbench')
         ? 'export const useWorkbench = () => ({ harnesses: { value: [] } });'
         : args.path.includes('harnesses') ? 'export const harnessLabel = (value) => value;'
-          : args.path.includes('AgentIcon') || args.path.includes('HarnessProfileFields') || args.path.includes('settings/') ? 'export default {};'
-            : 'export const Badge = {}; export const Button = {}; export const Checkbox = {}; export const Input = {}; export const Dialog = {}; export const DialogContent = {}; export const DialogDescription = {}; export const DialogFooter = {}; export const DialogHeader = {}; export const DialogTitle = {};' }));
+          : args.path.includes('settingsHost') ? 'export const useSettingsHost = () => ({ value: null });'
+            : args.path.includes('AgentIcon') || args.path.includes('HarnessProfileFields') || args.path.includes('settings/') ? 'export default {};'
+              : 'export const Badge = {}; export const Button = {}; export const Checkbox = {}; export const Input = {}; export const Dialog = {}; export const DialogContent = {}; export const DialogDescription = {}; export const DialogFooter = {}; export const DialogHeader = {}; export const DialogTitle = {};' }));
     } }]
   });
   const settings = {

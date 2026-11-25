@@ -13,7 +13,7 @@
           </details>
         </template>
       </SettingsRow>
-      <SettingsRow label="Import notifications" description="Notify when imports start, complete, or fail." html-for="history-import-toasts" save-key="history.import.toasts" toggle>
+      <SettingsRow v-if="!host" label="Import notifications" description="Notify when imports start, complete, or fail." html-for="history-import-toasts" save-key="history.import.toasts" toggle>
         <Switch id="history-import-toasts" :model-value="draft.historyImportToasts" @update:model-value="(value) => { draft.historyImportToasts = value; void save('history.import.toasts'); }" />
       </SettingsRow>
       <SettingsRow label="Reset imported history" description="Clear imported conversations and import them again. Agent CLIs’ own history files are not touched.">
@@ -35,12 +35,14 @@ import SemanticSearchSettings from './SemanticSearchSettings.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 
 interface HistoryStatus {
   batches: Array<{ id: string; status: string; conversationsImported: number; errorCount: number }>;
   files: Array<{ id: string; status: string; path: string }>;
 }
 
+const host = useSettingsHost().value;
 const { draft, save } = useAppearanceSettings();
 const busy = ref(false);
 const error = ref('');
@@ -49,7 +51,11 @@ const status = ref<HistoryStatus>({ batches: [], files: [] });
 void loadStatus();
 
 async function loadStatus(): Promise<void> {
-  status.value = (await window.patterm.call('history_import_status', {}) as HistoryStatus | null) ?? { batches: [], files: [] };
+  try {
+    status.value = (await window.patterm.call('history_import_status', {}, host ?? undefined) as HistoryStatus | null) ?? { batches: [], files: [] };
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : String(caught);
+  }
 }
 
 async function run(task: () => Promise<unknown>): Promise<void> {
@@ -66,11 +72,11 @@ async function run(task: () => Promise<unknown>): Promise<void> {
 }
 
 function importNow(): Promise<void> {
-  return run(() => window.patterm.call('history_import', { trigger: 'manual' }));
+  return run(() => window.patterm.call('history_import', { trigger: 'manual' }, host ?? undefined));
 }
 
 function resetAndReimport(): Promise<void> {
   if (!window.confirm('Clear imported conversation history and import it again? Agent CLIs’ own history files will not be touched.')) return Promise.resolve();
-  return run(() => window.patterm.call('history_reset_imports', { reimport: true }));
+  return run(() => window.patterm.call('history_reset_imports', { reimport: true }, host ?? undefined));
 }
 </script>

@@ -18,8 +18,10 @@ import { loadIdleCompactionSettings, saveIdleCompactionSettings, type IdleCompac
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { Switch } from './ui/switch';
 
+const host = useSettingsHost().value;
 const settings = shallowRef<IdleCompactionSettings | null>(null);
 const afterMinutes = ref<Partial<Record<IdleCompactionHarness, number>>>({});
 const error = ref('');
@@ -41,14 +43,14 @@ function save(harness: IdleCompactionHarness, enabled: boolean): void {
   settings.value = { ...settings.value, [harness]: enabled };
   const current = ++revision;
   saving = saving.then(() => autosave(`idle_compaction.${harness}`, async () => {
-    const saved = await saveIdleCompactionSettings(settings.value!);
+    const saved = await saveIdleCompactionSettings(settings.value!, host);
     if (current === revision) settings.value = saved;
   }));
 }
 
 onMounted(async () => {
   try {
-    const loaded = await loadIdleCompactionSettings();
+    const loaded = await loadIdleCompactionSettings(host);
     settings.value = loaded.settings;
     afterMinutes.value = loaded.afterMinutes;
   } catch (caught) {

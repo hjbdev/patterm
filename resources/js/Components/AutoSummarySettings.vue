@@ -53,6 +53,7 @@ import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { harnessModels } from '../lib/serverQuery';
 
@@ -119,13 +120,18 @@ const catalogError = computed(() => {
   const message = catalog.value[draft.value.provider]?.error;
   return message ? `Model list may be out of date: ${message}` : '';
 });
+const host = useSettingsHost().value;
 watch(() => JSON.stringify(draft.value), () => { testPassed.value = false; });
 onMounted(async () => {
   try {
     const [result, models] = await Promise.all([
-      window.patterm.autoSummarySettings() as Promise<{ settings: unknown; providers: typeof providers.value; lastError: string | null }>,
+      (host
+        ? window.patterm.call('settings_summaries_get', {}, host)
+        : window.patterm.autoSummarySettings()) as Promise<{ settings: unknown; providers: typeof providers.value; lastError: string | null }>,
       // The model list is optional; the model can still be typed without it.
-      Promise.resolve().then(() => harnessModels<{ providers?: typeof catalog.value }>()).catch(() => null)
+      Promise.resolve().then(() => host
+        ? window.patterm.call('harness_models', {}, host) as Promise<{ providers?: typeof catalog.value }>
+        : harnessModels<{ providers?: typeof catalog.value }>()).catch(() => null)
     ]);
     draft.value = autoSummarySettingsInput.parse(result.settings);
     saved = JSON.stringify(draft.value);
@@ -157,7 +163,9 @@ async function save() {
   if (JSON.stringify(draft.value) === saved) return;
   const payload = autoSummarySettingsInput.parse(draft.value);
   const current = ++revision;
-  const response = autoSummarySettingsInput.parse(await window.patterm.autoSummarySettingsUpdate(payload));
+  const response = autoSummarySettingsInput.parse(await (host
+    ? window.patterm.call('settings_summaries_update', payload, host)
+    : window.patterm.autoSummarySettingsUpdate(payload)));
   // A newer change is already on its way; keep it rather than the older response.
   if (current !== revision) return;
   draft.value = response;
@@ -184,7 +192,11 @@ async function test() {
   busy.value = true;
   error.value = '';
   testPassed.value = false;
-  try { await window.patterm.autoSummaryTest(autoSummarySettingsInput.parse(draft.value)); testPassed.value = true; }
+  try {
+    const payload = autoSummarySettingsInput.parse(draft.value);
+    await (host ? window.patterm.call('settings_summaries_test', payload, host) : window.patterm.autoSummaryTest(payload));
+    testPassed.value = true;
+  }
   catch (caught) { error.value = caught instanceof Error ? caught.message : 'Summariser test failed.'; }
   finally { busy.value = false; }
 }

@@ -32,7 +32,6 @@ import { UploadService } from './Http/UploadService';
 import { RemoteClientService } from './Services/RemoteClientService';
 import { ServerAccess } from './Http/ServerAccess';
 import { BROWSER_TOOLS } from './Http/BrowserTools';
-import { MCP_SERVER_TOOLS } from './MCP/registerMcpServerTools';
 import { resolvePtyProcessId } from './Services/ProcessIdentity';
 import { ProjectLinkService } from './Services/ProjectLinkService';
 import { ProjectLinkActions } from './Actions/ProjectLinkActions';
@@ -44,7 +43,7 @@ import { registerSemanticSearchTools, SemanticSearchActions } from './Actions/Se
 import { registerTabLayoutTools, TabLayoutActions } from './Actions/TabLayoutActions';
 import { BrowserActions, registerBrowserTools } from './Actions/BrowserActions';
 import { BrowserService } from './Services/Browser/BrowserService';
-import { SecretActions, registerSecretTools } from './Actions/SecretActions';
+import { SECRET_CONTROL_TOOLS, SecretActions, registerSecretTools } from './Actions/SecretActions';
 import { SecretService } from './Services/Secrets/SecretService';
 import { SecretVault, type SecretKeyWrapper } from './Services/Secrets/SecretVault';
 import { SecretProxyService } from './Services/Secrets/SecretProxyService';
@@ -842,14 +841,15 @@ async function createApplicationResources(
     isIntegrated: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? limit 1`).get(processId)),
     subscribeConversation: (processId, listener) => integrated.subscribeConversation(processId, listener),
     // A paired host's UI runs the same tools as a browser, except ones that
-    // change this host's settings or pairing.
+    // change this host's pairing topology. Desktop installs also keep update
+    // apply local because their installer waits for the Electron app to quit.
     allowedTools: new Set([
-      // Secrets are entered only on the agent's own host.
-      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && (!tool.startsWith('settings_') || tool === 'settings_status_labels_get') && !tool.startsWith('secret_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
+      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && (options.runtime === 'node' || tool !== 'settings_updates_apply')),
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume',
       // Socket-only for browsers; the peer route checks control itself.
-      'integrated_restart', 'bot_restart'
+      'integrated_restart', 'bot_restart',
+      ...SECRET_CONTROL_TOOLS
     ]),
     localBots: () => settings.bots().bots,
     botsChanged: () => notifyChanged(['settings'], true),
@@ -979,6 +979,7 @@ async function createApplicationResources(
     install: releaseInstall,
     settings,
     applier: releaseInstall ? new UpdateInstaller({ install: releaseInstall, mode: updateMode, logPath: path.join(options.appDataPath, 'update.log') }) : null,
+    requiresQuit: updateMode === 'desktop',
     // A service restart reconnects to its terminal and Integrated hosts.
     restartDetail: (): string => updateMode === 'desktop'
       ? `Patterm quits, installs the update, and opens again. ${quitConfirmation(application) ?? 'Nothing is running.'}`

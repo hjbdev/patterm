@@ -55,6 +55,10 @@ export class HarnessPresetService {
     return this.settings.harnessPresets();
   }
 
+  replace(raw: unknown): HarnessPresetSettings {
+    return this.settings.updateHarnessPresets(raw);
+  }
+
   // Agent-facing view: each preset carries its default flag so callers do not
   // have to join against defaultPresetIdByHarness. Faces are for people and
   // stay out of it.

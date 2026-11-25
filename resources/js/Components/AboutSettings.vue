@@ -1,5 +1,5 @@
 <template>
-  <SettingsPanel title="About" :description="`Patterm ${updates?.currentVersion ?? version}`">
+  <SettingsPanel title="About" :description="aboutDescription">
     <SettingsSection>
       <SettingsRow label="Updates">
         <template #description>
@@ -7,7 +7,7 @@
           <a v-if="updates?.latest" :href="updates.latest.notesUrl" target="_blank" rel="noreferrer" class="underline underline-offset-2 hover:text-foreground">Release notes</a>
         </template>
         <template v-if="updates?.supported">
-          <Button v-if="updates.canApply" type="button" size="sm" class="h-7 px-2.5" @click="openConfirm">Restart to update</Button>
+          <Button v-if="canApplyHere" type="button" size="sm" class="h-7 px-2.5" @click="openConfirm">Restart to update</Button>
           <Button v-else-if="updates.status !== 'installing'" type="button" size="sm" variant="ghost" class="h-7 px-2" :disabled="checking || updates.status === 'checking'" @click="check">
             {{ checking || updates.status === 'checking' ? 'Checking…' : 'Check now' }}
           </Button>
@@ -56,14 +56,16 @@ import { applyUpdate, checkForUpdates, saveUpdateSettings, useUpdates, type Upda
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Switch } from './ui/switch';
 
 type Document = 'licence' | 'notices';
 
+const host = useSettingsHost().value;
 const version = __PATTERM_VERSION__;
-const updates = useUpdates();
+const updates = useUpdates(host);
 const checking = ref(false);
 const confirmOpen = ref(false);
 const applying = ref(false);
@@ -81,6 +83,14 @@ const open = ref<Document | null>(null);
 const error = ref('');
 const textClass = 'max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-lg border border-white/[0.06] p-4 font-mono text-[11px] leading-relaxed text-muted-foreground';
 
+const aboutDescription = computed(() => {
+  if (!host) return `Patterm ${updates.value?.currentVersion ?? version}`;
+  if (updates.value?.currentVersion) return `Patterm ${updates.value.currentVersion}`;
+  return updates.value ? 'Patterm (source checkout)' : '';
+});
+
+const canApplyHere = computed(() => Boolean(updates.value?.canApply) && (!host || !updates.value?.requiresQuit));
+
 const updateStatus = computed(() => {
   const state = updates.value;
   if (!state) return '';
@@ -91,7 +101,13 @@ const updateStatus = computed(() => {
     case 'installing': return `Installing Patterm ${state.latest?.version ?? ''}…`;
     case 'error': return state.error ?? 'The last check failed.';
     case 'up_to_date': return `Patterm is up to date.${checked}`;
-    case 'available': return `Patterm ${state.latest?.version} is available.${state.canApply ? '' : ` ${state.applyUnavailable ?? ''}`}`;
+    case 'available': {
+      if (canApplyHere.value) return `Patterm ${state.latest?.version} is available.`;
+      const note = state.canApply && host && state.requiresQuit
+        ? `Update Patterm directly on ${host}.`
+        : state.applyUnavailable ?? '';
+      return `Patterm ${state.latest?.version} is available.${note ? ` ${note}` : ''}`;
+    }
     default: return state.settings.autoCheck ? 'Patterm checks for updates shortly after it starts.' : 'Automatic checks are off.';
   }
 });
@@ -99,13 +115,19 @@ const updateStatus = computed(() => {
 async function check(): Promise<void> {
   checking.value = true;
   error.value = '';
-  try { await checkForUpdates(); }
+  try {
+    const next = await checkForUpdates(host);
+    if (host) updates.value = next;
+  }
   catch (caught) { error.value = caught instanceof Error ? caught.message : String(caught); }
   finally { checking.value = false; }
 }
 
 function save(field: keyof UpdateState['settings'], settings: UpdateState['settings']): void {
-  void autosave(`updates.${field}`, () => saveUpdateSettings(settings));
+  void autosave(`updates.${field}`, async () => {
+    const next = await saveUpdateSettings(settings, host);
+    if (host) updates.value = next;
+  });
 }
 
 function openConfirm(): void {
@@ -118,10 +140,11 @@ async function apply(): Promise<void> {
   applying.value = true;
   applyError.value = '';
   try {
-    const { quit } = await applyUpdate(confirmVersion.value);
+    const { quit, state } = await applyUpdate(confirmVersion.value, host);
+    if (host) updates.value = state;
     // The desktop quits like Quit Patterm; a helper installs and reopens it.
-    // A server restarts itself, and the browser reconnects.
-    if (quit && window.patterm.runtime !== 'browser') {
+    // A paired host or server restarts itself while this window stays open.
+    if (!host && quit && window.patterm.runtime !== 'browser') {
       await window.patterm.commandsRun({ id: 'renderer:quit', context: { active_project_id: null, active_terminal_id: null, active_tab: null }, input: { confirmed: true } });
       window.close();
       return;

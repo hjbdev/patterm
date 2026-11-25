@@ -27,15 +27,15 @@ export function readStatusLabels(host?: string | null): Promise<StatusLabelSetti
 
 // Settings edits one label at a time, so the server applies each edit to the
 // list as it is then, keeping labels agents added meanwhile.
-export async function saveStatusLabel(label: { id: string | null; name: string; color: StatusLabelColor; description: string }): Promise<StatusLabelSettings> {
-  const saved = await window.patterm.call('settings_status_label_save', label) as StatusLabelSettings;
-  topicChanged('settings');
+export async function saveStatusLabel(label: { id: string | null; name: string; color: StatusLabelColor; description: string }, host?: string | null): Promise<StatusLabelSettings> {
+  const saved = await window.patterm.call('settings_status_label_save', label, host ?? undefined) as StatusLabelSettings;
+  if (!host) topicChanged('settings');
   return saved;
 }
 
-export async function deleteStatusLabel(id: string): Promise<StatusLabelSettings> {
-  const saved = await window.patterm.call('settings_status_label_delete', { id }) as StatusLabelSettings;
-  topicChanged('settings');
+export async function deleteStatusLabel(id: string, host?: string | null): Promise<StatusLabelSettings> {
+  const saved = await window.patterm.call('settings_status_label_delete', { id }, host ?? undefined) as StatusLabelSettings;
+  if (!host) topicChanged('settings');
   return saved;
 }
 

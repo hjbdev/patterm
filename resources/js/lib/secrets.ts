@@ -1,6 +1,6 @@
-import { onMounted, shallowRef, watch } from 'vue';
+import { onBeforeUnmount, onMounted, shallowRef, watch } from 'vue';
+import type { NotificationChange } from '../Composables/useNotifications';
 import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
-import { hasBrowser } from './browser';
 
 // Mirrors SecretRecord in app/Services/Secrets/SecretService.ts. Values never
 // reach the client.
@@ -39,8 +39,11 @@ export const SECRET_LIFETIMES = [
 
 export const USE_LABELS: Record<SecretUse, string> = { proxy: 'Proxy', env: 'Commands', browser: 'Browser' };
 
-// Secrets stay on the agent's own host, like its browser.
-export const hasSecrets = hasBrowser;
+// Write-only session secrets work for both local and paired-host agents;
+// values stay in the agent's own host vault and never return to clients.
+export function hasSecrets(processId: string | null | undefined): processId is string {
+  return Boolean(processId);
+}
 
 export function useSessionSecrets(processId: () => string | null | undefined) {
   const state = shallowRef<SessionSecrets | null>(null);
@@ -50,15 +53,35 @@ export function useSessionSecrets(processId: () => string | null | undefined) {
     const read = ++reads;
     if (!hasSecrets(id)) { state.value = null; return; }
     try {
-      const next = await topicRead('secrets', ['secret_session_list', id], async () => await window.patterm.call('secret_session_list', { process_id: id }) as SessionSecrets);
+      const next = id.includes(':')
+        ? await window.patterm.call('secret_session_list', { process_id: id }) as SessionSecrets
+        : await topicRead('secrets', ['secret_session_list', id], async () => await window.patterm.call('secret_session_list', { process_id: id }) as SessionSecrets);
       if (read === reads) state.value = next;
     } catch {
       if (read === reads) state.value = null;
     }
   };
   useTopicRefresh(['secrets'], () => void load());
+  // Paired hosts announce secret requests/settlements via streamed notifications
+  // rather than the local `secrets` topic, so refresh remote agents on those.
+  let unsubscribeNotifications: (() => void) | undefined;
   watch(processId, () => void load());
-  onMounted(() => { void load(); });
+  onMounted(() => {
+    void load();
+    unsubscribeNotifications = window.patterm?.onNotificationsChanged?.((raw) => {
+      const id = processId();
+      if (!id || !id.includes(':')) return;
+      const change = raw as NotificationChange;
+      if (change.type === 'reconnected' || change.type === 'reset') {
+        void load();
+      } else if ((change.type === 'raised' || change.type === 'updated') && change.notification.process_id === id) {
+        void load();
+      } else if (change.type === 'resolved') {
+        void load();
+      }
+    });
+  });
+  onBeforeUnmount(() => { unsubscribeNotifications?.(); });
   return state;
 }
 

@@ -177,6 +177,45 @@ async function sharedBots(): Promise<void> {
   assert.deepEqual(relayed, { bot_id: 'workstation:helper', process_id: 'workstation:process_helper' });
   await service.relay(peer, 'patterm:mcp:call', { tool: 'harness_presets', arguments: {}, host: 'workstation' });
   assert.deepEqual(requests.at(-1)?.params, { channel: 'patterm:mcp:call', args: { tool: 'harness_presets', arguments: {} } }, 'explicit routing host is stripped before relaying to the peer');
+
+  // Bot purview projectIds and write-only session secret IDs translate cleanly across hosts.
+  const secretReply = await service.relay(peer, 'patterm:mcp:call', {
+    tool: 'secret_save',
+    arguments: { process_id: 'workstation:process_helper', secret_id: 'workstation:secret_abc', name: 'api_token' }
+  }) as { bot_id: string; process_id: string };
+  assert.deepEqual(requests.at(-1)?.params, {
+    channel: 'patterm:mcp:call',
+    args: { tool: 'secret_save', arguments: { process_id: 'process_helper', secret_id: 'secret_abc', name: 'api_token' } }
+  }, 'secret_id and process_id are unqualified before relaying to the owning peer');
+  assert.equal(secretReply.process_id, 'workstation:process_helper');
+
+  const linkedService = new RemoteClientService(hosts, {
+    handle() {}, onConnected() {}, onDisconnected() {}, onEvent() {}, emit() {}, connected: () => true,
+    request: async (_host: string, _method: string, params: unknown) => {
+      requests.push({ method: 'client.rpc', params });
+      return {
+        bots: [{ id: 'helper', purview: { kind: 'projects', projectIds: ['project_linked', 'project_other'] } }],
+        secrets: [{ id: 'secret_123', session_id: 'session_1', project_id: 'project_linked' }]
+      };
+    }
+  } as unknown as PeerLinkService, {
+    localProjectFor: (_host: string, id: string) => id === 'project_linked' ? 'project_here' : null,
+    links: () => [{ host_id: peer.host_id, project_id: 'project_here', remote_project_id: 'project_linked' }]
+  } as unknown as ProjectLinkService, {
+    localWorkbench: () => ({ projects: [] }), terminal: { onFrame() {} }, invalidate() {}, notifyRemoteTopics() {}
+  } as unknown as ConstructorParameters<typeof RemoteClientService>[3]);
+  const settingsReply = await linkedService.relay(peer, 'patterm:mcp:call', {
+    tool: 'settings_bots_update',
+    arguments: { bots: [{ id: 'helper', purview: { kind: 'projects', projectIds: ['project_here', 'workstation:project_other'] } }] },
+    host: 'workstation'
+  }) as { bots: Array<{ id: string; purview: { projectIds: string[] } }>; secrets: Array<{ id: string; session_id: string; project_id: string }> };
+  assert.deepEqual(requests.at(-1)?.params, {
+    channel: 'patterm:mcp:call',
+    args: { tool: 'settings_bots_update', arguments: { bots: [{ id: 'helper', purview: { kind: 'projects', projectIds: ['project_linked', 'project_other'] } }] } }
+  }, 'bot purview projectIds map linked and qualified IDs back to peer project IDs');
+  assert.deepEqual(settingsReply.bots[0]!.purview.projectIds, ['project_here', 'workstation:project_other'], 'returned bot purview projectIds map back to local/qualified IDs');
+  assert.deepEqual(settingsReply.secrets[0], { id: 'workstation:secret_123', session_id: 'workstation:session_1', project_id: 'project_here' }, 'returned secret IDs qualify with the peer host');
+  linkedService.dispose();
   const beforeCreateReads = requests.filter((item) => item.method === 'workbench.read').length;
   await service.relay(peer, 'patterm:mcp:call', { tool: 'project_create', arguments: { path: '/srv/new' }, host: 'workstation' });
   assert.equal(requests.filter((item) => item.method === 'workbench.read').length, beforeCreateReads + 1, 'creating a project on a peer refreshes its workbench before returning');

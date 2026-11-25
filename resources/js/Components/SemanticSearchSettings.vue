@@ -2,9 +2,9 @@
   <SettingsSection title="Semantic search" description="Find conversations by meaning as well as by their words. The model and index stay on this host and run on its CPU." scope="history.semantic">
     <SettingsRow label="Embedding model">
       <template #description>{{ modelDescription }}</template>
-      <Button v-if="install?.status === 'downloading'" type="button" size="sm" variant="outline" :disabled="busy" @click="run(cancelEmbeddingModelInstall)">Cancel</Button>
+      <Button v-if="install?.status === 'downloading'" type="button" size="sm" variant="outline" :disabled="busy" @click="run(() => cancelEmbeddingModelInstall(host))">Cancel</Button>
       <Button v-else-if="install?.status === 'installed'" type="button" size="sm" variant="outline" class="text-destructive hover:text-destructive" :disabled="busy" @click="remove">Remove…</Button>
-      <Button v-else type="button" size="sm" variant="outline" :disabled="busy || !state || install?.status === 'verifying'" @click="run(installEmbeddingModel)">{{ install?.status === 'error' ? 'Retry' : 'Install' }}</Button>
+      <Button v-else type="button" size="sm" variant="outline" :disabled="busy || !state || install?.status === 'verifying'" @click="run(() => installEmbeddingModel(host))">{{ install?.status === 'error' ? 'Retry' : 'Install' }}</Button>
       <template v-if="install?.status === 'downloading' || install?.status === 'error'" #below>
         <div v-if="install.status === 'downloading'" class="h-1 overflow-hidden rounded-full bg-muted" role="progressbar" :aria-valuenow="percent" aria-valuemin="0" aria-valuemax="100" aria-label="Model download">
           <div class="h-full bg-foreground/60 transition-[width] duration-300" :style="{ width: `${percent}%` }" />
@@ -14,7 +14,7 @@
     </SettingsRow>
 
     <SettingsRow label="Use semantic search" description="Adds related conversations to history search and the resume picker. Keyword search keeps working while the index builds." html-for="semantic-search-enabled" toggle :disabled="!installed && !state?.enabled">
-      <Switch id="semantic-search-enabled" :model-value="Boolean(state?.enabled)" :disabled="busy || (!installed && !state?.enabled)" @update:model-value="(value) => run(() => setSemanticSearchEnabled(value))" />
+      <Switch id="semantic-search-enabled" :model-value="Boolean(state?.enabled)" :disabled="busy || (!installed && !state?.enabled)" @update:model-value="(value) => run(() => setSemanticSearchEnabled(value, host))" />
     </SettingsRow>
 
     <SettingsRow v-if="installed || counts?.indexed" label="Index">
@@ -34,9 +34,11 @@ import { Button } from './ui/button';
 import { Switch } from './ui/switch';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
-import { cancelEmbeddingModelInstall, installEmbeddingModel, rebuildSemanticIndex, removeEmbeddingModel, setSemanticSearchEnabled, useSemanticSearch } from '../lib/semanticSearch';
+import { useSettingsHost } from './settings/settingsHost';
+import { cancelEmbeddingModelInstall, installEmbeddingModel, rebuildSemanticIndex, removeEmbeddingModel, setSemanticSearchEnabled, useSemanticSearch, type SemanticSearchState } from '../lib/semanticSearch';
 
-const state = useSemanticSearch();
+const host = useSettingsHost().value;
+const { state } = useSemanticSearch(host);
 const busy = ref(false);
 const error = ref('');
 
@@ -82,22 +84,25 @@ const indexDescription = computed(() => {
 
 const indexError = computed(() => state.value?.index.error ?? counts.value?.lastError ?? '');
 
-async function run(action: () => Promise<void>): Promise<void> {
+async function run(action: () => Promise<SemanticSearchState>): Promise<void> {
   busy.value = true;
   error.value = '';
-  try { await action(); }
+  try {
+    const next = await action();
+    if (host) state.value = next;
+  }
   catch (caught) { error.value = caught instanceof Error ? caught.message : String(caught); }
   finally { busy.value = false; }
 }
 
 function remove(): void {
   if (!window.confirm('Remove the embedding model and the semantic index from this host? Imported conversation history is not affected.')) return;
-  void run(removeEmbeddingModel);
+  void run(() => removeEmbeddingModel(host));
 }
 
 function rebuild(): void {
   if (!window.confirm('Discard the semantic index and embed all conversation history again? This runs in the background and can take hours on large histories.')) return;
-  void run(rebuildSemanticIndex);
+  void run(() => rebuildSemanticIndex(host));
 }
 
 function formatBytes(bytes: number): string {

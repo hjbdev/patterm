@@ -107,7 +107,7 @@ interface RegistryServices {
   figureTemplates?: FigureTemplateService;
   // Draws pages off screen for html_preview; only the desktop app has one.
   pagePreviewer?: PagePreviewer;
-  settings?: Pick<SettingsService, 'figuresEnabled' | 'updateFiguresEnabled'>;
+  settings?: Pick<SettingsService, 'figuresEnabled' | 'updateFiguresEnabled' | 'updateHarnessPresets'>;
   harnessPresets?: HarnessPresetService;
   modelCatalog?: HarnessModelCatalogService;
   // Hidden Integrated tools are called only by the UI, so their prompts count
@@ -1581,6 +1581,39 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     return services.notifications.list({ ...input, project_id: projectId });
   });
   registry.register({
+    name: 'settings_notifications_get',
+    namespace: 'settings',
+    hidden: true,
+    changes: [],
+    description: 'Read notification settings for this host.',
+    inputSchema: { type: 'object' }
+  }, () => {
+    if (!services.notifications) throw new Error('settings_notifications_get: notifications are unavailable');
+    return services.notifications.readSettings();
+  });
+  registry.register({
+    name: 'settings_notifications_update',
+    namespace: 'settings',
+    hidden: true,
+    changes: ['settings'],
+    description: 'Update notification settings for this host.',
+    inputSchema: { type: 'object' }
+  }, (args) => {
+    if (!services.notifications) throw new Error('settings_notifications_update: notifications are unavailable');
+    return services.notifications.updateSettings(args);
+  });
+  registry.register({
+    name: 'notifications_test',
+    namespace: 'settings',
+    hidden: true,
+    changes: [],
+    description: 'Send a test notification from this host.',
+    inputSchema: { type: 'object' }
+  }, () => {
+    if (!services.notifications) throw new Error('notifications_test: notifications are unavailable');
+    return services.notifications.test();
+  });
+  registry.register({
     name: 'timer_set',
     namespace: 'cli.timer',
     description: 'Schedule a one-shot timer.',
@@ -2322,6 +2355,30 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       inputSchema: { type: 'object' }
     },
     () => requireHarnessPresets().describe()
+  );
+
+  registry.register(
+    {
+      name: 'settings_harness_presets_get',
+      namespace: 'settings',
+      hidden: true,
+      changes: [],
+      description: 'Read configured harness model presets for this host, including profile faces.',
+      inputSchema: { type: 'object' }
+    },
+    () => requireHarnessPresets().list()
+  );
+
+  registry.register(
+    {
+      name: 'settings_harness_presets_update',
+      namespace: 'settings',
+      hidden: true,
+      changes: ['settings'],
+      description: 'Replace configured harness model presets for this host.',
+      inputSchema: { type: 'object' }
+    },
+    (args) => requireHarnessPresets().replace(args)
   );
 
   registry.register(

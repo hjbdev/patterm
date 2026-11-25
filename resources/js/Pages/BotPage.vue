@@ -296,6 +296,12 @@ function back(): void {
 }
 
 function openSettings(): void {
-  void router.push({ name: 'settings', query: { tab: 'bots', bot: row.value?.bot.id ?? '' } });
+  const bot = row.value?.bot;
+  if (bot?.host) {
+    const botId = bot.id.startsWith(`${bot.host}:`) ? bot.id.slice(bot.host.length + 1) : bot.id;
+    void router.push({ name: 'settings', query: { tab: 'bots', host: bot.host, bot: botId } });
+  } else {
+    void router.push({ name: 'settings', query: { tab: 'bots', bot: bot?.id ?? '' } });
+  }
 }
 </script>

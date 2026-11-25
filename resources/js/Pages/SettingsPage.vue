@@ -5,6 +5,7 @@
         <ArrowLeft class="h-4 w-4" />
       </Button>
       <h1 class="min-w-0 flex-1 text-sm font-semibold">Settings</h1>
+      <SettingsChoice v-if="hostOptions.length > 1" :model-value="selectedHost" :options="hostOptions" aria-label="Host" class="h-7 w-40 shrink-0 text-xs" @update:model-value="selectHost" />
     </header>
 
     <main class="mx-1.5 mb-1.5 min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
@@ -52,10 +53,10 @@
           </nav>
 
           <div class="min-w-0 max-w-3xl flex-1">
-            <component :is="activeItem.component" v-if="!searching" :key="activeItem.value" />
+            <component :is="activeItem.component" v-if="!searching" :key="`${selectedHost ?? 'local'}:${activeItem.value}`" />
             <template v-else>
               <div ref="results$" class="space-y-12">
-                <SettingsSearchScope v-for="item in navItems" :key="item.value" :label="item.label" :keywords="item.keywords" @result="(result) => { results[item.value] = result; }">
+                <SettingsSearchScope v-for="item in navItems" :key="`${selectedHost ?? 'local'}:${item.value}`" :label="item.label" :keywords="item.keywords" @result="(result) => { results[item.value] = result; }">
                   <component :is="item.component" />
                 </SettingsSearchScope>
               </div>
@@ -92,15 +93,19 @@ import ServerAccessSettings from '../Components/ServerAccessSettings.vue';
 import StatusLabelSettings from '../Components/StatusLabelSettings.vue';
 import TelemetrySettings from '../Components/TelemetrySettings.vue';
 import TerminalAppearanceSettings from '../Components/TerminalAppearanceSettings.vue';
+import SettingsChoice from '../Components/settings/SettingsChoice.vue';
 import SettingsSearchScope from '../Components/settings/SettingsSearchScope.vue';
+import { provideSettingsHost } from '../Components/settings/settingsHost';
 import { provideSettingsSearch, searchTerms } from '../Components/settings/settingsSearch';
 import { useAppearanceSettings } from '../Composables/useAppearanceSettings';
 import { resetSettingsSaveStatus } from '../Composables/useSettingsAutosave';
 import { useSettingsNavHints } from '../Composables/useSettingsNavHints';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
+import { readHosts, type PeerHost } from '../lib/hosts';
 import { clearHighlight, highlightTerms } from '../lib/searchHighlight';
+import { useTopicRefresh } from '../lib/serverQuery';
 
-interface SettingsItem { value: string; label: string; icon: Component; component: Component; keywords?: string }
+interface SettingsItem { value: string; label: string; icon: Component; component: Component; keywords?: string; remote?: boolean }
 
 // Only the server is reached from browsers; the desktop app has no password.
 const serverAccess = Boolean(window.patterm.serverAccess);
@@ -108,9 +113,9 @@ const serverAccess = Boolean(window.patterm.serverAccess);
 // Keywords find a whole page by words its settings don't use.
 const GROUPS: Array<{ label: string; items: SettingsItem[] }> = [
   { label: 'Workspace', items: [
-    { value: 'look', label: 'Look & feel', icon: Palette, component: LookAndFeelSettings, keywords: 'appearance' },
-    { value: 'conversations', label: 'Conversations', icon: MessageSquare, component: ConversationAppearanceSettings, keywords: 'appearance' },
-    { value: 'terminal', label: 'Terminal', icon: SquareTerminal, component: TerminalAppearanceSettings, keywords: 'appearance shell' }
+    { value: 'look', label: 'Look & feel', icon: Palette, component: LookAndFeelSettings, keywords: 'appearance', remote: false },
+    { value: 'conversations', label: 'Conversations', icon: MessageSquare, component: ConversationAppearanceSettings, keywords: 'appearance', remote: false },
+    { value: 'terminal', label: 'Terminal', icon: SquareTerminal, component: TerminalAppearanceSettings, keywords: 'appearance shell', remote: false }
   ] },
   { label: 'Agents', items: [
     { value: 'harnesses', label: 'Harnesses', icon: Cpu, component: HarnessPresetSettings, keywords: 'profiles presets models reasoning add profile' },
@@ -126,40 +131,108 @@ const GROUPS: Array<{ label: string; items: SettingsItem[] }> = [
   ] },
   { label: 'Connections', items: [
     { value: 'mcp', label: 'MCP servers', icon: Plug, component: McpServerSettings, keywords: 'tools integrations add server import' },
-    { value: 'hosts', label: 'Hosts', icon: Server, component: HostSettings, keywords: 'pair machines' },
-    { value: 'access', label: 'Remote access', icon: KeyRound, component: ServerAccessSettings, keywords: 'tailscale password browser phone' }
+    { value: 'hosts', label: 'Hosts', icon: Server, component: HostSettings, keywords: 'pair machines', remote: false },
+    { value: 'access', label: 'Remote access', icon: KeyRound, component: ServerAccessSettings, keywords: 'tailscale password browser phone', remote: false }
   ] },
   { label: 'System', items: [
     { value: 'about', label: 'About', icon: Info, component: AboutSettings, keywords: 'updates version licence' },
     { value: 'telemetry', label: 'Usage telemetry', icon: Activity, component: TelemetrySettings, keywords: 'posthog analytics' }
   ] }
 ];
-const groups = GROUPS
-  .map((group) => ({ ...group, items: group.items.filter((item) => item.value !== 'access' || serverAccess) }))
-  .filter((group) => group.items.length);
-const navItems = groups.flatMap((group) => group.items);
 
 const { router, activeProjectId } = useWorkbenchNavigation();
+const peers = ref<PeerHost[]>([]);
+const queryHost = () => {
+  const raw = router.currentRoute.value.query.host;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+};
+const selectedHost = ref<string | null>(queryHost());
+provideSettingsHost(selectedHost);
+
+const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected'));
+const hostOptions = computed(() => {
+  const names = new Set(connectedPeers.value.map((peer) => peer.name));
+  const options: Array<{ value: string | null; label: string }> = [
+    { value: null, label: 'This host' },
+    ...connectedPeers.value.map((peer) => ({ value: peer.name as string | null, label: peer.name }))
+  ];
+  if (selectedHost.value && !names.has(selectedHost.value)) {
+    options.push({ value: selectedHost.value, label: `${selectedHost.value} (offline)` });
+  }
+  return options;
+});
+
+async function loadHosts(): Promise<void> {
+  try {
+    const overview = await readHosts();
+    peers.value = overview.peers;
+  } catch {
+    peers.value = [];
+  }
+}
+
+const groups = computed(() => GROUPS
+  .map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (item.value === 'access' && !serverAccess) return false;
+      if (selectedHost.value && item.remote === false) return false;
+      return true;
+    })
+  }))
+  .filter((group) => group.items.length));
+const navItems = computed(() => groups.value.flatMap((group) => group.items));
 
 // Links can open a page directly, such as /settings?tab=notifications. Older
 // links name pages that have since moved.
 const MOVED_TABS: Record<string, string> = { appearance: 'look', assistant: 'bots' };
 const requested = String(router.currentRoute.value.query.tab ?? '');
 if (requested === 'assistant') void router.replace({ query: { ...router.currentRoute.value.query, tab: 'bots', bot: 'assistant' } });
-const tab = ref(navItems.find((item) => item.value === (MOVED_TABS[requested] ?? requested))?.value ?? 'look');
-const activeItem = computed(() => navItems.find((item) => item.value === tab.value) ?? navItems[0]!);
+const tab = ref(navItems.value.find((item) => item.value === (MOVED_TABS[requested] ?? requested))?.value ?? navItems.value[0]!.value);
+const activeItem = computed(() => navItems.value.find((item) => item.value === tab.value) ?? navItems.value[0]!);
+
+function selectHost(next: string | null): void {
+  if (next === selectedHost.value) return;
+  selectedHost.value = next;
+  query.value = '';
+  resetSettingsSaveStatus();
+  if (!navItems.value.some((item) => item.value === tab.value)) tab.value = navItems.value[0]!.value;
+  scroller.value?.scrollTo({ top: 0 });
+  const nextQuery = { ...router.currentRoute.value.query };
+  delete nextQuery.bot;
+  if (next) nextQuery.host = next;
+  else delete nextQuery.host;
+  void router.replace({ query: nextQuery });
+}
+
+watch(() => router.currentRoute.value.query.host, () => {
+  const next = queryHost();
+  if (next === selectedHost.value) return;
+  selectedHost.value = next;
+  query.value = '';
+  resetSettingsSaveStatus();
+  if (!navItems.value.some((item) => item.value === tab.value)) tab.value = navItems.value[0]!.value;
+  scroller.value?.scrollTo({ top: 0 });
+});
+
+watch(() => router.currentRoute.value.query.tab, (raw) => {
+  if (typeof raw !== 'string') return;
+  const resolved = MOVED_TABS[raw] ?? raw;
+  if (navItems.value.some((item) => item.value === resolved)) tab.value = resolved;
+});
 
 resetSettingsSaveStatus();
 // Each visit starts from the saved appearance settings.
 void useAppearanceSettings().reload();
-const hints = useSettingsNavHints({ serverAccess });
+const hints = useSettingsNavHints({ serverAccess, host: selectedHost });
+useTopicRefresh(['settings'], () => void loadHosts());
 
 const query = ref('');
 provideSettingsSearch(query);
 const terms = computed(() => searchTerms(query.value));
 const searching = computed(() => terms.value.length > 0);
 const results = reactive<Record<string, { hit: boolean; matches: number }>>({});
-const anyHit = computed(() => navItems.some((item) => results[item.value]?.hit));
+const anyHit = computed(() => navItems.value.some((item) => results[item.value]?.hit));
 const scroller = ref<HTMLElement | null>(null);
 const searchInput = ref<{ $el?: HTMLElement } | null>(null);
 const results$ = ref<HTMLElement | null>(null);
@@ -206,7 +279,10 @@ function onKeydown(event: KeyboardEvent): void {
   event.preventDefault();
   focusSearch();
 }
-onMounted(() => window.addEventListener('keydown', onKeydown));
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown);
+  void loadHosts();
+});
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   observer.disconnect();
