@@ -498,19 +498,26 @@ async function main(): Promise<void> {
     const mention = (id: string, author: string, content: string) => discordEvents!.message({ id, channel_id: '300000000000000001', guild_id: '1', author: { id: author, username: 'u' }, content, mentions: [discordSelf] }, discordSelf);
     mention('200000000000000002', '100000000000000002', '<@900000000000000001> do something else');
     mention('200000000000000001', '100000000000000001', '<@900000000000000001> what needs me?');
+    mention('200000000000000001', '100000000000000001', '<@900000000000000001> what needs me?');
     for (let turn = 0; turn < 100 && !discordPrompts.length; turn++) await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(discordPrompts.map((prompt) => prompt.processId), [bots.state('fable').process_id], 'only the allowed user reaches the bot');
+    assert.deepEqual(discordPrompts.map((prompt) => prompt.processId), [bots.state('fable').process_id], 'only the allowed user reaches the bot, once per message');
     assert.match(discordPrompts[0]!.text, /^\[Discord message 200000000000000001 from the user, in a server channel\]\nwhat needs me\?\n/);
     await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'x'.repeat(351), message_id: '200000000000000001' }, fable), /at most 350/);
-    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi', message_id: '200000000000000002' }, fable), /isn't a Discord message the user sent/);
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi', message_id: '200000000000000002' }, fable), /isn't a recent Discord message from the user/);
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi' }, fable), /message_id/, 'every reply answers a message');
     await discordRegistry.callPublic('discord_reply', { text: 'Nothing right now.', message_id: '200000000000000001' }, fable);
     assert.deepEqual(discordSent.at(-1), { channel: '300000000000000001', body: {
       content: 'Nothing right now.',
       message_reference: { message_id: '200000000000000001', channel_id: '300000000000000001', fail_if_not_exists: false },
       allowed_mentions: { parse: [], replied_user: true }
     } });
-    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi' }, { identity: 'mcp-q' }));
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi', message_id: '200000000000000001' }, { identity: 'mcp-q' }));
+    assert.equal(listsReply({ identity: null }), true, 'OpenCode\'s shared bridge lists it');
+    // A user taken off the list gets no more replies.
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, discord: { enabled: true, allowedUserIds: ['100000000000000003'] } }] });
+    discord.reconcile();
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Done.', message_id: '200000000000000001' }, fable), /isn't a recent Discord message from the user/);
     assert.equal(JSON.stringify(discord.list()).includes('cccc'), false, 'the token is never read back');
     discord.dispose();
     settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, discord: { enabled: false, allowedUserIds: [] } }] });

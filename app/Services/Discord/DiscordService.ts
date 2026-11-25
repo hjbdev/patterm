@@ -11,9 +11,10 @@ import { DISCORD_TOKEN, type DiscordTokenStore } from './DiscordTokenStore';
 // allows a little leeway before rejecting.
 export const DISCORD_REPLY_TARGET = 300;
 export const DISCORD_REPLY_LIMIT = 350;
-const RECENT_LIMIT = 50;
+const RECENT_LIMIT = 100;
 const ATTACHMENT_LIMIT = 5;
 const RECEIVED_EMOJI = '👀';
+const FAILED_EMOJI = '⚠️';
 const STATE_KEY = 'bot.discord.v1';
 
 export interface DiscordBotStatus {
@@ -31,8 +32,7 @@ export interface DiscordBotStatus {
 const recentInput = z.object({
   id: z.string(),
   channel_id: z.string(),
-  author_id: z.string(),
-  dm: z.boolean()
+  author_id: z.string()
 });
 const stateInput = z.object({ recent: z.array(recentInput).default([]) });
 type Recent = z.infer<typeof recentInput>;
@@ -129,9 +129,10 @@ export class DiscordService {
     return this.settings.bots().bots.some((bot) => bot.discord.enabled);
   }
 
-  // Sends a bot's reply. With a message ID it answers that message;
-  // without one it posts where the user last messaged the bot.
-  async reply(botId: string, input: { text: string; message_id?: string | undefined }): Promise<{ sent: true; message_id: string; length: number }> {
+  // Sends a bot's reply to a message an allowed user sent it, in that
+  // message's channel, so an update never lands somewhere more public than
+  // the request it answers.
+  async reply(botId: string, input: { text: string; message_id: string }): Promise<{ sent: true; message_id: string; length: number }> {
     const connection = this.connections.get(botId);
     if (!connection) throw new Error('discord_reply: Discord isn\'t set up for this bot');
     if (connection.status.state !== 'connected') throw new Error('discord_reply: the bot isn\'t connected to Discord right now; try again later');
@@ -141,22 +142,18 @@ export class DiscordService {
     if (length > DISCORD_REPLY_LIMIT) {
       throw new Error(`discord_reply: ${length} characters is too long. Discord replies are at most ${DISCORD_REPLY_LIMIT}; aim for ${DISCORD_REPLY_TARGET}. Shorten it and send again; keep the detail in Patterm.`);
     }
-    const recent = this.recent(botId);
-    const target = input.message_id ? recent.find((message) => message.id === input.message_id) : recent.at(-1);
-    if (!target) {
-      throw new Error(input.message_id
-        ? 'discord_reply: that isn\'t a Discord message the user sent you; omit message_id to post where they last messaged you'
-        : 'discord_reply: the user hasn\'t messaged you on Discord yet');
+    const target = this.recent(botId).find((message) => message.id === input.message_id);
+    const allowed = this.settings.bots().bots.find((bot) => bot.id === botId)?.discord.allowedUserIds ?? [];
+    if (!target || !allowed.includes(target.author_id)) {
+      throw new Error('discord_reply: that isn\'t a recent Discord message from the user; use the message_id from the [Discord message …] line you are answering');
     }
-    const body = input.message_id
-      ? { content: text, message_reference: { message_id: target.id, channel_id: target.channel_id, fail_if_not_exists: false }, allowed_mentions: { parse: [], replied_user: true } }
-      // A follow-up in a server channel mentions the user so they're pinged;
-      // a DM notifies them anyway.
-      : target.dm
-        ? { content: text, allowed_mentions: { parse: [] } }
-        : { content: `<@${target.author_id}> ${text}`, allowed_mentions: { parse: [], users: [target.author_id] } };
-    const sent = await connection.gateway.send(target.channel_id, body);
-    this.log('reply.sent', { bot_id: botId, length, reply: Boolean(input.message_id) });
+    // Replying pings the user, in the channel they asked in.
+    const sent = await connection.gateway.send(target.channel_id, {
+      content: text,
+      message_reference: { message_id: target.id, channel_id: target.channel_id, fail_if_not_exists: false },
+      allowed_mentions: { parse: [], replied_user: true }
+    });
+    this.log('reply.sent', { bot_id: botId, length });
     return { sent: true, message_id: sent.id, length };
   }
 
@@ -221,7 +218,9 @@ export class DiscordService {
     const text = message.content.replace(new RegExp(`<@!?${self.id}>`, 'g'), '').trim();
     const attachments = (message.attachments ?? []).slice(0, ATTACHMENT_LIMIT);
     if (!text && !attachments.length) return;
-    this.remember(botId, { id: message.id, channel_id: message.channel_id, author_id: message.author.id, dm });
+    // Discord can deliver an event twice, such as across a resume.
+    if (this.recent(botId).some((entry) => entry.id === message.id)) return;
+    this.remember(botId, { id: message.id, channel_id: message.channel_id, author_id: message.author.id });
     void connection.gateway.react(message.channel_id, message.id, RECEIVED_EMOJI)
       .catch((error: unknown) => this.log('react.failed', { bot_id: botId, message: errorMessage(error) }));
     try {
@@ -234,12 +233,9 @@ export class DiscordService {
       const result = await this.integrated.prompt(processId, discordPrompt(message.id, dm, text, attachments)) as { delivery?: unknown } | void;
       this.log('message.delivered', { bot_id: botId, delivery: (result as { delivery?: unknown } | undefined)?.delivery ?? 'delivered' });
     } catch (error) {
+      // Only the bot speaks on Discord; the reason stays in Patterm's log.
       this.log('message.failed', { bot_id: botId, message: errorMessage(error) });
-      await connection.gateway.send(message.channel_id, {
-        content: clip(`Couldn't pass that to ${bot.name}: ${errorMessage(error)}`, DISCORD_REPLY_LIMIT),
-        message_reference: { message_id: message.id, channel_id: message.channel_id, fail_if_not_exists: false },
-        allowed_mentions: { parse: [], replied_user: true }
-      }).catch(() => undefined);
+      await connection.gateway.react(message.channel_id, message.id, FAILED_EMOJI).catch(() => undefined);
     }
   }
 
@@ -271,17 +267,12 @@ export function discordPrompt(messageId: string, dm: boolean, text: string, atta
     `[Discord message ${messageId} from the user, ${dm ? 'in a DM' : 'in a server channel'}]`,
     text,
     ...(files.length ? ['Attachments:', ...files] : []),
-    `(They only see what you send with discord_reply, message_id ${messageId}: ${DISCORD_REPLY_TARGET} characters at most.)`
+    `(They only see what you send with discord_reply, message_id ${messageId}: ${DISCORD_REPLY_TARGET} characters at most. Later updates on this reply to the same message_id.)`
   ].filter(Boolean).join('\n');
 }
 
 function stateKey(botId: string): string {
   return `${STATE_KEY}:${botId}`;
-}
-
-function clip(text: string, limit: number): string {
-  const chars = [...text];
-  return chars.length > limit ? `${chars.slice(0, limit - 1).join('')}…` : text;
 }
 
 function errorMessage(error: unknown): string {

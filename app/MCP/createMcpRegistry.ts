@@ -907,7 +907,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       },
       enabled: (botId) => discord.enabledFor(botId),
       listed: (context) => {
-        if (!context.identity) return false;
+        // OpenCode's shared bridge lists tools without an identity.
+        if (!context.identity) return discord.anyEnabled();
         const session = services.database.connection.prepare('select session_role, bot_id from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { session_role: string; bot_id: string | null } | undefined;
         if (session) {
           if (session.session_role === 'assistant') return discord.enabledFor(session.bot_id ?? ASSISTANT_BOT_ID);

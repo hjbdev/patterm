@@ -7,7 +7,7 @@ export const DISCORD_TOOLS = ['bot_discord_status', 'bot_discord_token_set'] as 
 
 const replyInput = z.object({
   text: z.string().max(4000),
-  message_id: z.string().trim().regex(DISCORD_SNOWFLAKE, 'use the message ID from the [Discord message …] line').optional()
+  message_id: z.string().trim().regex(DISCORD_SNOWFLAKE, 'use the message ID from the [Discord message …] line')
 }).strict();
 const statusInput = z.object({ bot_id: z.string().min(1).optional() }).strict();
 const tokenInput = z.object({
@@ -22,8 +22,9 @@ export interface DiscordCaller {
   // Whether the bot has Discord turned on in its settings.
   enabled(botId: string): boolean;
   // Whether the caller's catalogue lists discord_reply. Catalogues are read
-  // while a session launches, before it is registered, so this can't use
-  // the strict caller check.
+  // while a session launches, before it is registered, and OpenCode's shared
+  // bridge reads one for every session, so this can't use the strict caller
+  // check; calls still do.
   listed(context: McpCallContext): boolean;
 }
 
@@ -36,14 +37,14 @@ export function registerDiscordTools(registry: McpToolRegistry, discord: Pick<Di
   registry.register({
     name: 'discord_reply',
     namespace: 'bots',
-    description: `Bots with Discord: send the user a short Discord message, ${DISCORD_REPLY_TARGET} characters at most. With message_id it replies to that [Discord message …]; without it, it posts where they last messaged you.`,
+    description: `Bots with Discord: reply to the user's [Discord message …] in ${DISCORD_REPLY_TARGET} characters at most. Later updates on that work reply to the same message.`,
     changes: [],
     inputSchema: {
       type: 'object',
-      required: ['text'],
+      required: ['text', 'message_id'],
       properties: {
         text: { type: 'string', description: `Plain text, ${DISCORD_REPLY_TARGET} characters at most. Longer than ${DISCORD_REPLY_LIMIT} is rejected.` },
-        message_id: { type: 'string', description: 'The ID from the [Discord message <id> …] line being answered. Omit for a later update.' }
+        message_id: { type: 'string', description: 'The ID from the [Discord message <id> …] line this answers, or that started the work an update is about.' }
       }
     },
     usageNotes: [
