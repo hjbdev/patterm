@@ -8,7 +8,7 @@ interface PendingEdit {
 
 export interface RoutineAutosaveOptions {
   save: (routineId: string, patch: RoutinePatch) => Promise<RoutineRecord>;
-  onSaved: (saved: RoutineRecord) => void;
+  onSaved: (saved: RoutineRecord, routineId: string) => void;
   // Null clears an earlier error for that routine.
   onError: (routineId: string, message: string | null) => void;
   delayMs?: number;
@@ -70,7 +70,7 @@ export function useRoutineAutosave(options: RoutineAutosaveOptions) {
         const saved = await options.save(target, patch);
         settle(target);
         options.onError(target, null);
-        options.onSaved(saved);
+        options.onSaved(saved, target);
         return true;
       } catch (cause) {
         settle(target);

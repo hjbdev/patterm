@@ -46,6 +46,7 @@ export type NotificationChange =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
   | { type: 'counts' }
+  | { type: 'reset' }
   | { type: 'reconnected' };
 
 const RANK: Record<NotificationUrgency, number> = { low: 0, normal: 1, high: 2 };
@@ -150,7 +151,14 @@ export function startNotifications(router: Router): void {
   const inView = (notification: NotificationRecord) => {
     if (!notification.process_id || !focused()) return false;
     if (notification.process_id === viewedProcess.value) return true;
-    return route() === notification.url || route().startsWith(`${notification.url}/`);
+    const params = router.currentRoute.value.params ?? {};
+    if (notification.session_id && params.sessionId === notification.session_id) return true;
+    if (params.processId === notification.process_id) return true;
+    // Qualified remote URLs encode `:` as `%3A`, while vue-router keeps `:` unencoded in `route.path`.
+    const target = typeof router.resolve === 'function'
+      ? router.resolve(notification.url).path
+      : decodeURIComponent(notification.url);
+    return route() === target || route().startsWith(`${target}/`);
   };
 
   // Notification changes can arrive in bursts; coalesce reads into one in flight.

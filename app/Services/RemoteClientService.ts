@@ -132,6 +132,10 @@ export class RemoteClientService {
   // Recent qualified notifications from paired hosts, so delayed desktop
   // delivery can check whether one is still unread and unresolved.
   private readonly remoteNotifications = new Map<string, { hostId: string; record: NotificationRecord }>();
+  private readonly fetchingNotifications = new Map<string, Promise<void>>();
+  private readonly refetchNotificationsPending = new Set<string>();
+  private readonly resetNotificationsPending = new Set<string>();
+  private readonly notificationsGeneration = new Map<string, number>();
   private readonly fetching = new Map<string, Promise<void>>();
   private readonly refetchPending = new Set<string>();
   private readonly peerTerminals = new Map<string, Set<string>>();
@@ -184,7 +188,7 @@ export class RemoteClientService {
     });
     peers.onConnected((hostId) => {
       void this.refresh(hostId);
-      void this.refreshNotifications(hostId);
+      void this.refreshNotifications(hostId, true);
       // History announced while the link was down was missed.
       this.options.notifyRemoteTopics(['history']);
     });
@@ -261,7 +265,7 @@ export class RemoteClientService {
   // badges and open notification lists recalculate immediately.
   notificationsVisibilityChanged(): void {
     if (this.disposed) return;
-    this.options.notifications?.onChange({ type: 'counts' });
+    this.options.notifications?.onChange({ type: 'reset' });
   }
 
   // A recently relayed remote notification, for delayed desktop delivery checks.
@@ -269,7 +273,7 @@ export class RemoteClientService {
     const entry = this.remoteNotifications.get(id);
     if (!entry) return null;
     const peer = this.hosts.peer(entry.hostId);
-    if (!peer || !peer.show_agents || !this.peers.connected(peer.host_id)) return null;
+    if (!peer || !peer.show_agents || !this.peers.connected(peer.host_id) || entry.record.host !== peer.name) return null;
     return entry.record;
   }
 
@@ -341,31 +345,65 @@ export class RemoteClientService {
     const cursor = decodeNotificationCursor(input.cursor);
     const cursorOwner = cursor ? this.splitPeerPrefix(cursor.id) : null;
     const needed = cursor ? input.limit + 1 : input.offset + input.limit + 1;
-    const fetchLimit = Math.min(needed, 200);
 
-    const queries: Array<Promise<{ items: NotificationRecord[]; total: number; next_cursor: string | null } | null>> = [];
+    // Pages a single host in 200-item chunks when an offset query needs more
+    // than one SQLite page, keeping multi-host offset slices lossless.
+    const fetchHostPages = async (
+      fetchPage: (pageCursor: string | undefined, pageLimit: number) => Promise<NotificationListResult | null>,
+      initialCursor: string | undefined
+    ): Promise<NotificationListResult | null> => {
+      const items: NotificationRecord[] = [];
+      let total = 0;
+      let pageCursor = initialCursor;
+      let lastNextCursor: string | null = null;
+      let gotPage = false;
+      while (items.length < needed) {
+        const batchLimit = Math.min(needed - items.length, 200);
+        const page = await fetchPage(pageCursor, batchLimit);
+        if (!page) return gotPage ? { items, total, next_cursor: lastNextCursor } : null;
+        if (!gotPage) total = page.total;
+        gotPage = true;
+        items.push(...page.items);
+        lastNextCursor = page.next_cursor;
+        if (!page.next_cursor || page.items.length === 0) break;
+        pageCursor = page.next_cursor;
+      }
+      return { items, total, next_cursor: lastNextCursor };
+    };
+
+    const queries: Array<Promise<NotificationListResult | null>> = [];
     if (includeLocal) {
-      const localCursor = cursor ? (cursorOwner ? `${cursor.updatedAt}|~` : input.cursor) : undefined;
-      queries.push(Promise.resolve().then(() => local({
+      // Local IDs are unqualified in both SQLite and the merged list, so
+      // SQLite can apply the exact cursor predicate directly.
+      const localCursor = cursor ? input.cursor : undefined;
+      queries.push(fetchHostPages(async (pageCursor, pageLimit) => local({
         ...input,
-        limit: fetchLimit,
+        limit: pageLimit,
         offset: 0,
-        ...(localCursor ? { cursor: localCursor } : { cursor: undefined })
-      })));
+        ...(pageCursor ? { cursor: pageCursor } : { cursor: undefined })
+      }), localCursor));
     }
     for (const target of peerTargets) {
+      // A non-owner peer's qualified IDs all start with `${peer.name}:`, so
+      // every same-timestamp row on that peer compares `< cursor.id` iff
+      // `${peer.name}: < cursor.id`; otherwise skip same-timestamp rows with
+      // an empty ID bound so older timestamps are never crowded out.
       const peerCursor = cursor
-        ? (cursorOwner?.peer.host_id === target.peer.host_id ? `${cursor.updatedAt}|${cursorOwner.id}` : `${cursor.updatedAt}|~`)
+        ? (cursorOwner?.peer.host_id === target.peer.host_id
+          ? `${cursor.updatedAt}|${cursorOwner.id}`
+          : `${target.peer.name}:` < cursor.id
+            ? `${cursor.updatedAt}|~`
+            : `${cursor.updatedAt}|`)
         : undefined;
-      const peerArgs = {
-        ...target.args,
-        limit: fetchLimit,
-        offset: 0,
-        ...(peerCursor ? { cursor: peerCursor } : {})
-      };
-      if (!peerCursor) delete peerArgs.cursor;
-      queries.push(
-        this.peers.request(target.peer.host_id, 'notifications.list', peerArgs, RELAY_TIMEOUT_MS)
+      queries.push(fetchHostPages(async (pageCursor, pageLimit) => {
+        const peerArgs = {
+          ...target.args,
+          limit: pageLimit,
+          offset: 0,
+          ...(pageCursor ? { cursor: pageCursor } : {})
+        };
+        if (!pageCursor) delete peerArgs.cursor;
+        return this.peers.request(target.peer.host_id, 'notifications.list', peerArgs, RELAY_TIMEOUT_MS)
           .then((response) => {
             if (!response || typeof response !== 'object' || !Array.isArray((response as { items?: unknown }).items)) return null;
             const page = response as NotificationListResult;
@@ -375,8 +413,8 @@ export class RemoteClientService {
               next_cursor: typeof page.next_cursor === 'string' ? page.next_cursor : null
             };
           })
-          .catch(() => null)
-      );
+          .catch(() => null);
+      }, peerCursor));
     }
 
     const results = await Promise.all(queries);
@@ -430,6 +468,12 @@ export class RemoteClientService {
       const owner = (input.process_id ? this.splitPeerPrefix(input.process_id) : null)
         ?? (input.session_id ? this.splitPeerPrefix(input.session_id) : null);
       if (owner) {
+        const matchingIds = [...this.remoteNotifications.entries()]
+          .filter(([, entry]) => entry.hostId === owner.peer.host_id
+            && ((input.process_id && entry.record.process_id === input.process_id)
+              || (input.session_id && entry.record.session_id === input.session_id)))
+          .map(([id]) => id);
+        if (matchingIds.length) this.markCachedNotifications(matchingIds, 'read');
         if (!this.peers.connected(owner.peer.host_id)) return { updated: 0 };
         const payload: Record<string, unknown> = {};
         if (input.process_id) payload.process_id = stripHost(input.process_id, owner.peer.name);
@@ -484,6 +528,10 @@ export class RemoteClientService {
     if (input.process_id) {
       const owner = this.splitPeerPrefix(input.process_id);
       if (owner) {
+        const matchingIds = [...this.remoteNotifications.entries()]
+          .filter(([, entry]) => entry.hostId === owner.peer.host_id && entry.record.process_id === input.process_id)
+          .map(([id]) => id);
+        if (matchingIds.length) this.markCachedNotifications(matchingIds, 'resolved');
         if (!this.peers.connected(owner.peer.host_id)) return { updated: 0 };
         const res = await this.peers.request(owner.peer.host_id, 'notifications.resolve', { process_id: owner.id }, RELAY_TIMEOUT_MS)
           .catch(() => ({ updated: 0 })) as { updated?: unknown };
@@ -749,12 +797,14 @@ export class RemoteClientService {
     this.peerVersions.delete(hostId);
     this.refetchPending.delete(hostId);
     this.setBots(hostId, []);
-    const hadUnreads = (this.peerUnreads.get(hostId)?.length ?? 0) > 0;
+    this.notificationsGeneration.set(hostId, (this.notificationsGeneration.get(hostId) ?? 0) + 1);
+    this.refetchNotificationsPending.delete(hostId);
+    this.resetNotificationsPending.delete(hostId);
     this.peerUnreads.delete(hostId);
     for (const [id, entry] of [...this.remoteNotifications]) {
       if (entry.hostId === hostId) this.remoteNotifications.delete(id);
     }
-    if (hadUnreads) this.options.notifications?.onChange({ type: 'counts' });
+    this.options.notifications?.onChange({ type: 'reset' });
     this.options.invalidate();
     const subscriber = `peer:${hostId}`;
     void this.options.terminalSubscriptions.release(subscriber);
@@ -970,18 +1020,39 @@ export class RemoteClientService {
     for (const listener of listeners) listener(event);
   }
 
-  private async refreshNotifications(hostId: string): Promise<void> {
+  private async refreshNotifications(hostId: string, reset = false): Promise<void> {
     if (!this.options.notifications) return;
-    const response = await this.peers.request(hostId, 'notifications.state').catch(() => null) as { unread?: unknown } | null;
-    if (!this.peers.connected(hostId) || !response || !Array.isArray(response.unread)) return;
-    const next = response.unread as NotificationUnread[];
-    const previous = this.peerUnreads.get(hostId) ?? [];
-    if (next.length) this.peerUnreads.set(hostId, next);
-    else this.peerUnreads.delete(hostId);
-    const peer = this.hosts.peer(hostId);
-    if (peer?.show_agents && JSON.stringify(previous) !== JSON.stringify(next)) {
-      this.options.notifications.onChange({ type: 'counts' });
+    if (reset) this.resetNotificationsPending.add(hostId);
+    const running = this.fetchingNotifications.get(hostId);
+    if (running) {
+      this.refetchNotificationsPending.add(hostId);
+      return running;
     }
+    const generation = this.notificationsGeneration.get(hostId) ?? 0;
+    const shouldReset = this.resetNotificationsPending.delete(hostId);
+    const task = (async () => {
+      try {
+        const response = await this.peers.request(hostId, 'notifications.state').catch(() => null) as { unread?: unknown } | null;
+        if (this.disposed || !this.peers.connected(hostId) || (this.notificationsGeneration.get(hostId) ?? 0) !== generation) return;
+        if (!response || !Array.isArray(response.unread)) return;
+        const next = response.unread as NotificationUnread[];
+        const previous = this.peerUnreads.get(hostId) ?? [];
+        if (next.length) this.peerUnreads.set(hostId, next);
+        else this.peerUnreads.delete(hostId);
+        const peer = this.hosts.peer(hostId);
+        if (peer?.show_agents) {
+          if (shouldReset) this.options.notifications?.onChange({ type: 'reset' });
+          else if (JSON.stringify(previous) !== JSON.stringify(next)) this.options.notifications?.onChange({ type: 'counts' });
+        }
+      } finally {
+        this.fetchingNotifications.delete(hostId);
+      }
+      if (this.refetchNotificationsPending.delete(hostId) && !this.disposed && this.peers.connected(hostId)) {
+        void this.refreshNotifications(hostId);
+      }
+    })();
+    this.fetchingNotifications.set(hostId, task);
+    return task;
   }
 
   private receiveNotificationChange(hostId: string, raw: unknown): void {

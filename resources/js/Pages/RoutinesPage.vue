@@ -162,7 +162,7 @@ const { settings: botSettings, all: allBots } = useBots();
 const peers = ref<PeerHost[]>([]);
 const queryHost = () => (typeof route.query.host === 'string' && route.query.host.trim() ? route.query.host.trim() : null);
 const selectedHost = ref<string | null>(queryHost());
-const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected'));
+const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected' && peer.show_agents));
 const hostOptions = computed(() => {
   const names = new Set(connectedPeers.value.map((peer) => peer.name));
   const options: Array<{ value: string | null; label: string }> = [
@@ -343,6 +343,8 @@ watch(() => route.query.host, () => {
   if (next === selectedHost.value) return;
   selectedHost.value = next;
   selectedId.value = '';
+  reportRun.value = null;
+  runProcessId.value = null;
   routines.value = [];
   latest.value = [];
   remoteHarnesses.value = [];
@@ -358,7 +360,10 @@ watch(() => route.query.report, (runId, previous) => {
   if (!runId && previous) reportRun.value = null;
   else void openRequestedReport();
 });
-watch(() => route.query.run, () => openRequestedRun());
+watch(() => route.query.run, (processId, previous) => {
+  if (!processId && previous) runProcessId.value = null;
+  else openRequestedRun();
+});
 onBeforeUnmount(() => {
   clearInterval(clock);
   if (activityTimer) clearTimeout(activityTimer);

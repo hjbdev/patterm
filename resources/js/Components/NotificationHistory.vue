@@ -68,6 +68,7 @@ type Change =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
   | { type: 'counts' }
+  | { type: 'reset' }
   | { type: 'reconnected' };
 
 const PAGE_SIZE = 30;
@@ -163,14 +164,12 @@ function applyChange(raw: unknown): void {
       marks.set(id, { read_at: mark?.read_at ?? at, ...(change.type === 'resolved' ? { resolved_at: mark?.resolved_at ?? at } : mark?.resolved_at ? { resolved_at: mark.resolved_at } : {}) });
     }
     items.value = settle(items.value);
-  } else if (change.type === 'reconnected') {
-    // Changes made while disconnected never arrived, so load the list again.
+  } else if (change.type === 'reconnected' || change.type === 'reset') {
+    // Changes made while disconnected or after peer visibility/rename changes require a fresh list.
     restart();
   } else if (change.type === 'raised' || change.type === 'updated') {
     // A repeat can make a read record unread again; the server's copy is newer.
     marks.delete(change.notification.id);
-    void refreshHead();
-  } else if (change.type === 'counts') {
     void refreshHead();
   }
 }

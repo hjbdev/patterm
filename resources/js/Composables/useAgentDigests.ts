@@ -116,7 +116,7 @@ function createAgentDigests(): AgentDigests {
   // handled during a load may be in a page still on its way.
   const stopNotices = window.patterm.onNotificationsChanged((raw) => {
     const change = raw as NotificationChange;
-    if (change.type === 'reconnected'
+    if (change.type === 'reconnected' || change.type === 'reset'
       || ((change.type === 'raised' || change.type === 'updated') && projectIds.value.includes(change.notification.project_id ?? ''))
       || ((change.type === 'read' || change.type === 'resolved') && (noticesLoading || change.ids.some((id) => notices.value.some((notice) => notice.id === id))))) invalidateNotices();
   });

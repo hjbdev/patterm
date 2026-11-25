@@ -67,7 +67,9 @@ export type NotificationChange =
   | { type: 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
   // A project was snoozed or woke, so unread totals changed.
-  | { type: 'counts' };
+  | { type: 'counts' }
+  // The set of visible paired hosts changed (connect, disconnect, hide, rename).
+  | { type: 'reset' };
 
 export interface NotificationUnread {
   process_id: string | null;

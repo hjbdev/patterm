@@ -66,7 +66,7 @@ const router = useRouter();
 const peers = ref<PeerHost[]>([]);
 const queryHost = () => (typeof route.query.host === 'string' && route.query.host.trim() ? route.query.host.trim() : null);
 const selectedHost = ref<string | null>(queryHost());
-const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected'));
+const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected' && peer.show_agents));
 const hostOptions = computed(() => {
   const names = new Set(connectedPeers.value.map((peer) => peer.name));
   const options: Array<{ value: string | null; label: string }> = [

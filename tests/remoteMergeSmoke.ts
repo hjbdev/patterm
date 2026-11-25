@@ -357,11 +357,58 @@ async function sharedNotifications(): Promise<void> {
   assert.deepEqual(hiddenList.items.map((item) => item.id), ['notification_l2', 'notification_l1']);
   peer.show_agents = true;
 
-  // Disconnecting clears peer unreads and cached remote notifications.
+  // Disconnecting clears peer unreads, cached notifications, and emits a reset.
+  const beforeDrop = receivedChanges.length;
   peerConnected = false;
   onDisconnected(peer.host_id);
   assert.deepEqual(service.mergeUnread([]), []);
   assert.equal(service.notification('workstation:notification_live'), null);
+  assert.equal(receivedChanges.slice(beforeDrop).at(-1)?.type, 'reset', 'disconnect emits a reset so open lists clear stale peer items');
+
+  // Same-millisecond tie pagination never skips older records when a non-owner host has many ties.
+  peerConnected = true;
+  const alphaPeer = { host_id: 'host_alpha', name: 'alpha', show_agents: true } as PeerHost;
+  const tieHosts = { peers: () => [alphaPeer, peer], peer: (id: string) => id === alphaPeer.host_id ? alphaPeer : peer, identity: () => ({ name: 'devbox' }) } as unknown as HostService;
+  const tieLocal: NotificationRecord[] = [
+    remoteRecord('notification_3', '2026-11-25T10:00:00.000Z', { project_id: 'project_here', process_id: 'process_1', session_id: 'session_1', url: '/projects/project_here' }),
+    remoteRecord('notification_2', '2026-11-25T10:00:00.000Z', { project_id: 'project_here', process_id: 'process_1', session_id: 'session_1', url: '/projects/project_here' }),
+    remoteRecord('notification_1', '2026-11-25T10:00:00.000Z', { project_id: 'project_here', process_id: 'process_1', session_id: 'session_1', url: '/projects/project_here' }),
+    remoteRecord('notification_0', '2026-11-25T09:59:59.000Z', { project_id: 'project_here', process_id: 'process_1', session_id: 'session_1', url: '/projects/project_here' })
+  ];
+  const tieAlpha: NotificationRecord[] = [
+    remoteRecord('notification_9', '2026-11-25T10:00:00.000Z', { url: '/projects/project_a' })
+  ];
+  const tieWorkstation: NotificationRecord[] = [
+    remoteRecord('notification_w3', '2026-11-25T10:00:00.000Z', { url: '/projects/project_w' }),
+    remoteRecord('notification_w2', '2026-11-25T10:00:00.000Z', { url: '/projects/project_w' }),
+    remoteRecord('notification_w1', '2026-11-25T10:00:00.000Z', { url: '/projects/project_w' }),
+    remoteRecord('notification_w0', '2026-11-25T09:59:58.000Z', { url: '/projects/project_w' })
+  ];
+  const tieService = new RemoteClientService(tieHosts, {
+    handle() {}, onConnected() {}, onDisconnected() {}, onEvent() {}, emit() {}, connected: () => true,
+    request: async (host: string, method: string, params: unknown) => {
+      if (method === 'notifications.list') return filterList(host === alphaPeer.host_id ? tieAlpha : tieWorkstation, params);
+      return null;
+    }
+  } as unknown as PeerLinkService, { localProjectFor: () => null, links: () => [] } as unknown as ProjectLinkService, {
+    localWorkbench: () => ({ projects: [] }), terminal: { onFrame() {} }, invalidate() {}, notifyRemoteTopics() {},
+    notifications: { state: () => ({ unread: [] }), list: (raw: unknown) => filterList(tieLocal, raw), read: () => ({ updated: 0 }), resolve: () => ({ updated: 0 }), onChange() {} }
+  } as unknown as ConstructorParameters<typeof RemoteClientService>[3]);
+  const seenIds: string[] = [];
+  let cursor: string | undefined;
+  for (let guard = 0; guard < 10; guard++) {
+    const page = await tieService.listNotifications({ limit: 2, include_resolved: true, ...(cursor ? { cursor } : {}) }, (raw) => filterList(tieLocal, raw));
+    seenIds.push(...page.items.map((item) => item.id));
+    if (!page.next_cursor) break;
+    cursor = page.next_cursor;
+  }
+  assert.deepEqual(seenIds, [
+    'workstation:notification_w3', 'workstation:notification_w2', 'workstation:notification_w1',
+    'notification_3', 'notification_2', 'notification_1',
+    'alpha:notification_9',
+    'notification_0', 'workstation:notification_w0'
+  ], 'multi-host cursor pagination traverses every tied and older notification in strict order');
+  tieService.dispose();
   service.dispose();
 }
 
