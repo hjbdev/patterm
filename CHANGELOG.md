@@ -269,6 +269,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- HTML pages in replies grow to their full height instead of stopping at
+  2000 px and scrolling inside the conversation. A page sized by its own
+  viewport, such as `100vh` under a heading, settles after a few steps rather
+  than growing forever.
 - The sidebar shows when a bot has replied: an unread dot, with the start of
   its reply under its name. A reply stays unread until you open the bot, even
   if it starts other work or restarts first. Opening a bot marks its replies

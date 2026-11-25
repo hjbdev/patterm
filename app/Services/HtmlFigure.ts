@@ -11,7 +11,10 @@ import { FIGURE_ID, type TranscriptTool } from './TranscriptProjection';
 export const HTML_RENDER_TOOL = 'html_render';
 export const HTML_PREVIEW_TOOL = 'html_preview';
 export const MAX_FIGURE_HTML_CHARS = 512_000;
-export const FIGURE_HEIGHT = { min: 80, max: 2000, initial: 240 } as const;
+// min to max bounds the height a call asks for before its page reports one.
+// The frame then follows the page up to limit, so it never scrolls inside the
+// reply; limit only stops a runaway page.
+export const FIGURE_HEIGHT = { min: 80, max: 2000, initial: 240, limit: 20_000 } as const;
 export const PREVIEW_WIDTH = { min: 240, max: 1600, initial: 728 } as const;
 // The transcript column; previews default to it.
 export const FIGURE_FRAME_SCHEME = 'patterm-frame';

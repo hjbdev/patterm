@@ -68,6 +68,8 @@ watch(() => props.html, () => {
   settle(false, 'The page changed.');
   generation.value++;
   height.value = remembered() ?? props.initialHeight;
+  lastGrowth = 0;
+  echoes = 0;
 });
 
 const answers = computed(() => {
@@ -98,14 +100,31 @@ function onMessage(event: MessageEvent): void {
     post({ type: 'render', html: props.html, ...(props.media?.size ? { media: Object.fromEntries(props.media) } : {}) });
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
-    const next = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
-    height.value = next;
-    if (props.measureKey) remember(props.measureKey, height.value);
+    resize(data.height);
   } else if (data.type === 'answer') {
     void answer(data);
   } else if (data.type === 'open-link' && typeof data.url === 'string' && /^https?:\/\//i.test(data.url) && data.url.length <= 2048) {
     show({ url: data.url, requestId: data.requestId });
   }
+}
+
+// The frame takes the page's full height, so it scrolls with the reply rather
+// than inside it. A page sized by its viewport, such as 100vh under a heading,
+// answers each resize at once by growing the same amount again; after a few
+// such echoes the frame stays put. A size reported later is followed again.
+let lastGrowth = 0;
+let resizedAt = 0;
+let echoes = 0;
+function resize(reported: number): void {
+  const next = Math.min(FIGURE_HEIGHT.limit, Math.max(16, Math.ceil(reported)));
+  const growth = next - height.value;
+  const now = performance.now();
+  echoes = growth > 0 && growth === lastGrowth && now - resizedAt < ECHO_MS ? echoes + 1 : 0;
+  if (echoes >= RUNAWAY_ECHOES) return;
+  lastGrowth = Math.max(0, growth);
+  resizedAt = now;
+  height.value = next;
+  if (props.measureKey) remember(props.measureKey, next);
 }
 
 // A pick sends at once, but only right after a click or key press, while
@@ -206,6 +225,8 @@ onBeforeUnmount(() => {
 <script lang="ts">
 const ID = new RegExp(`^${FIGURE_ID}$`);
 const STEADY_MS = 500;
+const ECHO_MS = 100;
+const RUNAWAY_ECHOES = 3;
 
 // Picks become one line each in the user's message.
 function readPicks(raw: unknown): Array<{ item?: string; label: string; value: string }> | null {
