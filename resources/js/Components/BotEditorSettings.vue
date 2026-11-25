@@ -137,7 +137,7 @@
       </SettingsSection>
 
       <SettingsSection v-if="!host" title="Discord" :scope="`${scope}.discord`" keywords="mentions dm token">
-        <template #description>Create an application in the Discord Developer Portal, add a bot, and invite it to your server with Send Messages, Add Reactions and Read Message History.</template>
+        <template #description>Create an application in the Discord Developer Portal. On its Bot page, copy the token and turn on Message Content Intent, so the bot can read messages you tag it in a reply to. Once it connects, add it to a server from here.</template>
         <SettingsRow label="Answer on Discord" description="Answers your mentions and DMs with short replies, and pings you there when work you started finishes." html-for="bot-discord" :save-key="`${scope}.discord.enabled`" toggle>
           <Switch id="bot-discord" :model-value="Boolean(bot.discord?.enabled)" @update:model-value="saveDiscord('enabled', { enabled: Boolean($event) })" />
         </SettingsRow>
@@ -153,7 +153,11 @@
             <Input id="bot-discord-users" v-model="userIds" class="h-8 w-full text-xs [@container(min-width:26rem)]:w-56" placeholder="123456789012345678" autocomplete="off" spellcheck="false" @blur="saveUserIds" @keydown.enter="saveUserIds" />
           </SettingsRow>
           <SettingsRow v-if="status" label="Status" inset>
-            <span :class="cn('text-xs', status.state === 'error' ? 'text-destructive' : status.state === 'connected' ? 'text-foreground' : 'text-muted-foreground')">{{ statusText }}</span>
+            <template v-if="status.invite_url" #description>Add the bot to a server you manage, then mention it there.</template>
+            <div class="flex items-center gap-3">
+              <span :class="cn('text-xs', status.state === 'error' ? 'text-destructive' : status.state === 'connected' ? 'text-foreground' : 'text-muted-foreground')">{{ statusText }}</span>
+              <a v-if="status.invite_url" :href="status.invite_url" target="_blank" rel="noopener noreferrer" :class="cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 shrink-0 gap-1.5 text-xs')">Add to server<ExternalLink class="h-3.5 w-3.5" /></a>
+            </div>
           </SettingsRow>
         </template>
       </SettingsSection>
@@ -163,7 +167,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { ChevronLeft, Dices } from 'lucide-vue-next';
+import { ChevronLeft, Dices, ExternalLink } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { autosave } from '../Composables/useSettingsAutosave';
@@ -181,7 +185,7 @@ import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
@@ -403,7 +407,7 @@ const token = ref('');
 const userIds = ref((props.bot.discord?.allowedUserIds ?? []).join(', '));
 const status = ref<DiscordBotStatus | null>(null);
 function discordOf(bot: Bot): NonNullable<Bot['discord']> {
-  return { enabled: bot.discord?.enabled ?? false, allowedUserIds: [...(bot.discord?.allowedUserIds ?? [])] };
+  return { enabled: bot.discord?.enabled ?? false, allowedUserIds: [...(bot.discord?.allowedUserIds ?? [])]};
 }
 async function saveDiscord(key: string, patch: Partial<NonNullable<Bot['discord']>> | (() => Partial<NonNullable<Bot['discord']>>)): Promise<void> {
   await save(`discord.${key}`, (bot) => ({ discord: { ...discordOf(bot), ...(typeof patch === 'function' ? patch() : patch) } }));

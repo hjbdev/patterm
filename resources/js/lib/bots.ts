@@ -39,6 +39,7 @@ export interface DiscordBotStatus {
   state: 'off' | 'connecting' | 'connected' | 'error';
   reason?: string;
   user?: { id: string; username: string };
+  invite_url?: string;
   error?: string;
 }
 

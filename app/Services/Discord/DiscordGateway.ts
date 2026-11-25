@@ -9,8 +9,12 @@ export const DISCORD_API = 'https://discord.com/api/v10';
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 // GUILD_MESSAGES | DIRECT_MESSAGES. Message content is a privileged intent,
 // but Discord includes it for messages that mention the bot and for DMs,
-// which are the only messages the bot answers.
+// which are the only messages the bot answers. The gateway never asks for
+// it: the message such a mention replies to is fetched on its own, which
+// needs only Message Content turned on for the application.
 const INTENTS = (1 << 9) | (1 << 12);
+// A reply, the only message type whose referenced_message is the message replied to.
+export const DISCORD_REPLY_TYPE = 19;
 const USER_AGENT = 'DiscordBot (patterm, 1)';
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 15_000, 30_000, 60_000];
 const REST_TIMEOUT_MS = 15_000;
@@ -32,7 +36,12 @@ const FRESH_SESSION_CODES = new Set([4007, 4009]);
 export interface DiscordUser {
   id: string;
   username: string;
+  global_name?: string | null;
   bot?: boolean;
+}
+
+export interface DiscordApplication {
+  id: string;
 }
 
 export interface DiscordMessage {
@@ -43,11 +52,16 @@ export interface DiscordMessage {
   content: string;
   mentions?: DiscordUser[];
   attachments?: Array<{ id: string; filename: string; url: string; size?: number }>;
+  type?: number;
+  message_reference?: { message_id?: string; channel_id?: string };
+  // For a reply: the message replied to, null once deleted, or absent when
+  // Discord didn't look it up.
+  referenced_message?: DiscordMessage | null;
 }
 
 export type DiscordGatewayStatus =
   | { state: 'connecting' }
-  | { state: 'connected'; user: DiscordUser }
+  | { state: 'connected'; user: DiscordUser; application: DiscordApplication | null }
   | { state: 'error'; message: string; retrying: boolean }
   | { state: 'stopped' };
 
@@ -81,6 +95,7 @@ export class DiscordGateway {
   private attempts = 0;
   private stopped = false;
   private self: DiscordUser | null = null;
+  private application: DiscordApplication | null = null;
 
   constructor(
     private readonly token: string,
@@ -112,6 +127,10 @@ export class DiscordGateway {
   async send(channelId: string, body: Record<string, unknown>): Promise<{ id: string }> {
     const result = await this.rest('POST', `/channels/${channelId}/messages`, body);
     return { id: String((result as { id?: unknown } | null)?.id ?? '') };
+  }
+
+  async message(channelId: string, messageId: string): Promise<DiscordMessage> {
+    return await this.rest('GET', `/channels/${channelId}/messages/${messageId}`) as DiscordMessage;
   }
 
   async react(channelId: string, messageId: string, emoji: string): Promise<void> {
@@ -183,11 +202,15 @@ export class DiscordGateway {
 
   private dispatch(type: string, data: unknown): void {
     if (type === 'READY') {
-      const ready = data as { session_id?: unknown; resume_gateway_url?: unknown; user?: DiscordUser };
+      // READY names the application, for the link that adds the bot to a server.
+      const ready = data as { session_id?: unknown; resume_gateway_url?: unknown; user?: DiscordUser; application?: { id?: unknown } };
       if (typeof ready.session_id === 'string' && typeof ready.resume_gateway_url === 'string') {
         this.session = { id: ready.session_id, resumeUrl: ready.resume_gateway_url.replace(/\/+$/, '') };
       }
       if (ready.user?.id) this.self = { id: String(ready.user.id), username: String(ready.user.username ?? ''), bot: true };
+      if (ready.application?.id) {
+        this.application = { id: String(ready.application.id) };
+      }
       this.connected();
       return;
     }
@@ -203,7 +226,7 @@ export class DiscordGateway {
 
   private connected(): void {
     this.attempts = 0;
-    if (this.self) this.events.status({ state: 'connected', user: this.self });
+    if (this.self) this.events.status({ state: 'connected', user: this.self, application: this.application });
   }
 
   private startHeartbeat(socket: Socket, interval: number): void {
