@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every local agent can now end a turn quietly, not just bots and the
+  assistant. The tool is renamed from `bot_stay_quiet` to `stay_quiet`.
 - Paired-host experience and unified New conversation launch:
   - Every `+` button (sidebar header, sidebar project headings, collapsed rail,
     phone footer, and Projects page) now opens the New conversation page instead
