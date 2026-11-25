@@ -7,6 +7,7 @@ import { reactive, ref } from 'vue';
 import { containsReferenceToken, referenceToken } from '../../../app/Services/PromptReferences';
 import { CHIP, type ComposerChip } from './composerDocument';
 import { transcriptMessageKey, type IntegratedQueuedMessage, type TranscriptMessage } from './integratedConversation';
+import { NEW_CONVERSATION_DRAFT } from './newConversation';
 import { randomId } from './randomId';
 
 export { referenceToken };
@@ -194,15 +195,16 @@ export function pruneDraft(processId: string): void {
 
 function trimDrafts(keepProcessId: string): void {
   if (drafts.size <= MAX_DRAFTS) return;
-  // First drop oldest empty idle drafts, then oldest idle drafts without pending submissions.
+  // First drop oldest empty idle drafts, then oldest idle drafts without
+  // pending submissions. The new conversation page's draft always stays.
   for (const [id, draft] of drafts) {
     if (drafts.size <= MAX_DRAFTS) return;
-    if (id === keepProcessId || draft.submission || outgoing.has(id)) continue;
+    if (id === keepProcessId || id === NEW_CONVERSATION_DRAFT || draft.submission || outgoing.has(id)) continue;
     if (!draft.text.trim() && !draft.attachments.length && !draft.chips.length) releaseDraft(id);
   }
   for (const [id, draft] of drafts) {
     if (drafts.size <= MAX_DRAFTS) return;
-    if (id === keepProcessId || draft.submission || outgoing.has(id)) continue;
+    if (id === keepProcessId || id === NEW_CONVERSATION_DRAFT || draft.submission || outgoing.has(id)) continue;
     releaseDraft(id);
   }
 }

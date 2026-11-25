@@ -1,5 +1,6 @@
 import { shallowReactive } from 'vue';
 import { harnessLabel } from './harnessLabels';
+import type { ComposerChip } from './composerDocument';
 
 export interface HarnessLaunchInput {
   projectId: string;
@@ -15,6 +16,9 @@ export interface HarnessLaunchInput {
   initialPrompt?: string;
   // Uploaded files sent with the first message.
   initialAttachments?: Array<{ path: string; name: string; mime: string }>;
+  // The composer draft the first message came from, with its mention chips,
+  // which dismissing a failed launch puts back. Never sent to the backend.
+  initialDraft?: { text: string; chips: ComposerChip[] };
 }
 
 export interface HarnessLaunch {

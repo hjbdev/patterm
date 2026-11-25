@@ -23,8 +23,8 @@ Re-run it after moving either path or replacing a version-managed Node install.
 2. Restrict the destination's HTTPS access to the intended owner in tailnet
    policy. Remove broader rules that already allow the same destination;
    adding a narrow grant does not cancel existing broad access. Browser access
-   grants command execution as the service account. Patterm has no separate
-   browser login. Do not enable Tailscale Funnel. See the
+   grants command execution as the service account. A browser password is optional;
+   restrict tailnet access even when one is set. Do not enable Tailscale Funnel. See the
    [Tailscale grant examples](https://tailscale.com/docs/reference/examples/grants).
 
 3. Build and prepare the user unit. Replace the example origin with your own.
@@ -99,7 +99,7 @@ agent or launch a process. Electron uses the same routes after `#` in its local 
 | Setting | Default or requirement |
 | --- | --- |
 | `PATTERM_PUBLIC_ORIGIN` | Installer requires an HTTPS `*.ts.net` origin or localhost origin, without a path. |
-| `PATTERM_PORT` | `8787`; the listener binds to `127.0.0.1`. |
+| `PATTERM_PORT` | `8787`; the default listener binds to `127.0.0.1`. |
 | `PATTERM_DATA_DIR` | `~/.local/share/patterm-server`; also settable with installer `--data-dir`. |
 | `PATTERM_SIDECAR` | Absolute release sidecar path under the checkout. |
 | `PATTERM_MCP_SHIM` | Absolute `dist/mcp/patterm-mcp.js` path under the checkout. |
@@ -168,18 +168,17 @@ the same data directory fails to acquire its runtime lock.
 Browser closure, sleep, or network loss does not stop agents, processes, timers,
 or imports. Reconnection reloads state and terminal snapshots. Only one browser
 controls each terminal; other browsers can view and explicitly take control.
-Installed Linux services keep terminals in independent `patterm-terminal@…`
+Installed Linux services keep terminal and Integrated agent hosts in independent
 units. Stopping or restarting `patterm.service` preserves their processes,
-including native sleeps. Startup reconnects to the same terminals and restores
-control. Patterm timers retain their deadlines; overdue callbacks run after
+including native sleeps. Startup reconnects to live hosts and restores control. Patterm timers retain their deadlines; overdue callbacks run after
 reconnection. MCP calls can fail while the backend is unavailable and are not
 automatically replayed.
 
 Use **Quit Patterm** in the command palette to stop everything. Its confirmation
 describes the agents and commands across all projects that will stop, including
 sleeps and Patterm timers. Quit stops all registered host generations with bounded
-systemd cleanup. Closing a browser tab only disconnects it. Reboot or terminal-host
-failure ends affected processes; saved conversations require explicit native resume.
+systemd cleanup. Closing a browser tab only disconnects it. Reboot or host failure ends affected processes; saved conversations require
+explicit native resume, except that bots resume when Patterm starts.
 
 For an installed service, `./update.sh` builds and stages the checkout before
 restarting the application. Refresh the browser afterwards. Host binaries are
@@ -217,7 +216,7 @@ Run these steps on the server, as the account that owns Patterm and its agent CL
 logins. This procedure updates an installation made with `./install.sh` and
 started with `patterm --headless --tailscale-serve`. It uses the default
 installation, configuration, and data paths. Adjust those paths if your
-installation differs. Node >=24 <27, pnpm v11, and Rust/Cargo must be available
+installation differs. Node >=24.11 <27, pnpm v11, and Rust/Cargo must be available
 on the server.
 
 1. Check the checkout and installed service:

@@ -144,7 +144,7 @@ pnpm install
 pnpm run dev
 ```
 
-Agents run in Windows pseudoconsoles. Raw terminals and commands use PowerShell
+Agents use Integrated hosts on Windows. Terminals and commands use PowerShell
 7 when it is installed, otherwise Windows PowerShell. Agent CLIs installed by
 npm or pnpm as `.cmd` shims are started through their Node scripts. Data lives
 in `%LOCALAPPDATA%\patterm-desktop` (`patterm-desktop-dev` for development
@@ -197,34 +197,16 @@ bots receive the guidance immediately.
 
 ## OpenCode
 
-Install `opencode` on the service account's `PATH`. Patterm launches the native
-TUI against OpenCode's shared background server, without `--standalone`. The
-stored provider ID remains `opencode` so existing history stays linked.
+Install `opencode` on the service account's `PATH`. Integrated conversations
+use OpenCode's shared background server and native session API. Patterm registers
+a runtime-only MCP bridge for the session's directory; calls from unregistered
+native sessions are rejected. It does not edit global OpenCode configuration.
 
-Before attaching the TUI, Patterm creates or resolves the native session, adds
-its startup instructions through the session API, and registers a runtime-only
-MCP bridge for that directory. MCP session metadata selects the corresponding
-active Patterm identity. Calls from unregistered native sessions are rejected.
-No global OpenCode configuration files or permission settings are changed.
-
-Patterm keeps a persistent copy of `cli.json` for its terminal preferences. On
-launch, it merges changes from your main OpenCode config. Preferences changed
-inside Patterm win conflicts, including deleted settings; arrays are treated as
-one setting. The default OpenCode palette uses Patterm's dark background, while
-input, accent, text, and syntax colours retain their native values.
-
-Stop, Close, and graceful Patterm shutdown interrupt the attached OpenCode
-sessions, but do not stop the shared server or unrelated OpenCode sessions.
-A Patterm crash can leave native work running; inspect OpenCode before resuming.
-If OpenCode's server restarts, launching or resuming a Patterm agent registers
-the bridge again. The runtime MCP registration is not a persistent config edit.
-
-Existing imported history remains readable. Resuming requires the
-session to exist in the OpenCode server; Patterm does not migrate native OpenCode data.
-Run `pnpm run test:opencode` for the bridge regressions, or set
-`PATTERM_TEST_OPENCODE` to the absolute binary path for temporary-only shared-server
-acceptance tests without model calls.
-
+Stop and Close interrupt the attached session without stopping the shared server
+or unrelated sessions. Imported history remains readable; resuming requires the
+session to exist in OpenCode's server. Run `pnpm run test:opencode` for bridge
+regressions, or set `PATTERM_TEST_OPENCODE` to the absolute binary path for
+temporary-only shared-server acceptance tests without model calls.
 
 
 ## Linux launch troubleshooting
@@ -270,9 +252,10 @@ changing. After updating the application, restart already-running bots (includin
 the assistant) with **resume** to load it; a fresh conversation is unnecessary.
 This change does not restart bots or the live service automatically.
 
-This is model guidance, not a transport-level guarantee of silence: Patterm does
-not filter acknowledgements from transcripts or notifications. All three adapters
-settle turns from native lifecycle events rather than requiring a text reply
+This is model guidance, not a guarantee that a model will remain silent. Local
+agents can call `stay_quiet` to suppress their own turn-finished notification;
+it does not suppress permission prompts or other agents’ notifications. The
+three adapters tested below settle turns from native lifecycle events rather than requiring a text reply
 (Codex `turn/completed`, Claude `result`, OpenCode execution success/idle). A
 model may still emit an acknowledgement despite the instruction. Active voice
 calls use separate voice-intermediary instructions and spoken message summaries;

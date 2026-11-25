@@ -1,158 +1,78 @@
 <template>
   <!-- A project with nothing open starts its next conversation here: the
-       agent CLI's logo, the first message, and where and how it runs. -->
-  <div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-[14vh] pt-4">
-    <form class="w-full max-w-[40rem]" @submit.prevent="start">
-      <div v-if="harness" class="pb-3.5">
+       agent CLI's logo, the first message, and where and how it runs. It is
+       the same composer an empty agent centres, so @ offers agents and presets. -->
+  <div class="flex min-h-0 w-full flex-1 flex-col items-center overflow-y-auto">
+    <IntegratedComposer
+      v-if="harness"
+      ref="composer"
+      :process-id="draftKey"
+      :controls="controls"
+      :controlling="true"
+      :sending="false"
+      :pending="false"
+      :ended="false"
+      :agents="mentionAgents"
+      :bots="mentionBots"
+      :processes="mentionProcesses"
+      :launchers="mentionLaunchers"
+      :harness="harness"
+      :upload-route="route"
+      :blocked="blocked"
+      hero
+      @send="start"
+      @invalid="toast.error($event)"
+      @configure="configure"
+    >
+      <template #hero>
         <HarnessFan :harness="harness" :harnesses="installed" @select="chooseHarness" />
-      </div>
-      <!-- With no agent CLI on the chosen machine, the project picker stays so you can pick another. -->
-      <p v-if="!harness" class="text-center text-sm text-muted-foreground">{{ emptyText }}</p>
-      <div
-        v-else
-        ref="card"
-        class="rounded-[26px] border bg-muted/50 shadow-sm transition-colors"
-        :class="dragging ? 'border-dashed border-primary/70' : 'border-foreground/[0.07]'"
-        @dragover.prevent="dragging = true"
-        @dragleave="dragging = false"
-        @drop.prevent="onDrop"
-      >
-        <div v-if="attachments.length" class="flex flex-wrap items-center gap-2 px-3 pt-3">
-          <div
-            v-for="attachment in attachments"
-            :key="attachment.id"
-            class="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-xs"
-            :class="attachment.status === 'error' || elsewhere(attachment) ? 'border-destructive/50 text-destructive' : 'border-border/60 bg-muted/30'"
-          >
-            <img v-if="attachment.image && attachment.previewUrl" :src="attachment.previewUrl" :alt="attachment.name" class="h-9 w-11 shrink-0 rounded object-cover">
-            <div class="min-w-0">
-              <p class="truncate">{{ attachment.name }}</p>
-              <p class="truncate text-[10px] text-muted-foreground">
-                {{ elsewhere(attachment) ? 'On another machine: choose its project or attach again' : attachment.status === 'uploading' ? 'Uploading…' : attachment.status === 'error' ? attachment.error : attachment.size ? formatBytes(attachment.size) : 'Ready' }}
-              </p>
-            </div>
-            <button v-if="attachment.status === 'error'" type="button" class="shrink-0 text-muted-foreground hover:text-foreground" :aria-label="`Retry ${attachment.name}`" title="Retry upload" @click="retryUpload(draftKey, attachment.id)">↻</button>
-            <button type="button" class="shrink-0 text-muted-foreground hover:text-foreground" :aria-label="`Remove ${attachment.name}`" @click="removeAttachment(draftKey, attachment.id)">×</button>
-          </div>
-        </div>
-        <div class="flex items-end gap-1.5 p-2">
-          <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 rounded-full text-muted-foreground" aria-label="Attach files" title="Attach files" @click="picker?.click()">
-            <Paperclip class="h-4 w-4" />
-          </Button>
-          <textarea
-            ref="field"
-            v-model="newConversationDraft"
-            rows="1"
-            class="block max-h-44 min-h-8 min-w-0 flex-1 resize-none self-center bg-transparent px-1 py-1 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
-            :placeholder="`What should ${harnessLabel(harness)} work on?`"
-            aria-label="First message"
-            data-patterm-new-conversation-input
-            @input="grow"
-            @keydown="onKeydown"
-            @paste="onPaste"
-          />
-          <Button type="submit" size="icon" class="h-8 w-8 shrink-0 rounded-full" :disabled="!canStart" :aria-label="`Start ${harnessLabel(harness)}`" :title="startTitle">
-            <ArrowUp class="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-      <input ref="picker" type="file" multiple class="hidden" :accept="ATTACHMENT_ACCEPT" @change="onPick">
+      </template>
+      <template #meta>
+        <span v-if="controls.selectors.length" aria-hidden="true" class="text-xs opacity-50">·</span>
+        <LaunchTargetPickers v-model:target-project-id="targetProjectId" v-model:worktree-id="worktreeId" :targets="targets" :worktrees="worktrees" @close-auto-focus="refocus" />
+      </template>
+    </IntegratedComposer>
+    <!-- With no agent CLI on the chosen machine, the project picker stays so you can pick another. -->
+    <div v-else class="my-auto w-full max-w-[40rem] px-4 pb-[14vh] pt-4">
+      <p class="text-center text-sm text-muted-foreground">{{ emptyText }}</p>
       <div class="flex flex-wrap items-center justify-center gap-0.5 pt-3.5 text-muted-foreground">
-        <template v-if="harness">
-          <template v-if="profileSelector">
-            <IntegratedControlPicker :selector="profileSelector" :disabled="false" @select="chooseProfile" />
-            <span aria-hidden="true" class="text-xs opacity-50">·</span>
-          </template>
-          <IntegratedControlPicker v-if="modelSelector" :selector="modelSelector" :disabled="false" @select="chooseModel" />
-          <template v-if="reasoningSelector">
-            <span aria-hidden="true" class="text-xs opacity-50">·</span>
-            <IntegratedControlPicker :selector="reasoningSelector" :disabled="false" @select="chooseReasoning" />
-          </template>
-          <span aria-hidden="true" class="text-xs opacity-50">·</span>
-        </template>
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <Button type="button" variant="ghost" size="sm" :class="PICKER" :aria-label="`Project: ${target?.project.name ?? 'Choose a project'}`">
-              <ProjectLogo v-if="target" :project="target.project" :size="13" />
-              <span class="truncate">{{ target?.project.name ?? 'Choose a project' }}</span>
-              <HostBadge v-if="target?.host" :host="target.host" />
-              <ChevronsUpDown class="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="center" class="max-h-72 w-64 overflow-y-auto" @close-auto-focus="refocus">
-            <DropdownMenuItem v-for="option in targets" :key="option.targetProjectId" class="gap-2 text-[13px]" @select="chooseTarget(option.targetProjectId)">
-              <ProjectLogo :project="option.project" :size="14" />
-              <span class="min-w-0 flex-1 truncate">{{ option.project.name }}</span>
-              <HostBadge v-if="option.host" :host="option.host" />
-              <Check class="h-3.5 w-3.5 shrink-0" :class="option.targetProjectId === targetProjectId ? '' : 'invisible'" />
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <template v-if="worktrees.length">
-          <span aria-hidden="true" class="text-xs opacity-50">·</span>
-          <DropdownMenu>
-            <DropdownMenuTrigger as-child>
-              <Button type="button" variant="ghost" size="sm" :class="PICKER" :aria-label="`Run in ${worktreeLabel}`">
-                <GitBranch class="h-3 w-3 shrink-0" aria-hidden="true" />
-                <span class="truncate">{{ worktreeLabel }}</span>
-                <ChevronsUpDown class="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="center" class="max-h-72 w-64 overflow-y-auto" @close-auto-focus="refocus">
-              <DropdownMenuItem class="gap-2 text-[13px]" @select="worktreeId = null">
-                <span class="min-w-0 flex-1 truncate">Project checkout</span>
-                <Check class="h-3.5 w-3.5 shrink-0" :class="worktreeId === null ? '' : 'invisible'" />
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem v-for="worktree in worktrees" :key="worktree.id" class="gap-2 text-[13px]" @select="worktreeId = worktree.id">
-                <span class="min-w-0 flex-1 truncate">{{ worktreeName(worktree) }}</span>
-                <Check class="h-3.5 w-3.5 shrink-0" :class="worktreeId === worktree.id ? '' : 'invisible'" />
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </template>
+        <LaunchTargetPickers v-model:target-project-id="targetProjectId" v-model:worktree-id="worktreeId" :targets="targets" :worktrees="worktrees" />
       </div>
-    </form>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { ArrowUp, Check, ChevronsUpDown, GitBranch, Paperclip } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import HarnessFan from './HarnessFan.vue';
-import HostBadge from './HostBadge.vue';
-import IntegratedControlPicker from './IntegratedControlPicker.vue';
-import ProjectLogo from './ProjectLogo.vue';
-import { Button } from './ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu';
+import IntegratedComposer from './IntegratedComposer.vue';
+import LaunchTargetPickers from './LaunchTargetPickers.vue';
+import { useBots } from '../Composables/useBots';
 import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
+import { mentionLaunchers as buildMentionLaunchers, mentionableAgents, mentionableBots, mentionableProcesses } from '../lib/agentMentions';
 import { allAgents, allAgentsHiding, launchTargets } from '../lib/allAgents';
 import { handOffComposer } from '../lib/composerFlip';
-import { ATTACHMENT_ACCEPT, addFiles, draftFor, formatBytes, removeAttachment, rerouteAttachments, retryUpload, takeAttachments, type ComposerAttachment } from '../lib/integratedComposer';
-import { harnessLabel, launchableHarnesses } from '../lib/harnesses';
-import { NEW_CONVERSATION_DRAFT, lastNewConversationHarness, newConversationDraft, newConversationRoute, rememberNewConversationHarness } from '../lib/newConversation';
+import { draftFor, rerouteAttachments, takeAttachments, type ComposerSendPayload } from '../lib/integratedComposer';
+import { launchableHarnesses } from '../lib/harnesses';
+import { NEW_CONVERSATION_DRAFT, lastNewConversationHarness, newConversationRoute, rememberNewConversationHarness } from '../lib/newConversation';
 import { emptyModelCatalog, modelsFor, type ModelCatalog, type ProfileHarness } from '../lib/profileFields';
 import { profileName, type ProfileSettings } from '../lib/profiles';
 import { harnessModels, harnessPresets } from '../lib/serverQuery';
-import { touchScreen } from '../lib/touch';
 import { defaultReasoningLevelsFor } from '../../../app/Agents/AgentCapabilitiesDto';
 import type { HarnessInstallationRecord, WorktreeRecord } from '../types';
 
 // `chooseProject`: the All agents view, which lists every shown project.
 const props = defineProps<{ projectId: string; chooseProject?: boolean }>();
 
-const PICKER = 'h-8 max-w-56 gap-1.5 px-2 text-xs font-medium text-muted-foreground hover:text-foreground';
 const ORDER = ['claude', 'codex', 'opencode', 'agy'];
 const DEFAULT = '__default__';
 
 const { harnesses, projects } = useWorkbench();
+const { rows: botRows } = useBots();
 const { launchHarness } = useHarnessLaunch();
-const card = ref<HTMLElement>();
-const field = ref<HTMLTextAreaElement>();
-const picker = ref<HTMLInputElement>();
-const dragging = ref(false);
+const composer = ref<InstanceType<typeof IntegratedComposer> | null>(null);
 
 // Where the agent can start: this project and its paired hosts, or every
 // shown project when choosing among them.
@@ -167,12 +87,12 @@ watch([targets, () => props.projectId], ([, projectId], previous) => {
 }, { immediate: true });
 const target = computed(() => targets.value.find((option) => option.targetProjectId === targetProjectId.value) ?? null);
 
-// Attachments stay with the page whichever project is chosen. When the agent
-// would start on another machine, as after choosing a paired host's project,
-// returning to the page, or a host going offline, they upload again there.
+// The message waits in one composer draft whichever project is chosen. When
+// the agent would start on another machine, as after choosing a paired
+// host's project, returning to the page, or a host going offline, its
+// attachments upload again there.
 const draftKey = NEW_CONVERSATION_DRAFT;
 const route = computed(() => newConversationRoute(target.value?.host));
-const attachments = computed(() => draftFor(draftKey).attachments);
 watch(route, (next) => rerouteAttachments(draftKey, next), { immediate: true });
 
 // Another host lists its own CLIs, profiles, and model catalog.
@@ -206,10 +126,12 @@ watch(() => target.value?.host, async (host) => {
   }
 }, { immediate: true });
 
-const installed = computed(() => {
+const installedRecords = computed(() => {
   const host = target.value?.host;
-  const records = host ? hostHarnesses.value[host] ?? [] : launchableHarnesses(harnesses.value);
-  const ids = new Set(records.map((record) => record.harness));
+  return host ? hostHarnesses.value[host] ?? [] : launchableHarnesses(harnesses.value);
+});
+const installed = computed(() => {
+  const ids = new Set(installedRecords.value.map((record) => record.harness));
   return ORDER.filter((id) => ids.has(id));
 });
 const chosenHarness = ref(lastNewConversationHarness());
@@ -219,7 +141,7 @@ const emptyText = computed(() => target.value?.host ? `No agent CLIs found on ${
 function chooseHarness(next: string): void {
   chosenHarness.value = next;
   rememberNewConversationHarness(next);
-  void nextTick(focusField);
+  void nextTick(() => composer.value?.focus());
 }
 
 // The model and thinking level start at the CLI's default profile on the target host.
@@ -296,53 +218,63 @@ function capitalise(text: string): string {
   return text ? text[0]!.toUpperCase() + text.slice(1) : text;
 }
 
+// The composer shows the profile, model, and thinking pickers as an empty
+// agent shows its own, then the project and worktree pickers after them.
+const controls = computed(() => ({
+  selectors: [profileSelector.value, modelSelector.value, reasoningSelector.value].filter((selector) => selector !== null),
+  commands: []
+}));
+function configure(id: string, value: string): void {
+  if (id === 'profile') chooseProfile(value);
+  else if (id === 'model') chooseModel(value);
+  else if (id === 'reasoning') chooseReasoning(value);
+}
+
+// The @ menu offers what the new agent could reach once it starts: the
+// chosen project's live agents and processes, this host's bots that work in
+// it, and presets and CLIs for spawning helpers.
+const targetWorkbench = computed(() => target.value ? projects.value.find((item) => item.project.id === target.value!.projectId) ?? null : null);
+const mentionAgents = computed(() => targetWorkbench.value ? mentionableAgents(targetWorkbench.value.projectSessions, '') : []);
+// A paired host's agent cannot message this host's bots.
+const mentionBots = computed(() => targetWorkbench.value && !target.value?.host ? mentionableBots(botRows.value, targetWorkbench.value.project.id, '') : []);
+const mentionProcesses = computed(() => targetWorkbench.value ? mentionableProcesses(targetWorkbench.value.processes, targetWorkbench.value.projectSessions) : []);
+const mentionLaunchers = computed(() => buildMentionLaunchers(installedRecords.value, activePresets.value?.presets ?? []));
+
 const worktrees = computed<WorktreeRecord[]>(() => target.value
   // Only worktrees on the chosen target's host can host a launch there.
-  ? (projects.value.find((item) => item.project.id === target.value!.projectId)?.worktrees ?? [])
-    .filter((worktree) => (worktree.host ?? null) === target.value!.host)
+  ? (targetWorkbench.value?.worktrees ?? []).filter((worktree) => (worktree.host ?? null) === target.value!.host)
   : []);
 const worktreeId = ref<string | null>(null);
 watch(targetProjectId, () => { worktreeId.value = null; });
-const worktreeLabel = computed(() => {
-  const worktree = worktrees.value.find((candidate) => candidate.id === worktreeId.value);
-  return worktree ? worktreeName(worktree) : 'Project checkout';
-});
-function worktreeName(worktree: WorktreeRecord): string {
-  return worktree.branch ?? worktree.worktreePath.slice(worktree.worktreePath.lastIndexOf('/') + 1);
-}
-function chooseTarget(id: string): void {
-  targetProjectId.value = id;
-}
 
-const uploading = computed(() => attachments.value.some((attachment) => attachment.status === 'uploading'));
-// Uploaded for a machine other than the one the agent would start on.
-function elsewhere(attachment: ComposerAttachment): boolean {
-  return (attachment.route ?? draftKey) !== route.value;
-}
-const failedUpload = computed(() => attachments.value.some((attachment) => attachment.status === 'error' || elsewhere(attachment)));
-const canStart = computed(() => Boolean(harness.value && target.value && newConversationDraft.value.trim()) && !uploading.value && !failedUpload.value);
-const startTitle = computed(() => {
-  if (uploading.value) return 'Wait for attachments to finish uploading';
-  if (failedUpload.value) return 'Remove failed attachments first';
-  return harness.value ? `Start ${harnessLabel(harness.value)}` : 'Start';
+const draft = computed(() => draftFor(draftKey));
+const blocked = computed(() => {
+  if (!target.value) return 'Choose a project';
+  if (!draft.value.text.trim() && draft.value.attachments.length) return 'Write a first message to send with the files';
+  return null;
 });
 
-function start(): void {
-  const chosen = target.value, cli = harness.value, prompt = newConversationDraft.value.trim();
+// The composer's send, with the message's chips as tokens and its uploaded files.
+function start(payload: ComposerSendPayload): void {
+  const chosen = target.value, cli = harness.value, prompt = payload.text.trim();
   if (!chosen || !cli || !prompt || !canStart.value) return;
   // The chosen profile's own settings launch as that profile; anything else
   // overrides its model and thinking level for this agent.
   const base = profile.value;
   const overridden = Boolean(model.value) && (model.value !== (base?.model ?? null) || reasoning.value !== (base?.reasoning ?? null));
-  if (card.value) handOffComposer(card.value);
+  const card = composer.value?.card;
+  if (card) handOffComposer(card);
   rememberNewConversationHarness(cli);
-  newConversationDraft.value = '';
   const files = takeAttachments(draftKey);
+  // Dismissing a failed launch puts the message back with its chips.
+  const initialDraft = { text: draft.value.text, chips: [...draft.value.chips] };
+  Object.assign(draft.value, { text: '', chips: [], references: [], lastAttempt: undefined });
   launchHarness({
     harness: cli,
     projectId: chosen.projectId,
     targetProjectId: chosen.targetProjectId,
     initialPrompt: prompt,
+    initialDraft,
     ...(files.length ? { initialAttachments: files } : {}),
     ...(chosen.host ? { host: chosen.host } : {}),
     // The preset still applies under an override, keeping its Codex speed.
@@ -351,64 +283,11 @@ function start(): void {
     ...(worktreeId.value ? { worktreeId: worktreeId.value } : {})
   });
 }
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    start();
-  }
-}
-
-function attach(files: File[]): void {
-  void addFiles(draftKey, files, route.value);
-}
-
-function onPick(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  if (input.files?.length) attach(Array.from(input.files));
-  input.value = '';
-  focusField();
-}
-
-function onDrop(event: DragEvent): void {
-  dragging.value = false;
-  const dropped = event.dataTransfer?.files;
-  if (dropped?.length) attach(Array.from(dropped));
-}
-
-// Pasted files attach; pasted text goes in the field as usual.
-function onPaste(event: ClipboardEvent): void {
-  const pasted = Array.from(event.clipboardData?.items ?? []).flatMap((item) => {
-    const file = item.kind === 'file' ? item.getAsFile() : null;
-    return file ? [file] : [];
-  });
-  if (!pasted.length) return;
-  event.preventDefault();
-  attach(pasted);
-}
-
-function grow(): void {
-  const element = field.value;
-  if (!element) return;
-  element.style.height = 'auto';
-  element.style.height = `${element.scrollHeight}px`;
-}
-
-function focusField(): void {
-  if (!touchScreen()) field.value?.focus();
-}
+const canStart = computed(() => Boolean(harness.value && target.value) && !blocked.value);
 
 function refocus(event: Event): void {
-  if (!field.value) return;
+  if (!composer.value) return;
   event.preventDefault();
-  focusField();
+  composer.value.focus();
 }
-
-// The field renders once the agent CLIs are known, which is often after
-// mount, so it is focused when it appears.
-watch(field, (element) => {
-  if (!element) return;
-  grow();
-  focusField();
-}, { immediate: true, flush: 'post' });
 </script>

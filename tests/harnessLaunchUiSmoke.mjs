@@ -193,18 +193,20 @@ test('new conversation launches pass profile, overrides, and worktree for both l
   const js = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const target = { value: { projectId: 'p1', targetProjectId: 'p1', host: null } };
   const harness = { value: 'codex' };
-  const newConversationDraft = { value: '  Review PR 126  ' };
+  const draft = { value: { text: '  Review PR 126  ', chips: [] } };
   const profile = { value: { id: 'smarty', model: 'gpt-6.2-sol', reasoning: 'max' } };
   const model = { value: 'gpt-6.2-sol' };
   const reasoning = { value: 'max' };
   const worktreeId = { value: null };
-  const start = new Function('target', 'harness', 'newConversationDraft', 'profile', 'model', 'reasoning', 'worktreeId', 'card', 'handOffComposer', 'rememberNewConversationHarness', 'launchHarness', 'canStart', 'draftKey', 'takeAttachments', `${js};return start;`)(
-    target, harness, newConversationDraft, profile, model, reasoning, worktreeId, { value: null }, () => {}, () => {}, input => calls.push(input),
+  const start = new Function('target', 'harness', 'draft', 'profile', 'model', 'reasoning', 'worktreeId', 'composer', 'handOffComposer', 'rememberNewConversationHarness', 'launchHarness', 'canStart', 'draftKey', 'takeAttachments', `${js};return start;`)(
+    target, harness, draft, profile, model, reasoning, worktreeId, { value: null }, () => {}, () => {}, input => calls.push(input),
     { value: true }, 'new-conversation', () => []
   );
+  // The composer sends the draft's text, with chips as tokens.
+  const send = (text) => { draft.value.text = text; start({ text, references: [], attachments: [], messageId: 'm' }); };
 
   // Local launch using its chosen profile.
-  start();
+  send('  Review PR 126  ');
   // Remote launch with overridden model, reasoning, and remote worktree.
   target.value = { projectId: 'p1', targetProjectId: 'remote:p9', host: 'remote' };
   harness.value = 'claude';
@@ -212,11 +214,9 @@ test('new conversation launches pass profile, overrides, and worktree for both l
   model.value = 'claude-opus';
   reasoning.value = 'high';
   worktreeId.value = 'remote:worktree_7';
-  newConversationDraft.value = 'Ship it';
-  start();
+  send('Ship it');
   // Blank drafts never launch.
-  newConversationDraft.value = '   ';
-  start();
+  send('   ');
 
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], {
@@ -224,6 +224,7 @@ test('new conversation launches pass profile, overrides, and worktree for both l
     projectId: 'p1',
     targetProjectId: 'p1',
     initialPrompt: 'Review PR 126',
+    initialDraft: { text: '  Review PR 126  ', chips: [] },
     preset: 'smarty'
   });
   assert.deepEqual(calls[1], {
@@ -231,6 +232,7 @@ test('new conversation launches pass profile, overrides, and worktree for both l
     projectId: 'p1',
     targetProjectId: 'remote:p9',
     initialPrompt: 'Ship it',
+    initialDraft: { text: 'Ship it', chips: [] },
     host: 'remote',
     preset: 'preset_remote',
     model: 'claude-opus',
