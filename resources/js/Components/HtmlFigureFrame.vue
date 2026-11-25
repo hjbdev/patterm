@@ -47,7 +47,8 @@ const answered = inject(figureAnsweredKey, null);
 const frame = ref<HTMLIFrameElement | null>(null);
 const src = figureFrameUrl();
 const generation = ref(0);
-const height = ref(remembered() ?? props.initialHeight);
+const height = ref(remembered()?.height ?? props.initialHeight);
+let viewportSized = remembered()?.viewportSized ?? false;
 // The link the page asked to open, waiting for the user. A newer one replaces
 // it. The revision and time are Patterm's own, so the page cannot reuse them.
 interface PageRequest { url: string; requestId: unknown; revision: number; shownAt: number }
@@ -67,8 +68,8 @@ let armed: { revision: number; place: string } | null = null;
 watch(() => props.html, () => {
   settle(false, 'The page changed.');
   generation.value++;
-  height.value = remembered() ?? props.initialHeight;
-  lastGrowth = 0;
+  height.value = remembered()?.height ?? props.initialHeight;
+  viewportSized = remembered()?.viewportSized ?? false;
   echoes = 0;
 });
 
@@ -80,7 +81,7 @@ const answers = computed(() => {
 const canAnswer = computed(() => Boolean(channel?.canSend.value));
 watch([answers, canAnswer], () => pushState());
 
-function remembered(): number | undefined {
+function remembered(): Measured | undefined {
   return props.measureKey ? measured.get(props.measureKey) : undefined;
 }
 
@@ -110,21 +111,19 @@ function onMessage(event: MessageEvent): void {
 
 // The frame takes the page's full height, so it scrolls with the reply rather
 // than inside it. A page sized by its viewport, such as 100vh under a heading,
-// answers each resize at once by growing the same amount again; after a few
-// such echoes the frame stays put. A size reported later is followed again.
-let lastGrowth = 0;
+// grows again straight after each resize; after a few such echoes it keeps
+// the old FIGURE_HEIGHT.max, remembered so a remount does not grow it again.
 let resizedAt = 0;
 let echoes = 0;
 function resize(reported: number): void {
-  const next = Math.min(FIGURE_HEIGHT.limit, Math.max(16, Math.ceil(reported)));
-  const growth = next - height.value;
   const now = performance.now();
-  echoes = growth > 0 && growth === lastGrowth && now - resizedAt < ECHO_MS ? echoes + 1 : 0;
-  if (echoes >= RUNAWAY_ECHOES) return;
-  lastGrowth = Math.max(0, growth);
-  resizedAt = now;
+  const size = Math.max(16, Math.ceil(reported));
+  echoes = size > height.value && now - resizedAt < ECHO_MS ? echoes + 1 : 0;
+  if (echoes >= RUNAWAY_ECHOES) viewportSized = true;
+  const next = Math.min(viewportSized ? FIGURE_HEIGHT.max : FIGURE_HEIGHT.limit, size);
+  if (next !== height.value) resizedAt = now;
   height.value = next;
-  if (props.measureKey) remember(props.measureKey, next);
+  if (props.measureKey) remember(props.measureKey, { height: height.value, viewportSized });
 }
 
 // A pick sends at once, but only right after a click or key press, while
@@ -252,10 +251,12 @@ function linkParts(url: string): { host: string; rest: string } {
 
 // Heights pages reported, so a row that scrolls back into view opens at its
 // size instead of growing again.
-const measured = new Map<string, number>();
-function remember(key: string, height: number): void {
+// A page found sized by its viewport stays capped when it opens again.
+interface Measured { height: number; viewportSized: boolean }
+const measured = new Map<string, Measured>();
+function remember(key: string, value: Measured): void {
   measured.delete(key);
-  measured.set(key, height);
+  measured.set(key, value);
   if (measured.size > 64) measured.delete(measured.keys().next().value!);
 }
 </script>
