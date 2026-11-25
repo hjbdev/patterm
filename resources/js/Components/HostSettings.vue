@@ -122,7 +122,7 @@ import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
 import { useBots } from '../Composables/useBots';
 import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave';
-import { isAssistantBot, saveBots, type Bot } from '../lib/bots';
+import { isAssistantBot, plainBot, saveBots, type Bot } from '../lib/bots';
 import { useTopicRefresh } from '../lib/serverQuery';
 import {
   cancelPairingCode, createPairingCode, linkProject, pairHost, readHostProjects, readHosts, renameHost, setShowAgents, unlinkProject, unpairHost,
@@ -248,10 +248,6 @@ function linkSummary(peer: PeerHost): string {
   if (linked) return `${linked} linked ${linked === 1 ? 'repository' : 'repositories'}`;
   if (suggestions) return `Link matching repositories (${suggestions} suggested)`;
   return 'Link matching repositories';
-}
-
-function plainBot(bot: Bot): Bot {
-  return { ...bot, avatar: { ...bot.avatar, look: { ...bot.avatar.look } }, voice: { ...bot.voice }, purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind } };
 }
 
 function toggleLocalAssistant(enabled: boolean): void {

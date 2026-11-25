@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   processes, and presets and agent CLIs for the new agent to spawn. While the
   agent starts, its view is laid out as the agent's conversation will be, so
   nothing jumps when the agent opens.
+- Bots on Discord. Turn on Discord in a bot's settings, paste your Discord
+  application's bot token and your Discord user ID, and the bot answers your
+  @mentions and DMs. It reacts 👀 when it gets a message, replies briefly (300
+  characters, 350 at most) and pings you there when work you started from
+  Discord finishes. It ignores everyone else, and only replies through its
+  `discord_reply` tool, so the rest of its conversation stays in Patterm. The
+  token is kept in a file only you can read and is never shown again.
 
 ### Changed
 

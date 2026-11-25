@@ -25,6 +25,23 @@ export interface BotVoice {
   acknowledgements: BotVoiceAcknowledgements;
 }
 
+// Answers Discord mentions and DMs from the users listed. The bot token is
+// saved on its own with saveDiscordToken and never read back.
+export interface BotDiscord {
+  enabled: boolean;
+  allowedUserIds: string[];
+}
+
+export interface DiscordBotStatus {
+  bot_id: string;
+  enabled: boolean;
+  token_saved: boolean;
+  state: 'off' | 'connecting' | 'connected' | 'error';
+  reason?: string;
+  user?: { id: string; username: string };
+  error?: string;
+}
+
 export interface Bot {
   id: string;
   name: string;
@@ -44,6 +61,8 @@ export interface Bot {
   digests: boolean;
   focus: boolean;
   requests: boolean;
+  // Missing from paired hosts on an older version.
+  discord?: BotDiscord;
   // A paired host's bot: its ID is qualified with the host's name, such as
   // `workstation:assistant`, and it is set up on that host.
   host?: string;
@@ -58,6 +77,18 @@ export function readBots(host?: string | null): Promise<BotSettings & { states: 
   return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] });
 }
 
+// Electron IPC can't clone Vue's reactive proxies, so bots are copied out as
+// plain data before saving.
+export function plainBot(bot: Bot): Bot {
+  return {
+    ...bot,
+    avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
+    voice: { ...bot.voice },
+    ...(bot.discord ? { discord: { enabled: bot.discord.enabled, allowedUserIds: [...bot.discord.allowedUserIds] } } : {}),
+    purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind }
+  };
+}
+
 export function isAssistantBot(bot: Pick<Bot, 'id'> | null | undefined): boolean {
   return bot?.id === ASSISTANT_BOT_ID;
 }
@@ -66,6 +97,22 @@ export async function saveBots(settings: BotSettings, host?: string | null): Pro
   const saved = await window.patterm.call('settings_bots_update', settings, host ?? undefined) as BotSettings;
   if (!host) topicChanged('settings');
   return saved;
+}
+
+export async function discordStatus(botId: string): Promise<DiscordBotStatus> {
+  return await window.patterm.call('bot_discord_status', { bot_id: botId }) as DiscordBotStatus;
+}
+
+// Saves a bot's Discord bot token, or removes it with null.
+export async function saveDiscordToken(botId: string, token: string | null): Promise<DiscordBotStatus> {
+  return await window.patterm.call('bot_discord_token_set', { bot_id: botId, token }) as DiscordBotStatus;
+}
+
+// Discord user IDs typed into one field, split on commas and spaces.
+export function parseDiscordIds(text: string): { ids: string[] } | { error: string } {
+  const ids = [...new Set(text.split(/[\s,]+/).map((id) => id.trim()).filter(Boolean))];
+  const invalid = ids.find((id) => !/^\d{15,22}$/.test(id));
+  return invalid ? { error: `'${invalid.slice(0, 40)}' isn't a Discord user ID. Turn on Developer Mode in Discord, then right-click your name and choose Copy User ID.` } : { ids };
 }
 
 // Starts a bot that isn't running, on a new conversation when `fresh`.
@@ -84,7 +131,8 @@ export async function botProcess(botId: string): Promise<string | null> {
 // apply to its conversation once it resumes.
 export function restartNeed(before: Bot, after: Bot): 'harness' | 'settings' | null {
   if (before.harness !== after.harness) return 'harness';
-  const changed = before.model !== after.model || before.reasoning !== after.reasoning || before.serviceTier !== after.serviceTier || before.instructions !== after.instructions;
+  const changed = before.model !== after.model || before.reasoning !== after.reasoning || before.serviceTier !== after.serviceTier || before.instructions !== after.instructions
+    || Boolean(before.discord?.enabled) !== Boolean(after.discord?.enabled);
   return changed ? 'settings' : null;
 }
 

@@ -13,6 +13,8 @@ import { HarnessSignInService } from './Services/HarnessSignInService';
 import { StatusLabelActions } from './Actions/StatusLabelActions';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
+import { DiscordService } from './Services/Discord/DiscordService';
+import { DiscordTokenStore } from './Services/Discord/DiscordTokenStore';
 import { AgentAdapterRegistry } from './Agents/AgentAdapterRegistry';
 import { serializeAgentCapabilities } from './Agents/AgentProtocol';
 import type { AgentHistoryProvider } from './Services/AgentHistory/AgentHistoryTypes';
@@ -762,6 +764,11 @@ async function createApplicationResources(
   defer(() => botRelay.dispose());
   botRelay.start();
   events.on('notifications:changed', (change: NotificationChange) => botRelay.handleNotification(change));
+  // Bots with Discord on answer mentions and DMs there. Connections open
+  // once the MCP socket is up, so a message can start a bot that's down.
+  const discord = new DiscordService(database, settings, new DiscordTokenStore(options.appDataPath), bots, integrated,
+    { log: (event, data) => debugLog.write('discord', event, data) });
+  defer(() => discord.dispose());
   const processLauncher = new ProcessLauncher({
     fence: launchFence,
     database,
@@ -945,7 +952,8 @@ async function createApplicationResources(
     routines,
     assistantMemory,
     launchingIdentities,
-    crossHost
+    crossHost,
+    discord
   });
   registerAutoSummaryControl(mcp, autoSummaryActions);
   registerSemanticSearchTools(mcp, semanticSearchActions);
@@ -972,7 +980,7 @@ async function createApplicationResources(
     }),
     update: new UpdateOnboardingAction(settings)
   });
-  registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data), () => remote.remoteBots());
+  registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data), () => remote.remoteBots(), () => discord.reconcile());
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';
   const updates = new UpdateService({
@@ -1059,6 +1067,7 @@ async function createApplicationResources(
   // resumed. Their launches need the MCP socket. Started before timers
   // activate, so it holds the bots' timers until their new sessions adopt them.
   void bots.ensureAll();
+  discord.reconcile();
   timers.activate();
   routines.activate();
   projectSnoozes.activate();

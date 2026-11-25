@@ -111,6 +111,27 @@
                 <Switch id="bot-requests" v-model="editor.requests" />
                 <span class="text-xs text-muted-foreground">Lets it reject permission requests and answer questions waiting for you in its projects, and approve one-time reads of ordinary workspace and skill files. You're still notified.</span>
               </div>
+              <template v-if="!host">
+                <label class="text-xs text-muted-foreground" for="bot-discord">Discord</label>
+                <div class="flex items-center gap-2">
+                  <Switch id="bot-discord" v-model="editor.discord.enabled" />
+                  <span class="text-xs text-muted-foreground">Answers your mentions and DMs on Discord with short replies, and pings you there when work you started finishes.</span>
+                </div>
+                <template v-if="editor.discord.enabled">
+                  <label class="text-xs text-muted-foreground" for="bot-discord-token">Bot token</label>
+                  <div class="flex items-center gap-2">
+                    <Input id="bot-discord-token" v-model="editor.discord.token" type="password" class="h-8 text-xs" :placeholder="editor.discord.status?.token_saved ? 'Saved. Paste a new one to replace it' : 'From your Discord application\'s Bot page'" autocomplete="off" spellcheck="false" />
+                    <Button v-if="editor.discord.status?.token_saved" type="button" size="sm" variant="ghost" class="h-7 shrink-0 px-2 text-destructive hover:text-destructive" :disabled="saving" @click="removeDiscordToken">Remove</Button>
+                  </div>
+                  <label class="text-xs text-muted-foreground" for="bot-discord-users">Your user ID</label>
+                  <Input id="bot-discord-users" v-model="editor.discord.ids" class="h-8 text-xs" placeholder="123456789012345678" autocomplete="off" spellcheck="false" />
+                  <span />
+                  <p class="-mt-1 text-xs text-muted-foreground">
+                    Create an application in the Discord Developer Portal, add a bot, and invite it to your server with Send Messages, Add Reactions and Read Message History. It ignores everyone except the user IDs here; separate several with commas.
+                    <span v-if="editor.discord.status?.enabled" :class="cn('block pt-1', discordStatusTone(editor.discord.status))">{{ discordStatusText(editor.discord.status) }}</span>
+                  </p>
+                </template>
+              </template>
               <label class="text-xs text-muted-foreground" for="bot-voice">Voice</label>
               <div class="flex items-center gap-2">
                 <Switch id="bot-voice" v-model="editor.voice.enabled" />
@@ -178,7 +199,7 @@ import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { botPicture } from '../lib/botPicture';
-import { botProcess, isAssistantBot, readBots, restartBotFromSettings, restartNeed, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotSettings, type BotVoice } from '../lib/bots';
+import { botProcess, discordStatus, isAssistantBot, parseDiscordIds, plainBot, readBots, restartBotFromSettings, restartNeed, saveBots, saveDiscordToken, type Bot, type BotAvatar as Avatar, type BotPurview, type BotSettings, type BotVoice, type DiscordBotStatus } from '../lib/bots';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { facePalette, randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
@@ -220,6 +241,9 @@ interface EditorState {
   digests: boolean;
   focus: boolean;
   requests: boolean;
+  // ids: the allowed user IDs as typed. token: a new token to save; blank
+  // keeps the saved one.
+  discord: { enabled: boolean; ids: string; token: string; status: DiscordBotStatus | null };
 }
 
 const AVATAR_KINDS = [
@@ -395,7 +419,8 @@ function addBot(): void {
   editorError.value = '';
   editor.value = {
     id: `bot_${randomId()}`, isNew: true, name: '', fields: newBotFields(), avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '',
-    enabled: true, memory: true, memoryBudgetTokens: 4000, voice: { enabled: false, voice: null, profile: 'codex', acknowledgements: 'default' }, digests: false, focus: false, requests: false
+    enabled: true, memory: true, memoryBudgetTokens: 4000, voice: { enabled: false, voice: null, profile: 'codex', acknowledgements: 'default' }, digests: false, focus: false, requests: false,
+    discord: { enabled: false, ids: '', token: '', status: null }
   };
   editorOpen.value = true;
 }
@@ -408,9 +433,52 @@ function editBot(bot: Bot): void {
     avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
     purviewKind: bot.purview.kind, projectIds: bot.purview.kind === 'projects' ? [...bot.purview.projectIds] : [],
     instructions: bot.instructions, enabled: bot.enabled, memory: bot.memory, memoryBudgetTokens: bot.memoryBudgetTokens,
-    voice: { ...bot.voice }, digests: bot.digests, focus: bot.focus, requests: bot.requests
+    voice: { ...bot.voice }, digests: bot.digests, focus: bot.focus, requests: bot.requests,
+    discord: { enabled: bot.discord?.enabled ?? false, ids: (bot.discord?.allowedUserIds ?? []).join(', '), token: '', status: null }
   };
   editorOpen.value = true;
+  void refreshDiscordStatus();
+}
+
+// The editor shows whether the bot is connected, checking again while it
+// connects.
+let discordTimer: ReturnType<typeof setTimeout> | undefined;
+async function refreshDiscordStatus(): Promise<void> {
+  clearTimeout(discordTimer);
+  const current = editor.value;
+  if (host || !current || current.isNew || !editorOpen.value) return;
+  try {
+    const status = await discordStatus(current.id);
+    if (editor.value !== current) return;
+    current.discord.status = status;
+    if (status.state === 'connecting' || (status.state === 'error' && status.error?.endsWith('retrying'))) discordTimer = setTimeout(() => { void refreshDiscordStatus(); }, 2000);
+  } catch {
+    // An older server without Discord: leave the status out.
+  }
+}
+watch(editorOpen, (open) => { if (!open) clearTimeout(discordTimer); });
+onBeforeUnmount(() => clearTimeout(discordTimer));
+
+function discordStatusText(status: DiscordBotStatus): string {
+  if (status.state === 'connected') return `Connected as ${status.user?.username ?? 'the bot'}.`;
+  if (status.state === 'connecting') return 'Connecting…';
+  if (status.state === 'error') return status.error ?? 'Couldn\'t connect.';
+  return status.reason ? `${status.reason}.` : 'Not connected.';
+}
+
+function discordStatusTone(status: DiscordBotStatus): string {
+  return status.state === 'error' ? 'text-destructive' : status.state === 'connected' ? 'text-foreground' : '';
+}
+
+async function removeDiscordToken(): Promise<void> {
+  const current = editor.value;
+  if (!current || !window.confirm('Remove the saved Discord bot token? The bot disconnects from Discord.')) return;
+  try {
+    current.discord.status = await saveDiscordToken(current.id, null);
+    current.discord.token = '';
+  } catch (caught) {
+    editorError.value = caught instanceof Error ? caught.message : String(caught);
+  }
 }
 
 function shuffleFace(): void {
@@ -436,16 +504,10 @@ async function choosePicture(event: Event): Promise<void> {
   }
 }
 
-// Electron IPC can't clone Vue's reactive proxies, so every bot is copied out
-// as plain data.
-function plain(bot: Bot): Bot {
-  return { ...bot, avatar: { ...bot.avatar, look: { ...bot.avatar.look } }, voice: { ...bot.voice }, purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind } };
-}
-
 async function persist(next: Bot[], name = activeSettings.value.userName): Promise<boolean> {
   saving.value = true;
   try {
-    const saved = await saveBots({ bots: next.map(plain), userName: name }, host);
+    const saved = await saveBots({ bots: next.map(plainBot), userName: name }, host);
     if (host) remoteSettings.value = saved;
     else localSettings.value = saved;
     error.value = '';
@@ -469,14 +531,37 @@ async function applyEditor(): Promise<void> {
   if (current.avatar.kind === 'emoji' && !(current.avatar.emoji && isSingleEmoji(current.avatar.emoji))) { editorError.value = 'Choose one emoji.'; return; }
   if (current.avatar.kind === 'picture' && !current.avatar.picture) { editorError.value = 'Choose a picture.'; return; }
   if (current.purviewKind === 'projects' && !current.projectIds.length) { editorError.value = 'Choose at least one project, or None.'; return; }
+  const before = bots.value.find((candidate) => candidate.id === current.id);
+  // A paired host's bot keeps its Discord settings, which are set up there.
+  let discord = before?.discord;
+  if (!host) {
+    const parsed = parseDiscordIds(current.discord.ids);
+    if ('error' in parsed) { editorError.value = parsed.error; return; }
+    if (current.discord.enabled && !parsed.ids.length) { editorError.value = 'Add your Discord user ID, so the bot knows whose messages to answer.'; return; }
+    discord = { enabled: current.discord.enabled, allowedUserIds: parsed.ids };
+  }
+  const token = current.discord.token.trim();
   const purview: BotPurview = editorIsAssistant.value ? { kind: 'all' } : current.purviewKind === 'projects' ? { kind: 'projects', projectIds: current.projectIds } : { kind: current.purviewKind };
   const bot: Bot = {
     id: current.id, name, harness: current.fields.harness, ...profile, avatar: current.avatar, purview, instructions: current.instructions.trim(),
-    enabled: current.enabled, memory: current.memory, memoryBudgetTokens: current.memoryBudgetTokens, voice: { ...current.voice }, digests: current.digests, focus: current.focus, requests: current.requests
+    enabled: current.enabled, memory: current.memory, memoryBudgetTokens: current.memoryBudgetTokens, voice: { ...current.voice }, digests: current.digests, focus: current.focus, requests: current.requests,
+    ...(discord ? { discord } : {})
   };
-  const before = bots.value.find((candidate) => candidate.id === bot.id);
   const next = current.isNew ? [...bots.value, bot] : bots.value.map((candidate) => candidate.id === bot.id ? bot : candidate);
   if (!await persist(next)) return;
+  // The token saves once the bot exists. A rejected token keeps the editor
+  // open with the reason; the rest is already saved.
+  if (!host && token) {
+    try {
+      current.discord.status = await saveDiscordToken(bot.id, token);
+      current.discord.token = '';
+      current.isNew = false;
+    } catch (caught) {
+      current.isNew = false;
+      editorError.value = caught instanceof Error ? caught.message : String(caught);
+      return;
+    }
+  }
   editorOpen.value = false;
   const need = before && bot.enabled ? restartNeed(before, bot) : null;
   const processId = need ? await botProcess(host ? `${host}:${bot.id}` : bot.id).catch(() => null) : null;
