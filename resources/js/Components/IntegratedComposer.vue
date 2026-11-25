@@ -133,13 +133,13 @@
           v-for="attachment in draft.attachments"
           :key="attachment.id"
           class="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-xs"
-          :class="attachment.status === 'error' ? 'border-destructive/50 text-destructive' : 'border-border/60 bg-muted/30'"
+          :class="attachment.status === 'error' || elsewhere(attachment) ? 'border-destructive/50 text-destructive' : 'border-border/60 bg-muted/30'"
         >
           <img v-if="attachment.image && attachment.previewUrl" :src="attachment.previewUrl" :alt="attachment.name" class="h-9 w-11 shrink-0 rounded object-cover">
           <div class="min-w-0">
             <p class="truncate">{{ attachment.name }}</p>
             <p class="truncate text-[10px] text-muted-foreground">
-              {{ attachment.status === 'uploading' ? 'Uploading…' : attachment.status === 'error' ? attachment.error : formatBytes(attachment.size) }}
+              {{ elsewhere(attachment) ? 'On another machine: choose its project or attach again' : attachment.status === 'uploading' ? 'Uploading…' : attachment.status === 'error' ? attachment.error : attachment.size ? formatBytes(attachment.size) : 'Ready' }}
             </p>
           </div>
           <button v-if="attachment.status === 'error'" type="button" class="shrink-0 text-muted-foreground hover:text-foreground" :aria-label="`Retry ${attachment.name}`" title="Retry upload" @click="retryUpload(processId, attachment.id)">↻</button>
@@ -257,6 +257,7 @@ import {
   removeAttachment,
   retryUpload,
   slashQuery,
+  type ComposerAttachment,
   type ComposerSendPayload
 } from '../lib/integratedComposer';
 import type { MentionAgent, MentionBot, MentionLauncher, MentionProcess } from '../lib/agentMentions';
@@ -303,6 +304,11 @@ const props = defineProps<{
   harness?: string | null | undefined;
   // An empty conversation's centred composer.
   hero?: boolean;
+  // Where attachments upload, when the message goes to another machine, as
+  // from the new conversation page. Files uploaded elsewhere must be removed.
+  uploadRoute?: string | undefined;
+  // Why sending is not possible yet, such as no project to start in.
+  blocked?: string | null | undefined;
 }>();
 const emit = defineEmits<{
   send: [request: ComposerSendPayload & { hash: string }];
@@ -391,10 +397,14 @@ const editorAttributes = computed<Record<string, string>>(() => ({
 const recoveryCommand = computed(() => Boolean(props.ended && props.restartable
   && (draft.value.text.trim() === '/restart' || /^\/resume(?:\s|$)/.test(draft.value.text.trim()))
   && !draft.value.chips.length && !draft.value.attachments.length));
+// Uploaded for a machine other than the one the message goes to.
+function elsewhere(attachment: ComposerAttachment): boolean {
+  return Boolean(props.uploadRoute) && (attachment.route ?? props.processId) !== props.uploadRoute;
+}
 const canSend = computed(() => goalMode.value ? props.controlling && !props.ended && !goalBusy.value && draft.value.text.trim().length > 0
-  : props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending
+  : props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending && !props.blocked
   && (draft.value.text.trim().length > 0 || draft.value.attachments.length > 0)
-  && !draft.value.attachments.some((attachment) => attachment.status !== 'ready'));
+  && !draft.value.attachments.some((attachment) => attachment.status !== 'ready' || elsewhere(attachment)));
 // While the agent works, Stop replaces Send if the draft is empty or delivery
 // already blocks another send.
 const stoppable = computed(() => !goalMode.value && Boolean(props.working) && props.controlling && !props.ended
@@ -403,7 +413,9 @@ const sendTitle = computed(() => {
   if (goalMode.value) return 'Set goal';
   if (props.pending) return 'Resolve the pending delivery before sending again';
   if (props.sending) return 'Sending';
-  if (draft.value.attachments.some((attachment) => attachment.status !== 'ready')) return 'Wait for attachments to finish uploading';
+  if (props.blocked) return props.blocked;
+  if (draft.value.attachments.some((attachment) => attachment.status === 'uploading')) return 'Wait for attachments to finish uploading';
+  if (draft.value.attachments.some((attachment) => attachment.status === 'error' || elsewhere(attachment))) return 'Remove failed attachments first';
   return 'Send message';
 });
 
@@ -664,7 +676,7 @@ function onPick(event: Event): void {
 // Files belong to the message draft, which goal mode sets aside.
 function attach(files: File[]): void {
   if (goalMode.value) emit('invalid', 'A goal is plain text; attach files to a message.');
-  else void addFiles(props.processId, files);
+  else void addFiles(props.processId, files, props.uploadRoute);
 }
 
 let blurTimer: ReturnType<typeof setTimeout> | null = null;
@@ -766,6 +778,8 @@ onMounted(() => {
   }
   void nextTick(focusOnArrival);
 });
+// The new conversation page hands the card's place to the agent it starts.
+defineExpose({ card, focus: focusOnArrival });
 onBeforeUnmount(() => {
   if (blurTimer !== null) {
     clearTimeout(blurTimer);

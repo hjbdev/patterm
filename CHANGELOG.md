@@ -24,7 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent CLI by hovering its logo, choose the model, thinking level, project and
   worktree, and write the first message. Sending starts the agent with that
   message and the composer slides down into place. Its paperclip button attaches
-  files to the first message, as do dropping and pasting them.
+  files to the first message, as do dropping and pasting them. It is the same
+  composer as an agent's, so `@` mentions the project's agents, bots and
+  processes, and presets and agent CLIs for the new agent to spawn. While the
+  agent starts, its view is laid out as the agent's conversation will be, so
+  nothing jumps when the agent opens.
 
 ### Changed
 

@@ -78,6 +78,7 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
     },
     defineProps: () => props,
     defineEmits: () => (event, payload) => emitted.push({ event, payload }),
+    defineExpose: () => {},
     window: windowMock,
     setTimeout: (callback, delay) => {
       const id = ++timerId;
