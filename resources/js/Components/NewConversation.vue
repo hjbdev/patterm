@@ -22,13 +22,13 @@
             v-for="attachment in attachments"
             :key="attachment.id"
             class="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-xs"
-            :class="attachment.status === 'error' ? 'border-destructive/50 text-destructive' : 'border-border/60 bg-muted/30'"
+            :class="attachment.status === 'error' || elsewhere(attachment) ? 'border-destructive/50 text-destructive' : 'border-border/60 bg-muted/30'"
           >
             <img v-if="attachment.image && attachment.previewUrl" :src="attachment.previewUrl" :alt="attachment.name" class="h-9 w-11 shrink-0 rounded object-cover">
             <div class="min-w-0">
               <p class="truncate">{{ attachment.name }}</p>
               <p class="truncate text-[10px] text-muted-foreground">
-                {{ attachment.status === 'uploading' ? 'Uploading…' : attachment.status === 'error' ? attachment.error : attachment.size ? formatBytes(attachment.size) : 'Ready' }}
+                {{ elsewhere(attachment) ? 'On another machine: choose its project or attach again' : attachment.status === 'uploading' ? 'Uploading…' : attachment.status === 'error' ? attachment.error : attachment.size ? formatBytes(attachment.size) : 'Ready' }}
               </p>
             </div>
             <button v-if="attachment.status === 'error'" type="button" class="shrink-0 text-muted-foreground hover:text-foreground" :aria-label="`Retry ${attachment.name}`" title="Retry upload" @click="retryUpload(draftKey, attachment.id)">↻</button>
@@ -130,7 +130,7 @@ import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { allAgents, allAgentsHiding, launchTargets } from '../lib/allAgents';
 import { handOffComposer } from '../lib/composerFlip';
-import { ATTACHMENT_ACCEPT, addFiles, draftFor, formatBytes, removeAttachment, rerouteAttachments, retryUpload, takeAttachments } from '../lib/integratedComposer';
+import { ATTACHMENT_ACCEPT, addFiles, draftFor, formatBytes, removeAttachment, rerouteAttachments, retryUpload, takeAttachments, type ComposerAttachment } from '../lib/integratedComposer';
 import { harnessLabel, launchableHarnesses } from '../lib/harnesses';
 import { NEW_CONVERSATION_DRAFT, lastNewConversationHarness, newConversationDraft, newConversationRoute, rememberNewConversationHarness } from '../lib/newConversation';
 import { emptyModelCatalog, modelsFor, type ModelCatalog, type ProfileHarness } from '../lib/profileFields';
@@ -315,7 +315,11 @@ function chooseTarget(id: string): void {
 }
 
 const uploading = computed(() => attachments.value.some((attachment) => attachment.status === 'uploading'));
-const failedUpload = computed(() => attachments.value.some((attachment) => attachment.status === 'error' || (attachment.route ?? draftKey) !== route.value));
+// Uploaded for a machine other than the one the agent would start on.
+function elsewhere(attachment: ComposerAttachment): boolean {
+  return (attachment.route ?? draftKey) !== route.value;
+}
+const failedUpload = computed(() => attachments.value.some((attachment) => attachment.status === 'error' || elsewhere(attachment)));
 const canStart = computed(() => Boolean(harness.value && target.value && newConversationDraft.value.trim()) && !uploading.value && !failedUpload.value);
 const startTitle = computed(() => {
   if (uploading.value) return 'Wait for attachments to finish uploading';

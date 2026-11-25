@@ -423,20 +423,15 @@ export function removeAttachment(processId: string, attachmentId: string): void 
 
 // Uploads a draft's files again for another machine, such as when the new
 // conversation page's launch target moves to another host. A file whose
-// original is gone must be attached again.
+// original is gone keeps its upload, which works again on its own machine.
 export function rerouteAttachments(key: string, route: string): void {
   for (const attachment of draftFor(key).attachments) {
-    if ((attachment.route ?? key) === route) continue;
+    if ((attachment.route ?? key) === route || !files.has(attachment.id)) continue;
     attachment.route = route;
     attachment.serverPath = undefined;
-    if (files.has(attachment.id)) {
-      attachment.status = 'uploading';
-      attachment.error = undefined;
-      void uploadAttachment(key, attachment.id);
-    } else {
-      attachment.status = 'error';
-      attachment.error = 'Attach this file again for this machine';
-    }
+    attachment.status = 'uploading';
+    attachment.error = undefined;
+    void uploadAttachment(key, attachment.id);
   }
 }
 
