@@ -130,9 +130,9 @@ import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { allAgents, allAgentsHiding, launchTargets } from '../lib/allAgents';
 import { handOffComposer } from '../lib/composerFlip';
-import { ATTACHMENT_ACCEPT, addFiles, draftFor, formatBytes, moveAttachments, removeAttachment, retryUpload, takeAttachments } from '../lib/integratedComposer';
+import { ATTACHMENT_ACCEPT, addFiles, draftFor, formatBytes, removeAttachment, rerouteAttachments, retryUpload, takeAttachments } from '../lib/integratedComposer';
 import { harnessLabel, launchableHarnesses } from '../lib/harnesses';
-import { lastNewConversationHarness, newConversationDraft, rememberNewConversationHarness } from '../lib/newConversation';
+import { NEW_CONVERSATION_DRAFT, lastNewConversationHarness, newConversationDraft, newConversationRoute, rememberNewConversationHarness } from '../lib/newConversation';
 import { emptyModelCatalog, modelsFor, type ModelCatalog, type ProfileHarness } from '../lib/profileFields';
 import { profileName, type ProfileSettings } from '../lib/profiles';
 import { harnessModels, harnessPresets } from '../lib/serverQuery';
@@ -167,14 +167,13 @@ watch([targets, () => props.projectId], ([, projectId], previous) => {
 }, { immediate: true });
 const target = computed(() => targets.value.find((option) => option.targetProjectId === targetProjectId.value) ?? null);
 
-// Attachments wait in a draft keyed by the target's project ID, which sends
-// a paired host's uploads to that host. They follow the target when it changes.
-const draftKey = computed(() => targetProjectId.value);
-const attachments = computed(() => draftFor(draftKey.value).attachments);
-watch(targetProjectId, (next, previous) => {
-  const hostOf = (id: string) => targets.value.find((option) => option.targetProjectId === id)?.host ?? null;
-  if (previous && next !== previous) moveAttachments(previous, next, hostOf(previous) === hostOf(next));
-});
+// Attachments stay with the page whichever project is chosen. When the agent
+// would start on another machine, as after choosing a paired host's project,
+// returning to the page, or a host going offline, they upload again there.
+const draftKey = NEW_CONVERSATION_DRAFT;
+const route = computed(() => newConversationRoute(target.value?.host));
+const attachments = computed(() => draftFor(draftKey).attachments);
+watch(route, (next) => rerouteAttachments(draftKey, next), { immediate: true });
 
 // Another host lists its own CLIs, profiles, and model catalog.
 const hostHarnesses = ref<Record<string, HarnessInstallationRecord[]>>({});
@@ -316,7 +315,7 @@ function chooseTarget(id: string): void {
 }
 
 const uploading = computed(() => attachments.value.some((attachment) => attachment.status === 'uploading'));
-const failedUpload = computed(() => attachments.value.some((attachment) => attachment.status === 'error'));
+const failedUpload = computed(() => attachments.value.some((attachment) => attachment.status === 'error' || (attachment.route ?? draftKey) !== route.value));
 const canStart = computed(() => Boolean(harness.value && target.value && newConversationDraft.value.trim()) && !uploading.value && !failedUpload.value);
 const startTitle = computed(() => {
   if (uploading.value) return 'Wait for attachments to finish uploading';
@@ -334,7 +333,7 @@ function start(): void {
   if (card.value) handOffComposer(card.value);
   rememberNewConversationHarness(cli);
   newConversationDraft.value = '';
-  const files = takeAttachments(draftKey.value);
+  const files = takeAttachments(draftKey);
   launchHarness({
     harness: cli,
     projectId: chosen.projectId,
@@ -357,7 +356,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 function attach(files: File[]): void {
-  void addFiles(draftKey.value, files);
+  void addFiles(draftKey, files, route.value);
 }
 
 function onPick(event: Event): void {

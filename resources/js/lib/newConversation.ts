@@ -4,6 +4,14 @@ import { ref } from 'vue';
 // tabs, and a launch that fails hands its message back here.
 export const newConversationDraft = ref('');
 
+// Its attachments wait in one composer draft. Each upload goes to the machine
+// the agent will start on: a paired host's route carries its name, which the
+// upload endpoint reads to store the file there.
+export const NEW_CONVERSATION_DRAFT = 'new-conversation';
+export function newConversationRoute(host: string | null | undefined): string {
+  return host ? `${host}:${NEW_CONVERSATION_DRAFT}` : NEW_CONVERSATION_DRAFT;
+}
+
 const HARNESS_KEY = 'patterm.newConversation.harness';
 
 // The agent CLI the page last started, so it opens on that one again.

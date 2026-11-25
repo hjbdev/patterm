@@ -200,7 +200,7 @@ test('new conversation launches pass profile, overrides, and worktree for both l
   const worktreeId = { value: null };
   const start = new Function('target', 'harness', 'newConversationDraft', 'profile', 'model', 'reasoning', 'worktreeId', 'card', 'handOffComposer', 'rememberNewConversationHarness', 'launchHarness', 'canStart', 'draftKey', 'takeAttachments', `${js};return start;`)(
     target, harness, newConversationDraft, profile, model, reasoning, worktreeId, { value: null }, () => {}, () => {}, input => calls.push(input),
-    { value: true }, { value: 'p1' }, () => []
+    { value: true }, 'new-conversation', () => []
   );
 
   // Local launch using its chosen profile.

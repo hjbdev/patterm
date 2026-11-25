@@ -65,7 +65,7 @@ import HostBadge from '../Components/HostBadge.vue';
 import ShimmerText from '../Components/ShimmerText.vue';
 import { Bubble, BubbleContent } from '../Components/ui/bubble';
 import { flipComposer, handOffRunningComposer, takeComposerHandoff } from '../lib/composerFlip';
-import { newConversationDraft } from '../lib/newConversation';
+import { NEW_CONVERSATION_DRAFT, newConversationDraft, newConversationRoute } from '../lib/newConversation';
 import { restoreAttachments } from '../lib/integratedComposer';
 import { Button } from '../Components/ui/button';
 
@@ -86,7 +86,7 @@ function dismiss(): void {
   // Put the prompt back, ahead of anything written since.
   const prompt = current.input.initialPrompt, draft = newConversationDraft.value.trim();
   if (prompt) newConversationDraft.value = draft ? `${prompt}\n\n${draft}` : prompt;
-  if (current.input.initialAttachments?.length) restoreAttachments(current.input.targetProjectId, current.input.initialAttachments);
+  if (current.input.initialAttachments?.length) restoreAttachments(NEW_CONVERSATION_DRAFT, current.input.initialAttachments, newConversationRoute(current.input.host));
   void router.replace({ name: 'project', params: { projectId: current.input.projectId } });
 }
 
