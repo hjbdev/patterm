@@ -45,7 +45,7 @@
       </div>
       <PinnedZone v-if="panels.available.value && selectedAgent && activeProject" ref="zone" :panels="panels">
         <template #panel="{ kind }">
-          <PinnedPanel :kind="kind" :project-id="activeProject.project.id" :session="selectedAgent" :active-worktree-id="diffWorktree?.id ?? null" :browser="panels.browserPeek.value" :image="panels.imagePeek.value" @peek="openPeek" @image="panels.imagePeek.value = $event" @open-worktree="openWorktree" />
+          <PinnedPanel :kind="kind" :project-id="activeProject.project.id" :session="selectedAgent" :active-worktree-id="diffWorktree?.id ?? null" :browser="panels.browserPeek.value" :image="panels.imagePeek.value" @peek="openPeek" @image="panels.imagePeek.value = $event" @browser-opened="panels.browserPeek.value = { ...panels.browserPeek.value, url: undefined }" @open-worktree="openWorktree" />
         </template>
       </PinnedZone>
     </div>

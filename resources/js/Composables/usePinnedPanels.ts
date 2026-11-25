@@ -17,17 +17,22 @@ const COLUMN_WIDTH = 320;
 const STEP = 40;
 
 interface Saved { columns: Column[]; width: number; at: number }
-let saved: Record<string, Saved> | null = null;
+// Layouts are read from storage when they're needed and merged into it when
+// written, so windows open side by side keep each other's. This window's
+// changes wait briefly before they're written.
+const pending = new Map<string, Saved | null>();
+let pendingWidth: number | null = null;
 let writeTimer: ReturnType<typeof setTimeout> | undefined;
-function savedLayouts(): Record<string, Saved> {
-  if (saved) return saved;
+function storedLayouts(): Record<string, Saved> {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
-    saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, Saved> : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, Saved> : {};
   } catch {
-    saved = {};
+    return {};
   }
-  return saved;
+}
+function savedLayout(sessionId: string): Saved | undefined {
+  return pending.has(sessionId) ? pending.get(sessionId) ?? undefined : storedLayouts()[sessionId];
 }
 function lastWidth(): number {
   try {
@@ -38,18 +43,24 @@ function lastWidth(): number {
   }
 }
 function save(sessionId: string, columns: Column[], width: number): void {
-  const all = savedLayouts();
   const kept = restoreColumns(columns);
-  if (kept.length) all[sessionId] = { columns: kept, width: Math.round(width), at: Date.now() };
-  else delete all[sessionId];
-  const ids = Object.keys(all);
-  if (ids.length > MAX_SAVED) ids.sort((a, b) => all[a]!.at - all[b]!.at).slice(0, ids.length - MAX_SAVED).forEach((id) => delete all[id]);
+  pending.set(sessionId, kept.length ? { columns: kept, width: Math.round(width), at: Date.now() } : null);
+  if (kept.length) pendingWidth = Math.round(width);
   clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
+    const all = storedLayouts();
+    for (const [id, layout] of pending) {
+      if (layout) all[id] = layout;
+      else delete all[id];
+    }
+    const ids = Object.keys(all);
+    if (ids.length > MAX_SAVED) ids.sort((a, b) => all[a]!.at - all[b]!.at).slice(0, ids.length - MAX_SAVED).forEach((id) => delete all[id]);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-      if (kept.length) localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
+      if (pendingWidth !== null) localStorage.setItem(WIDTH_KEY, String(pendingWidth));
     } catch { /* Pins still hold for this window. */ }
+    pending.clear();
+    pendingWidth = null;
   }, 250);
 }
 
@@ -132,7 +143,7 @@ export function usePinnedPanels(options: { sessionId: () => string | null; enabl
   watch(options.sessionId, (sessionId) => {
     current = null;
     epoch.value++;
-    const stored = sessionId ? savedLayouts()[sessionId] : undefined;
+    const stored = sessionId ? savedLayout(sessionId) : undefined;
     state.value = restoreColumns(stored?.columns);
     preferredWidth.value = stored?.width && stored.width >= ZONE_MIN ? stored.width : lastWidth();
     current = sessionId;
@@ -144,9 +155,10 @@ export function usePinnedPanels(options: { sessionId: () => string | null; enabl
   }, { immediate: true });
 
   // A new column makes room for itself, while the conversation keeps its share.
+  // Restoring an agent's layout, while `current` is unset, keeps its width.
   watch(() => state.value.length, (count, before) => {
-    if (count > (before ?? 0) && room.value) width.value = Math.max(preferredWidth.value, clampWidth(COLUMN_WIDTH * count));
-  });
+    if (current && count > (before ?? 0) && room.value) width.value = Math.max(preferredWidth.value, clampWidth(COLUMN_WIDTH * count));
+  }, { flush: 'sync' });
 
   // Focus a key moved stays put until the pointer itself moves, even as
   // tiles move under it, which would otherwise hand focus to what's below.
@@ -259,6 +271,7 @@ export function usePinnedPanels(options: { sessionId: () => string | null; enabl
   // Alt+G: a group gives up its tab as a tile below; a lone tile joins its neighbour.
   function toggleGroup(tile: Tile): void {
     const at = find(state.value, tile.id)!;
+    maximised.value = null;
     if (tile.tabs.length > 1) {
       const popped = tileOf(tile.active);
       columns.value = place(removeTab(state.value, tile.id, tile.active), { type: 'insert', columnId: at.column.id, before: at.column.tiles[at.ti + 1]?.id ?? null }, popped);

@@ -44,10 +44,12 @@ import { Button } from '../ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { browserControl, frameBytes, keyEvents, modifierBits, nextFrame, useBrowserState } from '../../lib/browser';
 
-// `url` opens in the browser when the peek opens, such as a server's page.
-// `embedded` leaves closing to what holds it, such as a pinned tile.
+// `url` opens in the browser when the peek opens, such as a server's page,
+// and `opened` says it has gone, so showing the peek again later leaves the
+// browser where it is. `embedded` leaves closing to what holds it, such as a
+// pinned tile.
 const props = defineProps<{ processId: string; url?: string | undefined; embedded?: boolean | undefined }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; opened: [] }>();
 const ACTION = 'h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground';
 
 const state = useBrowserState(() => props.processId);
@@ -229,10 +231,15 @@ function paste(event: ClipboardEvent): void {
 }
 
 watch(() => props.processId, () => { epoch++; void stream(); });
-watch(() => props.url, (url) => { if (url) void send('browser_navigate', { url }); });
+function open(url: string | undefined): void {
+  if (!url) return;
+  void send('browser_navigate', { url });
+  emit('opened');
+}
+watch(() => props.url, open);
 onMounted(() => {
   void stream();
-  if (props.url) void send('browser_navigate', { url: props.url });
+  open(props.url);
 });
 onBeforeUnmount(() => {
   generation++;
