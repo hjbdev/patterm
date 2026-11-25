@@ -40,7 +40,7 @@ declare global {
       bootstrap(): Promise<unknown>;
       debugLog(event: unknown): void;
       help(tool: string): Promise<unknown>;
-      call(tool: string, args: unknown): Promise<unknown>;
+      call(tool: string, args: unknown, host?: string): Promise<unknown>;
       // The browser runtime starts at `initial`; the native dialog ignores it.
       pickDirectory(initial?: string): Promise<string | null>;
       pickFileOrDirectory(): Promise<string | null>;

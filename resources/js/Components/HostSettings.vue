@@ -1,5 +1,5 @@
 <template>
-  <SettingsPanel title="Hosts" description="Pair Patterm on another machine to see its agents here and let agents message each other across machines. Link a project on both hosts to share its agents.">
+  <SettingsPanel title="Hosts" description="Pair Patterm on another machine to see all of its projects and agents here. Optionally link matching repositories to combine them into one project and let agents message across machines.">
     <template #actions>
       <Button v-if="overview?.accepts_pairing && !code" type="button" size="sm" variant="outline" @click="showCode">Show pairing code</Button>
       <Button v-if="!pairing" type="button" size="sm" variant="outline" :disabled="!overview || Boolean(overview.pairing_blocked)" @click="pairing = true">Pair with a host</Button>
@@ -31,6 +31,10 @@
         <Input id="host-name" v-model="name" class="h-8 text-xs sm:w-44" autocomplete="off" spellcheck="false" title="Lowercase letters, digits, and hyphens" :disabled="!overview" @blur="saveName" @keydown.enter.prevent="saveName" />
       </SettingsRow>
 
+      <SettingsRow v-if="overview?.peers.length && localAssistant" label="Local assistant" description="Turn off to stop and hide this machine’s built-in assistant when you use another host’s instead." html-for="hosts-local-assistant" save-key="hosts.localAssistant" toggle>
+        <Switch id="hosts-local-assistant" :model-value="localAssistant.enabled" @update:model-value="toggleLocalAssistant(Boolean($event))" />
+      </SettingsRow>
+
       <p v-if="overview && !overview.peers.length && !pairing && !code" class="border-t border-white/[0.06] pt-5 text-xs text-muted-foreground">No paired hosts yet. Show a pairing code on one host and enter it on the other.</p>
 
       <section v-for="peer in overview?.peers ?? []" :key="peer.host_id" class="border-t border-white/[0.06] pt-5" :aria-label="peer.name">
@@ -52,42 +56,54 @@
         <p v-if="peer.link.error" class="mt-2 pl-7 text-xs text-warning">{{ peer.link.error }}</p>
         <p v-if="settingError(peer)" role="alert" class="mt-2 pl-7 text-xs text-destructive">{{ settingError(peer) }}</p>
 
-        <div class="mt-3 pl-5" :class="peer.show_agents ? '' : 'opacity-60'">
-          <div v-if="peer.projects.length || suggested[peer.host_id]?.length || linking?.host_id === peer.host_id" :class="ROW" class="py-1 text-[11px] text-muted-foreground" aria-hidden="true">
-            <span>On {{ overview?.self.name }}</span><span /><span>On {{ peer.name }}</span><span />
-          </div>
-          <ul :aria-label="`Projects linked with ${peer.name}`">
-            <li v-for="link in peer.projects" :key="link.project_id" :class="ROW" class="group text-xs">
-              <span class="truncate">{{ link.project_name }}</span>
-              <Link2 class="h-3 w-3 text-muted-foreground" aria-label="is linked with" />
-              <span class="truncate">{{ link.remote_project_name }}</span>
-              <button type="button" class="justify-self-end text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100" :aria-label="`Unlink ${link.project_name}`" @click="unlink(peer, link)">Unlink</button>
-            </li>
-            <template v-if="linking?.host_id !== peer.host_id">
-              <li v-for="suggestion in suggested[peer.host_id] ?? []" :key="suggestion.project_id" :class="ROW" class="text-xs text-muted-foreground" :title="`Both projects use the git remote ${suggestion.git_remote}`">
-                <span class="truncate">{{ suggestion.project_name }}</span>
-                <Link2 class="h-3 w-3 opacity-40" aria-label="could link with" />
-                <span class="truncate">{{ suggestion.remote_name }}</span>
-                <button type="button" class="justify-self-end text-foreground hover:underline disabled:opacity-50" :disabled="busy" :aria-label="`Link ${suggestion.project_name} with ${peer.name}`" @click="linkSuggestion(peer, suggestion)">Link</button>
+        <div class="mt-2.5 pl-6" :class="peer.show_agents ? '' : 'opacity-60'">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-md px-1 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            :aria-expanded="linksOpen(peer)"
+            @click="toggleLinks(peer)"
+          >
+            <ChevronRight class="h-3.5 w-3.5 shrink-0 transition-transform" :class="linksOpen(peer) && 'rotate-90'" aria-hidden="true" />
+            <span>{{ linkSummary(peer) }}</span>
+          </button>
+          <div v-if="linksOpen(peer)" class="mt-1.5">
+            <p class="mb-2 px-2 text-xs text-muted-foreground">Optional. Linking combines matching repositories into one project and lets agents message across machines.</p>
+            <div v-if="peer.projects.length || suggested[peer.host_id]?.length || linking?.host_id === peer.host_id" :class="ROW" class="py-1 text-[11px] text-muted-foreground" aria-hidden="true">
+              <span>On {{ overview?.self.name }}</span><span /><span>On {{ peer.name }}</span><span />
+            </div>
+            <ul :aria-label="`Projects linked with ${peer.name}`">
+              <li v-for="link in peer.projects" :key="link.project_id" :class="ROW" class="group text-xs">
+                <span class="truncate">{{ link.project_name }}</span>
+                <Link2 class="h-3 w-3 text-muted-foreground" aria-label="is linked with" />
+                <span class="truncate">{{ link.remote_project_name }}</span>
+                <button type="button" class="justify-self-end text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100" :aria-label="`Unlink ${link.project_name}`" @click="unlink(peer, link)">Unlink</button>
               </li>
-            </template>
-          </ul>
-          <form v-if="linking?.host_id === peer.host_id" class="mt-1 space-y-2" @submit.prevent="link(peer)">
-            <div :class="ROW" class="hover:bg-transparent">
-              <SettingsChoice v-model="linkLocal" :options="localOptions" aria-label="Project on this host" placeholder="Project here" class="h-8 w-full text-xs" />
-              <Link2 class="h-3 w-3 text-muted-foreground" aria-hidden="true" />
-              <SettingsChoice v-model="linkRemote" :options="remoteOptions" :aria-label="`Project on ${peer.name}`" :placeholder="`Project on ${peer.name}`" class="h-8 w-full text-xs" />
-              <span />
-            </div>
-            <p v-if="linking.suggestion" class="px-2 text-xs text-muted-foreground">Suggested from the git remote. Pick other projects to link a plain directory.</p>
-            <p v-if="linkError" role="alert" class="px-2 text-xs text-destructive">{{ linkError }}</p>
-            <div class="flex gap-2 px-2">
-              <Button type="submit" size="sm" :disabled="busy || !linkLocal || !linkRemote">{{ busy ? 'Linking…' : 'Link' }}</Button>
-              <Button type="button" size="sm" variant="ghost" :disabled="busy" @click="linking = null">Cancel</Button>
-            </div>
-          </form>
-          <Button v-else-if="peer.link.state === 'connected'" type="button" size="sm" variant="ghost" class="mt-1 h-7 px-2 text-xs text-muted-foreground" @click="startLinking(peer)">Link a project…</Button>
-          <p v-else-if="!peer.projects.length" class="px-2 text-xs text-muted-foreground">Connect to {{ peer.name }} to link projects.</p>
+              <template v-if="linking?.host_id !== peer.host_id">
+                <li v-for="suggestion in suggested[peer.host_id] ?? []" :key="suggestion.project_id" :class="ROW" class="text-xs text-muted-foreground" :title="`Both projects use the git remote ${suggestion.git_remote}`">
+                  <span class="truncate">{{ suggestion.project_name }}</span>
+                  <Link2 class="h-3 w-3 opacity-40" aria-label="could link with" />
+                  <span class="truncate">{{ suggestion.remote_name }}</span>
+                  <button type="button" class="justify-self-end text-foreground hover:underline disabled:opacity-50" :disabled="busy" :aria-label="`Link ${suggestion.project_name} with ${peer.name}`" @click="linkSuggestion(peer, suggestion)">Link</button>
+                </li>
+              </template>
+            </ul>
+            <form v-if="linking?.host_id === peer.host_id" class="mt-1 space-y-2" @submit.prevent="link(peer)">
+              <div :class="ROW" class="hover:bg-transparent">
+                <SettingsChoice v-model="linkLocal" :options="localOptions" aria-label="Project on this host" placeholder="Project here" class="h-8 w-full text-xs" />
+                <Link2 class="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                <SettingsChoice v-model="linkRemote" :options="remoteOptions" :aria-label="`Project on ${peer.name}`" :placeholder="`Project on ${peer.name}`" class="h-8 w-full text-xs" />
+                <span />
+              </div>
+              <p v-if="linking.suggestion" class="px-2 text-xs text-muted-foreground">Suggested from the git remote. Pick other projects to link a plain directory.</p>
+              <p v-if="linkError" role="alert" class="px-2 text-xs text-destructive">{{ linkError }}</p>
+              <div class="flex gap-2 px-2">
+                <Button type="submit" size="sm" :disabled="busy || !linkLocal || !linkRemote">{{ busy ? 'Linking…' : 'Link' }}</Button>
+                <Button type="button" size="sm" variant="ghost" :disabled="busy" @click="linking = null">Cancel</Button>
+              </div>
+            </form>
+            <Button v-else-if="peer.link.state === 'connected'" type="button" size="sm" variant="ghost" class="mt-1 h-7 px-2 text-xs text-muted-foreground" @click="startLinking(peer)">Link a project…</Button>
+            <p v-else-if="!peer.projects.length" class="px-2 text-xs text-muted-foreground">Connect to {{ peer.name }} to link projects.</p>
+          </div>
         </div>
       </section>
     </SettingsSection>
@@ -96,7 +112,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Link2, Server } from 'lucide-vue-next';
+import { ChevronRight, Link2, Server } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
@@ -104,7 +120,9 @@ import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useBots } from '../Composables/useBots';
 import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave';
+import { isAssistantBot, saveBots, type Bot } from '../lib/bots';
 import { useTopicRefresh } from '../lib/serverQuery';
 import {
   cancelPairingCode, createPairingCode, linkProject, pairHost, readHostProjects, readHosts, renameHost, setShowAgents, unlinkProject, unpairHost,
@@ -115,6 +133,9 @@ import {
 const ROW = 'grid grid-cols-[minmax(0,1fr)_0.75rem_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/40';
 
 const overview = ref<HostOverview | null>(null);
+const { settings: botSettings } = useBots();
+const localAssistant = computed(() => botSettings.value.bots.find((bot) => isAssistantBot(bot)) ?? null);
+const expandedLinks = ref<Record<string, boolean>>({});
 const name = ref('');
 const error = ref('');
 const pairing = ref(false);
@@ -208,6 +229,38 @@ function peerDetail(peer: PeerHost): string {
 function settingError(peer: PeerHost): string {
   const saved = settingSaveStatus(`hosts.peer.${peer.host_id}`);
   return saved?.state === 'error' ? saved.error : '';
+}
+
+function linksOpen(peer: PeerHost): boolean {
+  return Boolean(expandedLinks.value[peer.host_id] || linking.value?.host_id === peer.host_id);
+}
+
+function toggleLinks(peer: PeerHost): void {
+  const next = !linksOpen(peer);
+  expandedLinks.value = { ...expandedLinks.value, [peer.host_id]: next };
+  if (!next && linking.value?.host_id === peer.host_id) linking.value = null;
+}
+
+function linkSummary(peer: PeerHost): string {
+  const linked = peer.projects.length;
+  const suggestions = suggested.value[peer.host_id]?.length ?? 0;
+  if (linked && suggestions) return `${linked} linked ${linked === 1 ? 'repository' : 'repositories'} · ${suggestions} suggested`;
+  if (linked) return `${linked} linked ${linked === 1 ? 'repository' : 'repositories'}`;
+  if (suggestions) return `Link matching repositories (${suggestions} suggested)`;
+  return 'Link matching repositories';
+}
+
+function plainBot(bot: Bot): Bot {
+  return { ...bot, avatar: { ...bot.avatar, look: { ...bot.avatar.look } }, voice: { ...bot.voice }, purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind } };
+}
+
+function toggleLocalAssistant(enabled: boolean): void {
+  const current = localAssistant.value;
+  if (!current || current.enabled === enabled) return;
+  const next = botSettings.value.bots.map((bot) => bot.id === current.id ? { ...plainBot(bot), enabled } : plainBot(bot));
+  void autosave('hosts.localAssistant', async () => {
+    botSettings.value = await saveBots({ bots: next, userName: botSettings.value.userName });
+  });
 }
 
 function saveName(): void {

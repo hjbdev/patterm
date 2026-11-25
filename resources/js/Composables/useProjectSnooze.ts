@@ -10,9 +10,8 @@ export const projectSnoozeDialog = reactive({
   name: ''
 });
 
-// A paired host's projects are its own to snooze.
-export function canSnoozeProject(project: ProjectSummary): boolean {
-  return !project.host;
+export function canSnoozeProject(_project: ProjectSummary): boolean {
+  return true;
 }
 
 export function openProjectSnooze(project: ProjectSummary): void {

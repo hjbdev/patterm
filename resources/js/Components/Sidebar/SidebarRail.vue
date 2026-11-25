@@ -2,7 +2,16 @@
   <!-- The collapsed sidebar: one button per tab. Hovering one shows what it's doing. -->
   <div class="flex h-full min-h-0 w-12 flex-col items-center">
     <div class="flex shrink-0 flex-col items-center gap-0.5 py-0.5">
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" pointable />
+      <Button
+        variant="ghost"
+        size="icon"
+        :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')"
+        title="New conversation"
+        aria-label="New conversation"
+        @click="openNewConversation"
+      >
+        <Plus class="h-4 w-4" />
+      </Button>
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
       <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical compact />
@@ -131,10 +140,13 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { Folder, FolderOpen, FolderPlus, FolderX, PanelLeftOpen, Pencil } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { Folder, FolderOpen, FolderPlus, FolderX, PanelLeftOpen, Pencil, Plus } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import { hostLabel } from '../../lib/hosts';
+import { launchPointed } from '../../lib/launchPointer';
 import { cn } from '@/lib/utils';
+import { Button } from '../ui/button';
 import { countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, type RowActivity } from '../../lib/rowActivity';
 import { folderKey, layoutEntries, type StripTab, type TabFolder } from '../../lib/tabStrip';
 import { emptyFolderOwner, groupEntriesByProject } from '../../lib/allAgents';
@@ -145,7 +157,6 @@ import { dropSidebarRow } from './sidebarDrop';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';
 import AgentFamilyMenu from '../AgentFamilyMenu.vue';
-import LaunchAgentMenu from '../LaunchAgentMenu.vue';
 import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
 import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
@@ -162,7 +173,11 @@ import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { useSidebarMention } from './sidebarMention';
 
 const emit = defineEmits<{ expand: [] }>();
+const router = useRouter();
 const sidebar = useSidebar();
+function openNewConversation(): void {
+  if (sidebar.projectId.value) void router.push({ name: 'newConversation', params: { projectId: sidebar.projectId.value } });
+}
 const tabs = computed(() => sidebar.tabs.value);
 const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 

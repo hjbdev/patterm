@@ -14,7 +14,15 @@
             <span v-if="updateAvailable" class="absolute right-1.5 top-2.5 h-1.5 w-1.5 rounded-full bg-primary" aria-label="An update is available" />
           </RouterLink>
           <span class="flex-1" />
-          <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" pointable trigger-class="h-11 w-11 !rounded-full bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground [&_svg]:h-5 [&_svg]:w-5" />
+          <Button
+            size="icon"
+            :class="cn('h-11 w-11 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground [&_svg]:h-5 [&_svg]:w-5', launchPointed && 'launch-pulse')"
+            title="New conversation"
+            aria-label="New conversation"
+            @click="openNewConversation"
+          >
+            <Plus class="h-5 w-5" />
+          </Button>
         </div>
       </template>
     </SidebarList>
@@ -23,15 +31,22 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { RouterLink } from 'vue-router';
-import { Library } from 'lucide-vue-next';
-import LaunchAgentMenu from '../LaunchAgentMenu.vue';
+import { RouterLink, useRouter } from 'vue-router';
+import { Library, Plus } from 'lucide-vue-next';
+import { Button } from '../ui/button';
 import SidebarList from '../Sidebar/SidebarList.vue';
 import { useSidebar } from '../Sidebar/sidebarContext';
+import { launchPointed } from '../../lib/launchPointer';
 import { useUpdates } from '../../lib/updates';
+import { cn } from '../../lib/utils';
 
+const router = useRouter();
 const sidebar = useSidebar();
 const updates = useUpdates();
 // Settings waits in the Library, so an update marks it there.
 const updateAvailable = computed(() => updates.value?.status === 'available');
+
+function openNewConversation(): void {
+  if (sidebar.projectId.value) void router.push({ name: 'newConversation', params: { projectId: sidebar.projectId.value } });
+}
 </script>

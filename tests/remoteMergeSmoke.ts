@@ -169,9 +169,16 @@ async function sharedBots(): Promise<void> {
 
   assert.equal(service.target({ tool: 'bot_start', arguments: { bot_id: 'workstation:helper' } })?.name, 'workstation', 'starting its bot goes to its host');
   assert.equal(service.target({ tool: 'bot_start', arguments: { bot_id: 'assistant' } }), null, 'this host\'s bots stay here');
+  assert.equal(service.target({ tool: 'project_create', arguments: { path: '/srv/app' }, host: 'workstation' })?.name, 'workstation', 'explicit host routes tools without a prefixed ID');
+  assert.throws(() => service.target({ tool: 'project_create', arguments: { path: '/srv/app' }, host: 'unknown' }), /No paired host is called unknown/, 'unknown explicit host refuses to fall back locally');
   const relayed = await service.relay(peer, 'patterm:mcp:call', { tool: 'bot_state', arguments: { bot_id: 'workstation:helper' } }) as { bot_id: string; process_id: string };
   assert.deepEqual(requests.at(-1)?.params, { channel: 'patterm:mcp:call', args: { tool: 'bot_state', arguments: { bot_id: 'helper' } } });
   assert.deepEqual(relayed, { bot_id: 'workstation:helper', process_id: 'workstation:process_helper' });
+  await service.relay(peer, 'patterm:mcp:call', { tool: 'harness_presets', arguments: {}, host: 'workstation' });
+  assert.deepEqual(requests.at(-1)?.params, { channel: 'patterm:mcp:call', args: { tool: 'harness_presets', arguments: {} } }, 'explicit routing host is stripped before relaying to the peer');
+  const beforeCreateReads = requests.filter((item) => item.method === 'workbench.read').length;
+  await service.relay(peer, 'patterm:mcp:call', { tool: 'project_create', arguments: { path: '/srv/new' }, host: 'workstation' });
+  assert.equal(requests.filter((item) => item.method === 'workbench.read').length, beforeCreateReads + 1, 'creating a project on a peer refreshes its workbench before returning');
 
   peer.show_agents = false;
   assert.deepEqual(service.remoteBots(), [], 'a host whose agents are hidden lists no bots');

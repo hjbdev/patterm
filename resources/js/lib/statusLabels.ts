@@ -20,7 +20,8 @@ export interface StatusLabelSettings { labels: StatusLabel[] }
 
 export const STATUS_LABEL_LIMIT = 30;
 
-export function readStatusLabels(): Promise<StatusLabelSettings> {
+export function readStatusLabels(host?: string | null): Promise<StatusLabelSettings> {
+  if (host) return window.patterm.call('settings_status_labels_get', {}, host) as Promise<StatusLabelSettings>;
   return topicRead('settings', ['status_labels'], async () => await window.patterm.call('settings_status_labels_get', {}) as StatusLabelSettings);
 }
 

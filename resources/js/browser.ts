@@ -251,7 +251,7 @@ function createBrowserApi(): Window['patterm'] {
     bootstrap: () => rpc('patterm:bootstrap'),
     debugLog: (event) => { void rpc('patterm:debug:log', event).catch(() => {}); },
     help: (tool) => rpc('patterm:mcp:help', { tool }),
-    call: (tool, args) => rpc('patterm:mcp:call', { tool, arguments: args }),
+    call: (tool, args, host) => rpc('patterm:mcp:call', { tool, arguments: args, ...(host ? { host } : {}) }),
     integratedCall: (tool, args) => socketRequest('patterm:integrated:call', { tool, arguments: args }),
     pickDirectory: (initial) => pickServerDirectory(initial),
     pickFileOrDirectory: async () => window.prompt('File or directory path on the server'),

@@ -836,7 +836,7 @@ async function createApplicationResources(
     // change this host's settings or pairing.
     allowedTools: new Set([
       // Secrets are entered only on the agent's own host.
-      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && !tool.startsWith('settings_') && !tool.startsWith('secret_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
+      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && (!tool.startsWith('settings_') || tool === 'settings_status_labels_get') && !tool.startsWith('secret_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume',
       // Socket-only for browsers; the peer route checks control itself.

@@ -7,8 +7,8 @@
     </div>
   </main>
   <WorkbenchLayout v-else />
-  <DirectoryPickerDialog v-if="isBrowser" />
-  <QuitDialog v-else />
+  <DirectoryPickerDialog />
+  <QuitDialog v-if="!isBrowser" />
   <!-- Toasts sit above the bottom bar on phones. -->
   <Toaster position="bottom-right" rich-colors :offset="{ bottom: 16, right: 16 }" :mobile-offset="{ bottom: 56 }" />
 </template>

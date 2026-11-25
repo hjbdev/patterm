@@ -36,9 +36,8 @@ export const snoozeDialog = reactive({
   reminder: ''
 });
 
-// A paired host's agents are its own to snooze.
 export function canSnooze(session: SessionRecord): boolean {
-  return Boolean(session.processId && !session.host && !session.exitedAt);
+  return Boolean(session.processId && !session.exitedAt);
 }
 
 export function openSnooze(session: SessionRecord): void {

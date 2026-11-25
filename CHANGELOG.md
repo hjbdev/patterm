@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Paired-host experience and unified New conversation launch:
+  - Every `+` button (sidebar header, sidebar project headings, collapsed rail,
+    phone footer, and Projects page) now opens the New conversation page instead
+    of the old profile popover, which has been removed.
+  - New conversation supports profiles, models, thinking levels, and worktrees
+    on paired hosts as well as locally.
+  - Host badges drop the chain icon and stay hidden on rows, tabs, and headers
+    whose project or group heading already names the host.
+  - `Settings → Hosts` clarifies that pairing shows all of the other host's
+    projects automatically, moves optional repository linking behind a toggle,
+    and lets you suspend/hide the local assistant directly (alongside per-bot
+    on/off toggles in `Settings → Bots`).
+  - Paired-host projects and agents now support creating projects on a paired
+    host (with remote folder browsing), project menu actions (rename, logo,
+    snooze, remove), agent snooze, and status labels.
 - Antigravity agents get Patterm's tools through a gateway. Antigravity
   drops the largest MCP tools once all servers' declarations pass its size
   budget, which Patterm's catalogue nearly filled on its own. Its sessions now

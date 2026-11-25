@@ -60,7 +60,7 @@ import { Input } from './ui/input';
 import { focusElement } from '../Composables/useAutofocus';
 import { DRIVES_PATH, directoryPlaceholder, displayServerPath, splitDirectoryQuery, withTrailingSlash, type DirectoryListing } from '../lib/directoryPicker';
 
-const props = defineProps<{ initial?: string }>();
+const props = defineProps<{ initial?: string; host?: string | undefined }>();
 const emit = defineEmits<{ select: [path: string]; cancel: [] }>();
 
 const queryInput = ref<{ $el?: unknown } | null>(null);
@@ -98,7 +98,7 @@ async function load(directory: string, typed: string): Promise<void> {
   if (key === requested) return;
   requested = key;
   try {
-    const result = await window.patterm.call('fs_directories', { path: directory, filter: typed, show_hidden: typed.startsWith('.') }) as DirectoryListing;
+    const result = await window.patterm.call('fs_directories', { path: directory, filter: typed, show_hidden: typed.startsWith('.') }, props.host) as DirectoryListing;
     if (requested !== key) return;
     listing.value = result;
     loadedDirectory.value = directoryKey(directory, typed);

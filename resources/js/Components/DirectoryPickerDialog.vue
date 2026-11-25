@@ -4,9 +4,9 @@
     <DialogContent class="z-[60] sm:max-w-lg" overlay-class="z-[60]">
       <DialogHeader>
         <DialogTitle>Choose a folder</DialogTitle>
-        <DialogDescription>Folders on the server. Type to filter, Tab to complete.</DialogDescription>
+        <DialogDescription>{{ request?.host ? `Folders on ${request.host}. Type to filter, Tab to complete.` : 'Folders on the server. Type to filter, Tab to complete.' }}</DialogDescription>
       </DialogHeader>
-      <DirectoryBrowser v-if="request" :key="requestKey" :initial="request.initial" @select="finishDirectoryPicker" @cancel="finishDirectoryPicker(null)" />
+      <DirectoryBrowser v-if="request" :key="requestKey" :initial="request.initial" :host="request.host" @select="finishDirectoryPicker" @cancel="finishDirectoryPicker(null)" />
     </DialogContent>
   </Dialog>
 </template>

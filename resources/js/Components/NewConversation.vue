@@ -25,7 +25,11 @@
         </Button>
       </div>
       <div class="flex flex-wrap items-center justify-center gap-0.5 pt-3.5 text-muted-foreground">
-        <template v-if="!target?.host && harness">
+        <template v-if="harness">
+          <template v-if="profileSelector">
+            <IntegratedControlPicker :selector="profileSelector" :disabled="false" @select="chooseProfile" />
+            <span aria-hidden="true" class="text-xs opacity-50">·</span>
+          </template>
           <IntegratedControlPicker v-if="modelSelector" :selector="modelSelector" :disabled="false" @select="chooseModel" />
           <template v-if="reasoningSelector">
             <span aria-hidden="true" class="text-xs opacity-50">·</span>
@@ -51,7 +55,7 @@
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <template v-if="!target?.host && worktrees.length">
+        <template v-if="worktrees.length">
           <span aria-hidden="true" class="text-xs opacity-50">·</span>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
@@ -95,8 +99,8 @@ import { allAgents, allAgentsHiding, launchTargets } from '../lib/allAgents';
 import { handOffComposer } from '../lib/composerFlip';
 import { harnessLabel, launchableHarnesses } from '../lib/harnesses';
 import { lastNewConversationHarness, newConversationDraft, rememberNewConversationHarness } from '../lib/newConversation';
-import { emptyModelCatalog, modelDisplayName, modelsFor, type ModelCatalog, type ProfileHarness } from '../lib/profileFields';
-import type { ProfileSettings } from '../lib/profiles';
+import { emptyModelCatalog, modelsFor, type ModelCatalog, type ProfileHarness } from '../lib/profileFields';
+import { profileName, type ProfileSettings } from '../lib/profiles';
 import { harnessModels, harnessPresets } from '../lib/serverQuery';
 import { touchScreen } from '../lib/touch';
 import { defaultReasoningLevelsFor } from '../../../app/Agents/AgentCapabilitiesDto';
@@ -127,16 +131,34 @@ watch([targets, () => props.projectId], ([, projectId], previous) => {
 }, { immediate: true });
 const target = computed(() => targets.value.find((option) => option.targetProjectId === targetProjectId.value) ?? null);
 
-// Another host lists its own CLIs.
+// Another host lists its own CLIs, profiles, and model catalog.
 const hostHarnesses = ref<Record<string, HarnessInstallationRecord[]>>({});
+const hostPresets = ref<Record<string, ProfileSettings>>({});
+const hostCatalogs = ref<Record<string, ModelCatalog>>({});
 watch(() => target.value?.host, async (host) => {
   const projectId = target.value?.targetProjectId;
-  if (!host || !projectId || hostHarnesses.value[host]) return;
-  try {
-    const result = await window.patterm.call('harness_list', { project_id: projectId }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
-    hostHarnesses.value = { ...hostHarnesses.value, [host]: launchableHarnesses(Array.isArray(result) ? result : result.harnesses ?? []) };
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : `Could not list ${host}’s agents`);
+  if (!host || !projectId) return;
+  if (!hostHarnesses.value[host]) {
+    try {
+      const result = await window.patterm.call('harness_list', { project_id: projectId }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
+      hostHarnesses.value = { ...hostHarnesses.value, [host]: launchableHarnesses(Array.isArray(result) ? result : result.harnesses ?? []) };
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : `Could not list ${host}’s agents`);
+    }
+  }
+  if (!hostPresets.value[host]) {
+    void window.patterm.call('harness_presets', {}, host).then((result) => {
+      if (result && typeof result === 'object' && 'presets' in result) {
+        hostPresets.value = { ...hostPresets.value, [host]: result as ProfileSettings };
+      }
+    }).catch(() => {});
+  }
+  if (!hostCatalogs.value[host]) {
+    void window.patterm.call('harness_models', {}, host).then((result) => {
+      if (result && typeof result === 'object' && 'providers' in result) {
+        hostCatalogs.value = { ...hostCatalogs.value, [host]: result as ModelCatalog };
+      }
+    }).catch(() => {});
   }
 }, { immediate: true });
 
@@ -156,26 +178,50 @@ function chooseHarness(next: string): void {
   void nextTick(focusField);
 }
 
-// The model and thinking level start at the CLI's default profile.
+// The model and thinking level start at the CLI's default profile on the target host.
 const presets = ref<ProfileSettings | null>(null);
 const catalog = ref<ModelCatalog>(emptyModelCatalog());
 void harnessPresets<ProfileSettings>().then((settings) => { presets.value = settings; }).catch(() => {});
 void harnessModels<ModelCatalog>().then((value) => { catalog.value = value; }).catch(() => {});
-const profile = computed(() => {
+const activePresets = computed(() => target.value?.host ? hostPresets.value[target.value.host] ?? null : presets.value);
+const activeCatalog = computed(() => target.value?.host ? hostCatalogs.value[target.value.host] ?? emptyModelCatalog() : catalog.value);
+const harnessProfiles = computed(() => {
   const id = harness.value;
-  if (!id || !presets.value) return null;
-  const defaultId = presets.value.defaultPresetIdByHarness[id as ProfileHarness];
-  return presets.value.presets.find((candidate) => candidate.id === defaultId && candidate.harness === id)
-    ?? presets.value.presets.find((candidate) => candidate.harness === id) ?? null;
+  if (!id || !activePresets.value) return [];
+  return activePresets.value.presets.filter((candidate) => candidate.harness === id);
 });
+const defaultProfile = computed(() => {
+  const id = harness.value;
+  if (!id || !activePresets.value) return null;
+  const defaultId = activePresets.value.defaultPresetIdByHarness[id as ProfileHarness];
+  return harnessProfiles.value.find((candidate) => candidate.id === defaultId) ?? harnessProfiles.value[0] ?? null;
+});
+const chosenPresetId = ref<string | null>(null);
+watch([() => target.value?.host, harness, defaultProfile], () => {
+  chosenPresetId.value = defaultProfile.value?.id ?? null;
+}, { immediate: true });
+const profile = computed(() => harnessProfiles.value.find((candidate) => candidate.id === chosenPresetId.value) ?? defaultProfile.value ?? null);
+const profileSelector = computed(() => {
+  if (harnessProfiles.value.length <= 1) return null;
+  return {
+    id: 'profile',
+    label: 'Profile',
+    value: profile.value?.id ?? DEFAULT,
+    options: harnessProfiles.value.map((candidate) => ({ value: candidate.id, label: profileName(candidate) }))
+  };
+});
+function chooseProfile(value: string): void {
+  chosenPresetId.value = value === DEFAULT ? null : value;
+}
+
 const model = ref<string | null>(null);
 const reasoning = ref<string | null>(null);
-watch(profile, (current) => {
+watch([profile, () => target.value?.host, harness], ([current]) => {
   model.value = current?.model ?? null;
   reasoning.value = current?.reasoning ?? null;
 }, { immediate: true });
 
-const catalogModels = computed(() => harness.value ? modelsFor(catalog.value, harness.value as ProfileHarness) : []);
+const catalogModels = computed(() => harness.value ? modelsFor(activeCatalog.value, harness.value as ProfileHarness) : []);
 const modelSelector = computed(() => {
   if (!harness.value) return null;
   const options = catalogModels.value.map((entry) => ({ value: entry.id, label: entry.label, ...(entry.provider ? { description: entry.provider } : {}) }));
@@ -206,9 +252,10 @@ function capitalise(text: string): string {
   return text ? text[0]!.toUpperCase() + text.slice(1) : text;
 }
 
-const worktrees = computed<WorktreeRecord[]>(() => target.value && !target.value.host
-  // A linked host's worktrees are merged in; launching in one would run there.
-  ? (projects.value.find((item) => item.project.id === target.value!.projectId)?.worktrees ?? []).filter((worktree) => !worktree.host)
+const worktrees = computed<WorktreeRecord[]>(() => target.value
+  // Only worktrees on the chosen target's host can host a launch there.
+  ? (projects.value.find((item) => item.project.id === target.value!.projectId)?.worktrees ?? [])
+    .filter((worktree) => (worktree.host ?? null) === target.value!.host)
   : []);
 const worktreeId = ref<string | null>(null);
 watch(targetProjectId, () => { worktreeId.value = null; });
@@ -228,7 +275,7 @@ const canStart = computed(() => Boolean(harness.value && target.value && newConv
 function start(): void {
   const chosen = target.value, cli = harness.value, prompt = newConversationDraft.value.trim();
   if (!chosen || !cli || !prompt) return;
-  // The default profile's own settings launch as that profile; anything else
+  // The chosen profile's own settings launch as that profile; anything else
   // overrides its model and thinking level for this agent.
   const base = profile.value;
   const overridden = Boolean(model.value) && (model.value !== (base?.model ?? null) || reasoning.value !== (base?.reasoning ?? null));
@@ -240,12 +287,11 @@ function start(): void {
     projectId: chosen.projectId,
     targetProjectId: chosen.targetProjectId,
     initialPrompt: prompt,
+    ...(chosen.host ? { host: chosen.host } : {}),
     // The preset still applies under an override, keeping its Codex speed.
-    ...(chosen.host ? { host: chosen.host } : {
-      ...(base ? { preset: base.id } : {}),
-      ...(overridden ? { model: model.value!, ...(reasoning.value ? { reasoning: reasoning.value } : {}) } : {})
-    }),
-    ...(!chosen.host && worktreeId.value ? { worktreeId: worktreeId.value } : {})
+    ...(base ? { preset: base.id } : {}),
+    ...(overridden ? { model: model.value!, ...(reasoning.value ? { reasoning: reasoning.value } : {}) } : {}),
+    ...(worktreeId.value ? { worktreeId: worktreeId.value } : {})
   });
 }
 
