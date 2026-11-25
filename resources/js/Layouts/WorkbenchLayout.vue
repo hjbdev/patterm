@@ -221,13 +221,13 @@ const showStandalonePage = computed(() => !activeProjectId.value || route.name =
 // Pages opened over a phone's list, and where Back goes from each when
 // there's nothing in the project to step back to: up to the Library, or from
 // a todo or scratchpad, up to its list.
-const PHONE_PAGE_TITLES: Partial<Record<string, string>> = { library: 'Library', worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads', media: 'Media', launch: 'New agent' };
+const PHONE_PAGE_TITLES: Partial<Record<string, string>> = { library: 'Library', worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads', media: 'Media', launch: 'New agent', newConversation: 'New conversation' };
 const phonePage = computed(() => {
   const projectId = activeProjectId.value;
   const name = typeof route.name === 'string' ? route.name : '';
   const title = PHONE_PAGE_TITLES[name];
   if (!projectId || !title) return null;
-  const up = name === 'library' || name === 'launch' ? { name: 'project', params: { projectId } }
+  const up = name === 'library' || name === 'launch' || name === 'newConversation' ? { name: 'project', params: { projectId } }
     : route.params.recordId ? { name, params: { projectId } }
       : { name: 'library', params: { projectId } };
   return { title, up };

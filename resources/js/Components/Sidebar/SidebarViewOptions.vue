@@ -4,7 +4,7 @@
     <DropdownMenuTrigger as-child>
       <!-- With a label, the list's own heading opens it. -->
       <button v-if="label" type="button" :aria-label="`${label}: view options`" :class="cn('flex h-7 items-center gap-1 rounded-tab px-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-muted/50 data-[state=open]:text-foreground', triggerClass)">
-        <span class="truncate">{{ label }}</span><ChevronDown class="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+        <span class="truncate">{{ label }}</span><HostBadge v-if="!sidebar.allAgents.value && sidebar.projectHost.value" :host="sidebar.projectHost.value" class="ml-0.5" /><ChevronDown class="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
       </button>
       <button v-else type="button" aria-label="Sidebar view options" title="View options" :class="cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-tab text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', triggerClass)">
         <SlidersHorizontal class="h-4 w-4" aria-hidden="true" />
@@ -47,6 +47,7 @@ import { setShowBotAgents, showBotAgents } from '../../Composables/useBots';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { setShowSnoozed, showSnoozed } from '../../Composables/useSnooze';
 import AllAgentsProjectsMenu from '../AllAgentsProjectsMenu.vue';
+import HostBadge from '../HostBadge.vue';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useSidebar } from './sidebarContext';

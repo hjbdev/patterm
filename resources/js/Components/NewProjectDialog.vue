@@ -63,7 +63,7 @@ const busy = ref(false);
 // The new project opens on its new conversation page, which keeps focus.
 let created = false;
 
-const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected'));
+const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected' && peer.show_agents));
 const hostOptions = computed(() => [
   { value: null as string | null, label: 'This host' },
   ...connectedPeers.value.map((peer) => ({ value: peer.name as string | null, label: peer.name }))

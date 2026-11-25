@@ -10,7 +10,7 @@
         <slot name="leading" />
         <SidebarItemMenu :session="session" :tab="menuTab">
           <h1 class="min-w-0 flex-1 select-none truncate font-medium [-webkit-touch-callout:none]" :class="phoneLayout ? 'text-[16px]' : 'text-[15.5px]'">
-            {{ agentLabel(session) }}<HostBadge v-if="session.host && session.host !== sidebar.projectHost.value" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
+            {{ agentLabel(session) }}<HostBadge v-if="session.host && (sidebar.allAgents.value || phoneLayout || session.host !== sidebar.projectHost.value)" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
           </h1>
         </SidebarItemMenu>
         <slot name="trailing" />

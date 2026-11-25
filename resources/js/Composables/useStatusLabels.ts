@@ -30,11 +30,8 @@ export function useStatusLabels(host?: () => string | null | undefined) {
   };
   useTopicRefresh(['settings'], () => void reload());
   watch(targetHost, (current) => {
-    if (current) {
-      if (!(current in remoteLabels.value)) void loadRemote(current);
-    } else {
-      void loadLocal();
-    }
+    if (current) void loadRemote(current);
+    else void loadLocal();
   }, { immediate: true });
   const labels = computed(() => targetHost.value ? remoteLabels.value[targetHost.value] ?? [] : localLabels.value);
   return { labels, reload };
