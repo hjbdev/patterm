@@ -119,7 +119,7 @@ const GROUPS: Array<{ label: string; items: SettingsItem[] }> = [
   ] },
   { label: 'Agents', items: [
     { value: 'harnesses', label: 'Harnesses', icon: Cpu, component: HarnessPresetSettings, keywords: 'profiles presets models reasoning add profile' },
-    { value: 'bots', label: 'Bots', icon: Bot, component: BotSettings, keywords: 'assistant voice add bot' },
+    { value: 'bots', label: 'Bots', icon: Bot, component: BotSettings, keywords: 'assistant voice add bot avatar model memory digests focus requests discord' },
     { value: 'summaries', label: 'Auto-summaries', icon: Sparkles, component: AutoSummarySettings, keywords: 'titles' },
     { value: 'compaction', label: 'Idle compaction', icon: Shrink, component: IdleCompactionSettings, keywords: 'cache context' },
     { value: 'status-labels', label: 'Status labels', icon: Tag, component: StatusLabelSettings, keywords: 'add label' },
@@ -241,7 +241,15 @@ function open(value: string): void {
   query.value = '';
   tab.value = value;
   scroller.value?.scrollTo({ top: 0 });
+  // A page within a page, such as one bot's settings, closes back to its list.
+  if (router.currentRoute.value.query.bot !== undefined) {
+    const nextQuery = { ...router.currentRoute.value.query };
+    delete nextQuery.bot;
+    void router.push({ query: nextQuery });
+  }
 }
+
+watch(() => router.currentRoute.value.query.bot, () => scroller.value?.scrollTo({ top: 0 }));
 
 function clearSearch(): void {
   query.value = '';

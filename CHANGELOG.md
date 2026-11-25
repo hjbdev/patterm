@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Each bot's settings are now a page of their own in Settings › Bots, laid
+  out like the rest of Settings and saved as you change them, instead of one
+  long dialog. Adding a bot asks for its name and harness, then opens its page.
+  Changes that apply only after a restart offer one at the top of the page.
 - Every local agent can now end a turn quietly, not just bots and the
   assistant. The tool is renamed from `bot_stay_quiet` to `stay_quiet`.
 - Paired-host experience and unified New conversation launch:
