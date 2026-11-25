@@ -385,6 +385,9 @@ async function main(): Promise<void> {
     await assert.rejects(stranger.call('get_process_status', { process_id: `workstation:${developer.process_id}` }), /not linked with workstation/);
     await assert.rejects(benchmarker.call('get_process_status', { process_id: 'nowhere:process_1' }), /No paired host is called nowhere/);
     await assert.rejects(benchmarker.call('get_process_status', { process_id: 'workstation:process_999' }), /outside the current caller scope|unknown process/);
+    // A peer's mention names this host's processes with its name; here they are local.
+    const selfQualified = await developer.call('get_process_status', { process_id: `workstation:${developer.process_id}` }) as { process_id: string; kind: string };
+    assert.deepEqual([selfQualified.process_id, selfQualified.kind], [developer.process_id, 'agent']);
 
     // Context on the other host is readable through host_read.
     await workstation.app.mcp.call('todo_create', { project_id: devProject, title: 'Benchmark the branch' });

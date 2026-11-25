@@ -494,7 +494,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     }
     return projectFor(context, explicit);
   };
-  const processFor = (context: McpCallContext, processId: string) => scopedProcessId(services.database, caller(context), processId);
+  // An ID qualified with this host's own name, as a peer's composer writes it, is local.
+  const localProcessId = (processId: string) => services.crossHost?.localProcessId(processId) ?? processId;
+  const processFor = (context: McpCallContext, processId: string) => scopedProcessId(services.database, caller(context), localProcessId(processId));
   const worktreeFor = (context: McpCallContext, worktreeId: string) => scopedWorktreeId(services.database, caller(context), worktreeId);
   // The authenticated agent session behind a call, or null for owner and UI
   // calls. The assistant works in other projects, so nothing links to it there.
@@ -1241,7 +1243,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const result = await services.crossHost!.send(sender, remote, input.message);
       return { ok: result.status === 'delivered', ...result };
     }
-    return sendMessage.execute(sender, input.target_process_id, input.message, (processId) => scopedProcessId(services.database, sender, processId));
+    return sendMessage.execute(sender, localProcessId(input.target_process_id), input.message, (processId) => scopedProcessId(services.database, sender, processId));
   });
   registry.register({
     name: 'report_to_parent',
