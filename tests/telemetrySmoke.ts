@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
@@ -9,6 +9,7 @@ import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { commandKind } from '../resources/js/lib/commandKind';
 import { observedRoutes, type RouteRegistrar } from '../routes/application';
 
+import { removeTree } from './fixtures/TempTree';
 async function main(): Promise<void> {
 const directory = mkdtempSync(path.join(os.tmpdir(), 'patterm-telemetry-'));
 try {
@@ -158,7 +159,7 @@ try {
   await telemetry.dispose();
   database.dispose();
 } finally {
-  rmSync(directory, { recursive: true, force: true });
+  removeTree(directory);
 }
 }
 

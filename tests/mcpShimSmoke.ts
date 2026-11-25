@@ -12,6 +12,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { buildSync } from 'esbuild';
 import { ipcPath } from '../app/Platform/Ipc';
 
+import { removeTree } from './fixtures/TempTree';
 const descriptors: Array<{ name: string; namespace: string; description: string; inputSchema: Record<string, unknown>; changes?: string[]; usageNotes?: string[] }> = [
   { name: 'whoami', namespace: 'cli.meta', description: 'Return caller identity.', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', additionalProperties: false, properties: {}, required: [] } },
   { name: 'spawn_process', namespace: 'cli.process', description: 'Start a process.', inputSchema: { type: 'object', properties: { argv: { type: 'array', items: { type: 'string' } } } } },
@@ -213,7 +214,7 @@ async function main(): Promise<void> {
     await modern.close();
     await legacy.close();
     if (registry.listening) await close();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

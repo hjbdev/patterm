@@ -17,6 +17,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 
+import { removeTree } from './fixtures/TempTree';
 const MCP: McpServerSpec = {
   command: '/opt/electron',
   args: ['/app/dist/mcp/patterm-mcp.js'],
@@ -261,7 +262,7 @@ async function main(): Promise<void> {
     if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previousConfigDir;
     database.dispose();
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

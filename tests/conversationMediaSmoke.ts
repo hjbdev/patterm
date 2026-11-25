@@ -12,6 +12,7 @@ import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/Pr
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 
+import { removeTree } from './fixtures/TempTree';
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const OTHER = Buffer.from('a second image, not decoded by the index').toString('base64');
 const THIRD = Buffer.from('a third image').toString('base64');
@@ -137,5 +138,5 @@ try {
 } finally {
   historyDatabase.dispose();
   appDatabase.dispose();
-  fs.rmSync(directory, { recursive: true, force: true });
+  removeTree(directory);
 }

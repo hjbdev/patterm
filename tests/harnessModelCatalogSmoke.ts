@@ -9,6 +9,7 @@ import { HarnessModelCatalogService } from '../app/Services/HarnessModelCatalogS
 import { openCodeModelRef } from '../app/Services/OpenCodeServerService';
 import { SettingsService } from '../app/Services/SettingsService';
 
+import { removeTree } from './fixtures/TempTree';
 const CODEX_CATALOG = {
   models: [
     {
@@ -190,7 +191,7 @@ async function main(): Promise<void> {
     console.log('harnessModelCatalogSmoke: ok');
   } finally {
     database.dispose();
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

@@ -7,6 +7,7 @@ import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, thirtyMinuteCacheModel
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 
+import { removeTree } from './fixtures/TempTree';
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const AFTER = 40;
 const SETTLE = AFTER * 3;
@@ -393,7 +394,7 @@ async function main() {
   } finally {
     service.dispose();
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
   console.log('idle compaction smoke passed');
 }

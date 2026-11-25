@@ -11,6 +11,7 @@ import { CdpConnection } from '../app/Services/Browser/CdpConnection';
 import { CHROME_VERSIONS_URL, ChromeInstaller, chromeExecutable, chromePlatform, extractZip } from '../app/Services/Browser/ChromeInstaller';
 import type { DatabaseService } from '../app/Services/DatabaseService';
 
+import { removeTree } from './fixtures/TempTree';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-browser-'));
 
 // A stored (uncompressed) zip, enough to exercise extraction.
@@ -294,7 +295,7 @@ async function main(): Promise<void> {
   console.log('browser smoke ok');
 }
 
-main().finally(() => fs.rmSync(root, { recursive: true, force: true })).catch((error: unknown) => {
+main().finally(() => removeTree(root)).catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });

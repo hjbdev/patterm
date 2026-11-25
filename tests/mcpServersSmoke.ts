@@ -21,6 +21,7 @@ import { McpServerImportService } from '../app/Services/McpServerImportService';
 import { McpServerRegistry } from '../app/Services/McpServerRegistry';
 import { McpHttpProxyService } from '../app/Services/McpHttpProxyService';
 
+import { removeTree } from './fixtures/TempTree';
 // A minimal authorization server and MCP server: discovery, dynamic client
 // registration, PKCE, rotating refresh tokens, and a tools/list endpoint that
 // requires the current access token.
@@ -456,7 +457,7 @@ async function main(): Promise<void> {
     for (const cleanup of cleanups.reverse()) await cleanup();
     await service.close();
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

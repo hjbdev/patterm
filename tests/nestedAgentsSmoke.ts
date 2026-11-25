@@ -12,6 +12,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 
+import { removeTree } from './fixtures/TempTree';
 // Sub-agents can delegate further: a child spawns a grandchild that reports to
 // the child, stays inside the project, and closes with its ancestors.
 async function main(): Promise<void> {
@@ -215,7 +216,7 @@ async function main(): Promise<void> {
     console.log('nested agents smoke ok');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

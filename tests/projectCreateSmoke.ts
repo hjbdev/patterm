@@ -28,6 +28,7 @@ import { TimerService } from '../app/Services/TimerService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { trySymlink } from './fixtures/SymlinkFixture';
 
+import { removeTree } from './fixtures/TempTree';
 async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-project-'));
   let database: DatabaseService | undefined;
@@ -342,7 +343,7 @@ async function main(): Promise<void> {
   } finally {
     // Windows cannot delete a directory holding an open database.
     try { database?.dispose(); } catch { /* already disposed */ }
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

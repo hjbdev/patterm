@@ -11,6 +11,7 @@ import type { AgentHistoryReadService } from '../app/Services/AgentHistory/Agent
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import { ASKING_MAX_LENGTH, pendingAsk } from '../app/Services/IntegratedAsking';
 
+import { removeTree } from './fixtures/TempTree';
 // What each harness's pending request reads as on a list row.
 function askingLines(): void {
   const permission = (row: Record<string, unknown>) => pendingAsk({ permissions: { data: [{ id: 'p', resources: [], ...row }] } });
@@ -373,7 +374,7 @@ async function main(): Promise<void> {
     await heldPrompts(database);
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

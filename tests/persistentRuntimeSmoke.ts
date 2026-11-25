@@ -11,6 +11,7 @@ import type { ProcessLauncherResult } from '../app/Services/ProcessLauncher';
 import { DetachedHostSupervisor, type TerminalHostSupervisor } from '../app/Services/TerminalHostService';
 import type { TerminalService } from '../app/Services/TerminalService';
 
+import { removeTree } from './fixtures/TempTree';
 interface FixturePids { pid: number; sleepPid: number }
 interface ProcessRow { id: string; status: string; pty_process_id: string | null; exit_code: number | null; auto_restart: number }
 interface ProcInfo { pid: number; parent: number; state: string; started: string }
@@ -182,7 +183,7 @@ if (gate) {
     try { await app?.dispose(); }
     finally {
       try { await supervisor.dispose(); }
-      finally { fs.rmSync(directory, { recursive: true, force: true }); }
+      finally { removeTree(directory); }
     }
   }
 }

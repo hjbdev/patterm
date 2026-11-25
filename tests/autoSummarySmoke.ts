@@ -23,6 +23,7 @@ import { SessionContextService } from '../app/Services/SessionContextService';
 import type { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 
+import { removeTree } from './fixtures/TempTree';
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-summary-test-'));
@@ -523,7 +524,7 @@ async function main() {
     console.log('auto-summary smoke tests passed');
   } finally {
     await service.dispose(); history.dispose(); database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 void main().catch((error) => { console.error(error); process.exitCode = 1; });

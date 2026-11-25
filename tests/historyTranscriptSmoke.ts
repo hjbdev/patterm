@@ -7,6 +7,7 @@ import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistory
 import { CodexHistoryAdapter } from '../app/Services/AgentHistory/CodexHistoryAdapter';
 import { OpenCodeHistoryAdapter } from '../app/Services/AgentHistory/OpenCodeHistoryAdapter';
 
+import { removeTree } from './fixtures/TempTree';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-transcript-'));
 function jsonl(name: string, rows: unknown[]): string {
   const file = path.join(root, name);
@@ -96,5 +97,5 @@ try {
   assert.equal(new OpenCodeHistoryAdapter().parseFile(dbPath, { providerConversationIds: ['corrupt'] }).conversations.length, 0, 'corrupt input cannot clear an existing import');
   console.log('Native history transcript smoke tests passed');
 } finally {
-  fs.rmSync(root, { recursive: true, force: true });
+  removeTree(root);
 }

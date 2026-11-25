@@ -27,6 +27,7 @@ import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { applyConversationStreamEvent, type TranscriptMessage } from '../app/Services/TranscriptProjection';
 import { normaliseMessages, normaliseTranscriptAttachments } from '../resources/js/lib/integratedConversation';
 
+import { removeTree } from './fixtures/TempTree';
 // Patterm's launcher gives the running app's service its MCP source; every
 // service here gets the fixture's, unless a check replaces it.
 let fixtureMcpSource: OpenCodeMcpSource | null = null;
@@ -1192,7 +1193,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     for (const client of clients) await client.close();
     socket.stop();
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

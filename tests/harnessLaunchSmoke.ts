@@ -20,6 +20,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 
+import { removeTree } from './fixtures/TempTree';
 interface SessionRow {
   harness: string;
   session_role: string;
@@ -701,7 +702,7 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log('harness launch smoke ok');
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

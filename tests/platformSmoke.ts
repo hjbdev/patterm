@@ -11,6 +11,7 @@ import { isPathWithin, pathKey, samePath } from '../app/Platform/Paths';
 import { killProcessTree } from '../app/Platform/ProcessTree';
 import { commandFromShellArgv, defaultShell, shellArgv } from '../app/Platform/Shell';
 
+import { removeTree } from './fixtures/TempTree';
 const windows = process.platform === 'win32';
 // Arguments that cmd.exe, PowerShell, or the C runtime would otherwise mangle.
 const TRICKY = ['two words "quoted" back\\slash', '', 'trailing\\', 'a&b|c<d>e^f%PATH%!x!', '(parens) [brackets], semi;colon'];
@@ -27,7 +28,7 @@ async function main(): Promise<void> {
       await processTree();
     }
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
   console.log('platform smoke passed');
 }

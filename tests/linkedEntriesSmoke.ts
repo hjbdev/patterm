@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { linkOrCopy } from '../app/Platform/LinkedEntries';
 
+import { removeTree } from './fixtures/TempTree';
 function main(): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-linked-'));
   try {
@@ -27,7 +28,7 @@ function main(): void {
     }
     console.log('linked entries smoke passed');
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    removeTree(root);
   }
 }
 

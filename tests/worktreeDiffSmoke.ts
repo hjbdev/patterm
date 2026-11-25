@@ -17,6 +17,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { trySymlink } from './fixtures/SymlinkFixture';
 
+import { removeTree } from './fixtures/TempTree';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 // Records every git invocation so the smoke can check that diff reads never
@@ -285,7 +286,7 @@ async function main(): Promise<void> {
     console.log('worktree diff smoke ok');
   } finally {
     database.dispose();
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

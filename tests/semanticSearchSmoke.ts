@@ -19,6 +19,7 @@ import { messagePassages } from '../app/Services/SemanticSearch/HistoryPassages'
 import { HybridHistorySearchService } from '../app/Services/SemanticSearch/HybridHistorySearchService';
 import { SemanticSearchService } from '../app/Services/SemanticSearch/SemanticSearchService';
 
+import { removeTree } from './fixtures/TempTree';
 // A deterministic stand-in for the model: a bag of hashed words. It is only
 // for exercising the queue, publishing, and fusion; the real model is
 // checked by tests/manual/semanticSearchModel.mjs.
@@ -378,7 +379,7 @@ async function serviceChecks() {
 main().finally(() => {
   history.dispose();
   app.dispose();
-  fs.rmSync(directory, { recursive: true, force: true });
+  removeTree(directory);
 }).catch((error) => {
   console.error(error);
   // A failed check can leave the in-process worker polling.

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash, randomInt } from 'node:crypto';
 import type { Migration } from '../Database/Migration';
 import { assertKnownMigrations, migrationState } from '../Database/Migrator';
-import { openSqliteConnection } from '../Database/SqliteConnection';
+import { openSqliteConnection, type SqliteConnection } from '../Database/SqliteConnection';
 import { migrations } from '../../database/migrations';
 import { historyMigrations } from '../../database/historyMigrations';
 
@@ -123,11 +123,20 @@ export function completeHistoryBackup(dataDir: string): DatabaseBackup | null {
   }
 }
 
+// A database the previous run is still closing, such as a history worker
+// that has not exited yet, is briefly locked while it checkpoints. Wait for
+// it as the application's own connections do, rather than failing startup.
+function openDatabase(file: string, options: { readOnly?: boolean } = {}): SqliteConnection {
+  const db = openSqliteConnection(file, options);
+  db.exec('pragma busy_timeout = 5000');
+  return db;
+}
+
 function readStates(dataDir: string): DatabaseState[] {
   return DATABASES.flatMap((spec) => {
     const file = path.join(dataDir, spec.file);
     if (!fs.existsSync(file)) return [];
-    const db = openSqliteConnection(file, { readOnly: true });
+    const db = openDatabase(file, { readOnly: true });
     try {
       const state = migrationState(db, spec.migrations);
       assertKnownMigrations(spec.migrations, new Set(state.applied), file);
@@ -142,7 +151,7 @@ function readStates(dataDir: string): DatabaseState[] {
 function readMarker(dataDir: string): number {
   const file = path.join(dataDir, 'app.db');
   if (!fs.existsSync(file)) return 0;
-  const db = openSqliteConnection(file, { readOnly: true });
+  const db = openDatabase(file, { readOnly: true });
   try {
     return (db.prepare('pragma user_version').get() as { user_version: number }).user_version;
   } finally {
@@ -151,7 +160,7 @@ function readMarker(dataDir: string): number {
 }
 
 function writeMarker(file: string, marker: number): void {
-  const db = openSqliteConnection(file);
+  const db = openDatabase(file);
   try {
     db.exec(`pragma user_version = ${Math.trunc(marker)}`);
   } finally {
@@ -173,7 +182,7 @@ function copyDatabase(state: DatabaseState, directory: string): Required<Pick<Ma
   const target = path.join(directory, state.spec.file);
   // VACUUM INTO accepts an empty target, so the file keeps 0600 whatever the umask.
   fs.closeSync(fs.openSync(target, 'wx', 0o600));
-  const source = openSqliteConnection(state.file, { readOnly: true });
+  const source = openDatabase(state.file, { readOnly: true });
   try {
     // Includes committed WAL pages; copying the file would not.
     source.prepare('vacuum into ?').run(target);
@@ -225,7 +234,7 @@ function assertFreeSpace(root: string, file: string): void {
 }
 
 function verifyBackup(file: string, check: DatabaseSpec['check']): void {
-  const backup = openSqliteConnection(file, { readOnly: true });
+  const backup = openDatabase(file, { readOnly: true });
   try {
     const rows = backup.prepare(`pragma ${check}`).all() as Array<Record<string, string>>;
     if (rows.length !== 1 || Object.values(rows[0] ?? {})[0] !== 'ok') throw new Error(`${check} failed for ${path.basename(file)}`);
