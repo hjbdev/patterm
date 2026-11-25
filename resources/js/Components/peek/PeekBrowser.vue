@@ -45,7 +45,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { browserControl, frameBytes, keyEvents, modifierBits, nextFrame, useBrowserState } from '../../lib/browser';
 
 // `url` opens in the browser when the peek opens, such as a server's page,
-// and `opened` says it has gone, so showing the peek again later leaves the
+// and `opened` says it has, so a pinned tile shown again later can leave the
 // browser where it is. `embedded` leaves closing to what holds it, such as a
 // pinned tile.
 const props = defineProps<{ processId: string; url?: string | undefined; embedded?: boolean | undefined }>();

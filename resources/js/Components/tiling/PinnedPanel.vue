@@ -11,7 +11,8 @@
     :summary="session.summary"
     :can-summarize="!session.parentId"
     :active-worktree-id="activeWorktreeId"
-    @update:peek="changed"
+    @update:peek="(next) => next.kind === 'image' && emit('image', { images: next.images, index: next.index })"
+    @browser-opened="emit('browserOpened')"
     @open-worktree="emit('openWorktree', $event)"
   />
   <p v-else-if="kind === 'image'" class="p-4 text-[13px] text-muted-foreground">Open a picture from the conversation to show it here.</p>
@@ -33,10 +34,6 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ peek: [peek: Peek]; openWorktree: [worktree: SessionWorktree]; image: [image: { images: PeekImage[]; index: number }]; browserOpened: [] }>();
 
-function changed(next: Peek): void {
-  if (next.kind === 'image') emit('image', { images: next.images, index: next.index });
-  if (next.kind === 'browser' && !next.url) emit('browserOpened');
-}
 const peek = computed<Peek | null>(() => {
   if (props.kind === 'browser') return { kind: 'browser', url: props.browser.url };
   if (props.kind === 'context') return { kind: 'context' };

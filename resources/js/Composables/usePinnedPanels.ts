@@ -123,7 +123,8 @@ export function usePinnedPanels(options: { sessionId: () => string | null; enabl
   const anchor = computed(() => (lastTile.value ? find(state.value, lastTile.value)?.tile : null) ?? tiles.value.at(-1) ?? null);
 
   // What the browser and image tiles show, which isn't saved with the layout.
-  const browserPeek = ref<{ url?: string | undefined; serverProcessId?: string | null | undefined }>({});
+  // `url` is a page for the browser to open, and `opened` the last it opened.
+  const browserPeek = ref<{ url?: string | undefined; opened?: string | undefined; serverProcessId?: string | null | undefined }>({});
   const imagePeek = ref<{ images: PeekImage[]; index: number } | null>(null);
 
   // Pointing at a tile, as a pinned chip does, flashes it.

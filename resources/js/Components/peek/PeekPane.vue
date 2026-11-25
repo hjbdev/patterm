@@ -1,7 +1,7 @@
 <template>
   <!-- One thing beside the agent: its browser, an image, or the whole
        session context. Opening another replaces it; Esc or × closes it. -->
-  <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" :embedded="embedded" @opened="opened" @close="emit('close')" />
+  <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" :embedded="embedded" @opened="emit('browserOpened')" @close="emit('close')" />
   <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :process-id="processId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" :embedded="embedded" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
   <div v-else class="flex min-h-0 flex-1 flex-col">
     <header class="flex h-11 shrink-0 items-center gap-1 pl-4 pr-2">
@@ -48,11 +48,7 @@ import type { AutoSummaryRecord } from '../../types';
 // `processId` is the agent's, whose browser the peek shows. `embedded` leaves
 // closing to what holds it, such as a pinned tile.
 const props = defineProps<{ peek: Peek; projectId: string; sessionId: string; processId?: string | null | undefined; summary?: AutoSummaryRecord | null | undefined; canSummarize?: boolean | undefined; activeWorktreeId?: string | null | undefined; embedded?: boolean | undefined }>();
-const emit = defineEmits<{ close: []; 'update:peek': [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
-// The browser has opened the peek's page; it isn't opened again.
-function opened(): void {
-  if (props.peek.kind === 'browser') emit('update:peek', { ...props.peek, url: undefined });
-}
+const emit = defineEmits<{ close: []; 'update:peek': [peek: Peek]; openWorktree: [worktree: SessionWorktree]; browserOpened: [] }>();
 const ACTION = 'h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground';
 
 const image = computed(() => props.peek.kind === 'image' ? props.peek.images[props.peek.index] ?? null : null);

@@ -45,7 +45,7 @@
       </div>
       <PinnedZone v-if="panels.available.value && selectedAgent && activeProject" ref="zone" :panels="panels">
         <template #panel="{ kind }">
-          <PinnedPanel :kind="kind" :project-id="activeProject.project.id" :session="selectedAgent" :active-worktree-id="diffWorktree?.id ?? null" :browser="panels.browserPeek.value" :image="panels.imagePeek.value" @peek="openPeek" @image="panels.imagePeek.value = $event" @browser-opened="panels.browserPeek.value = { ...panels.browserPeek.value, url: undefined }" @open-worktree="openWorktree" />
+          <PinnedPanel :kind="kind" :project-id="activeProject.project.id" :session="selectedAgent" :active-worktree-id="diffWorktree?.id ?? null" :browser="panels.browserPeek.value" :image="panels.imagePeek.value" @peek="openPeek" @image="panels.imagePeek.value = $event" @browser-opened="browserOpened" @open-worktree="openWorktree" />
         </template>
       </PinnedZone>
     </div>
@@ -198,12 +198,20 @@ async function openPeek(next: Peek) {
   }
   peek.value = null;
   if (next.kind === 'browser') {
-    panels.browserPeek.value = { url: next.url, serverProcessId: next.serverProcessId ?? null };
+    // The pinned browser opens a page once, so showing its tile again leaves
+    // the agent where it is. Choosing the page it opened just shows it too,
+    // as the side peek did; another page opens.
+    const current = panels.browserPeek.value;
+    const shown = panels.pinned.value.includes('browser') && next.url === current.opened;
+    panels.browserPeek.value = { url: shown ? undefined : next.url, opened: current.opened, serverProcessId: next.serverProcessId ?? null };
     panels.pin('browser');
   } else if (next.kind === 'image') {
     panels.imagePeek.value = { images: next.images, index: next.index };
     panels.pin('image');
   } else panels.pin('context');
+}
+function browserOpened() {
+  panels.browserPeek.value = { ...panels.browserPeek.value, opened: panels.browserPeek.value.url, url: undefined };
 }
 // A peek still open as the workspace widens moves beside the agent.
 watch(() => panels.available.value, (available) => {
