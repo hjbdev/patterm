@@ -86,4 +86,30 @@ test('swiping a toast away leaves it unread; the close button marks it read', as
   raise('cleared');
   changed({ type: 'read', ids: ['cleared'] });
   assert.equal(reads.length, 1, 'toasts the app clears stay unread');
+
+  // A focused remote agent tab matches notifications whose URL encodes `:` as `%3A`.
+  globalThis.document.hasFocus = () => true;
+  route.value = {
+    path: '/projects/project_here/agents/workstation:session_9',
+    fullPath: '/projects/project_here/agents/workstation:session_9',
+    params: { projectId: 'project_here', sessionId: 'workstation:session_9' }
+  };
+  changed({ type: 'raised', notification: {
+    id: 'workstation:notif_1', project_id: 'project_here', process_id: 'workstation:process_9', session_id: 'workstation:session_9',
+    kind: 'attention', urgency: 'normal', delivery: 'all', audience: 'user', title: 'Done', body: '', occurrences: 1,
+    created_at: '', updated_at: '', read_at: null, resolved_at: null,
+    url: '/projects/project_here/agents/workstation%3Asession_9', project_name: 'Here', process_name: 'Builder', host: 'workstation'
+  } });
+  assert.equal(globalThis.toasts.has('workstation:notif_1'), false, 'remote notification for the focused agent tab does not pop a toast');
+  assert.deepEqual(reads.at(-1), { ids: ['workstation:notif_1'] }, 'remote notification for the focused agent tab is auto-marked read');
+
+  // Browsing `/routines` without `?run=...` must not suppress workspace routine run notifications.
+  route.value = { path: '/routines', fullPath: '/routines', params: {} };
+  changed({ type: 'raised', notification: {
+    id: 'workstation:notif_routine', project_id: null, process_id: 'workstation:process_12', session_id: null,
+    kind: 'permission', urgency: 'high', delivery: 'all', audience: 'user', title: 'Routine waiting', body: '', occurrences: 1,
+    created_at: '', updated_at: '', read_at: null, resolved_at: null,
+    url: '/routines?host=workstation&run=workstation%3Aprocess_12', project_name: null, process_name: 'Roundup', host: 'workstation'
+  } });
+  assert.equal(globalThis.toasts.has('workstation:notif_routine'), true, 'query-targeted routine run notification still toasts on bare /routines');
 });

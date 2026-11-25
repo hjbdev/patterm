@@ -8,7 +8,8 @@
         <h1 class="text-sm font-semibold">Scheduled</h1>
         <p class="truncate text-[11px] text-muted-foreground">Agents that start later, once or every week.</p>
       </div>
-      <Button v-if="hasReports" variant="ghost" size="sm" class="h-7 gap-1.5 rounded-tab px-2 text-xs text-muted-foreground" @click="router.push({ name: 'routineLog' })">
+      <SettingsChoice v-if="hostOptions.length > 1" :model-value="selectedHost" :options="hostOptions" aria-label="Host" class="h-7 w-36 shrink-0 text-xs" @update:model-value="selectHost" />
+      <Button v-if="hasReports" variant="ghost" size="sm" class="h-7 gap-1.5 rounded-tab px-2 text-xs text-muted-foreground" @click="router.push({ name: 'routineLog', query: selectedHost ? { host: selectedHost } : {} })">
         <ScrollText class="h-4 w-4" />Reports
       </Button>
       <Button variant="ghost" size="sm" class="h-7 gap-1.5 rounded-tab px-2 text-xs" :disabled="creating" @click="create()">
@@ -50,7 +51,7 @@
             <section v-if="recent.length" aria-label="Last 12 hours">
               <p class="mb-2 text-xs text-muted-foreground">Last 12 hours</p>
               <RoutineLog :runs="recent" :routines="routines" :now="now" @open="openRun" />
-              <RouterLink :to="{ name: 'routineLog' }" class="mt-1 inline-block text-xs text-muted-foreground hover:text-foreground">All reports</RouterLink>
+              <RouterLink :to="{ name: 'routineLog', query: selectedHost ? { host: selectedHost } : {} }" class="mt-1 inline-block text-xs text-muted-foreground hover:text-foreground">All reports</RouterLink>
             </section>
 
             <section v-if="agenda.length" aria-label="Coming up">
@@ -107,9 +108,10 @@
     <RoutineDialog
       :routine="selected"
       :now="now"
+      :host="selectedHost"
       :harnesses="installedHarnesses"
       :projects="projectList"
-      :bots="localBots"
+      :bots="hostBots"
       :presets="presets"
       :models="models"
       :revision="revision"
@@ -134,13 +136,16 @@ import RoutineDialog from '../Components/routines/RoutineDialog.vue';
 import RoutineLog from '../Components/routines/RoutineLog.vue';
 import RoutineReportDialog from '../Components/routines/RoutineReportDialog.vue';
 import RoutineRunDialog from '../Components/routines/RoutineRunDialog.vue';
+import SettingsChoice from '../Components/settings/SettingsChoice.vue';
 import { Button } from '../Components/ui/button';
 import { Switch } from '../Components/ui/switch';
 import { useBots } from '../Composables/useBots';
 import { useRoutineRunViewer } from '../Composables/useRoutineRunViewer';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
+import { readHosts, type PeerHost } from '../lib/hosts';
 import { harnessModels, harnessPresets, useTopicRefresh } from '../lib/serverQuery';
+import type { HarnessInstallationRecord } from '../types';
 import {
   createRoutine, describeLaunch, describeSchedule, formatRunDay, formatRunTime, listRoutines, nextRunLabel, nextRuns, onceDone, routineLog, routineRun, runTime, ROUTINE_HARNESSES,
   runNeedsAttention, runStatusLabel, updateRoutine, type RoutineModelOption, type RoutinePresetOption, type RoutineRecord, type RoutineRunRecord
@@ -153,8 +158,30 @@ const ATTENTION_MS = DAY_MS;
 const router = useRouter();
 const route = useRoute();
 const workbench = useWorkbench();
-const { settings: botSettings } = useBots();
-const localBots = computed(() => botSettings.value.bots);
+const { settings: botSettings, all: allBots } = useBots();
+const peers = ref<PeerHost[]>([]);
+const queryHost = () => (typeof route.query.host === 'string' && route.query.host.trim() ? route.query.host.trim() : null);
+const selectedHost = ref<string | null>(queryHost());
+const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected' && peer.show_agents));
+const hostOptions = computed(() => {
+  const names = new Set(connectedPeers.value.map((peer) => peer.name));
+  const options: Array<{ value: string | null; label: string }> = [
+    { value: null, label: 'This host' },
+    ...connectedPeers.value.map((peer) => ({ value: peer.name as string | null, label: peer.name }))
+  ];
+  if (selectedHost.value && !names.has(selectedHost.value)) {
+    options.push({ value: selectedHost.value, label: `${selectedHost.value} (offline)` });
+  }
+  return options;
+});
+const hostBots = computed(() => {
+  const host = selectedHost.value;
+  if (!host) return botSettings.value.bots;
+  return allBots.value
+    .filter((bot) => bot.host === host)
+    .map((bot) => ({ ...bot, id: bot.id.startsWith(`${host}:`) ? bot.id.slice(host.length + 1) : bot.id }));
+});
+const remoteHarnesses = ref<HarnessInstallationRecord[]>([]);
 const routines = ref<RoutineRecord[]>([]);
 const presets = ref<RoutinePresetOption[]>([]);
 const models = ref<Record<string, RoutineModelOption[]>>({});
@@ -176,8 +203,15 @@ const now = ref(Date.now());
 const clock = setInterval(() => { now.value = Date.now(); }, 30_000);
 
 const selected = computed(() => routines.value.find((routine) => routine.routine_id === selectedId.value) ?? null);
-const projectList = computed(() => workbench.projects.value.map((group) => ({ id: group.project.id, name: group.project.name })));
-const installedHarnesses = computed(() => workbench.harnesses.value
+const projectList = computed(() => {
+  const host = selectedHost.value;
+  return workbench.projects.value
+    .filter((group) => host
+      ? group.project.host === host || Boolean(group.project.remotes?.some((remote) => remote.host === host))
+      : !group.project.host)
+    .map((group) => ({ id: group.project.id, name: group.project.name }));
+});
+const installedHarnesses = computed(() => (selectedHost.value ? remoteHarnesses.value : workbench.harnesses.value)
   .filter((install) => install.status === 'available' && (ROUTINE_HARNESSES as readonly string[]).includes(install.harness))
   .map((install) => install.harness));
 
@@ -212,24 +246,57 @@ const agenda = computed(() => {
   return groups;
 });
 
-async function refresh(): Promise<void> {
+let refreshGeneration = 0;
+let optionsGeneration = 0;
+
+async function loadHosts(): Promise<void> {
   try {
-    [routines.value, latest.value] = await Promise.all([listRoutines(), routineLog({ limit: 10 }), refreshReport()]);
+    const overview = await readHosts();
+    peers.value = overview.peers;
+  } catch {
+    peers.value = [];
+  }
+}
+
+async function refresh(): Promise<void> {
+  const host = selectedHost.value;
+  const token = ++refreshGeneration;
+  try {
+    const [nextRoutines, nextLatest] = await Promise.all([listRoutines(host), routineLog({ limit: 10 }, host), refreshReport()]);
+    if (token !== refreshGeneration) return;
+    routines.value = nextRoutines;
+    latest.value = nextLatest;
     revision.value += 1;
     error.value = '';
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    if (token === refreshGeneration) error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
-    loaded.value = true;
+    if (token === refreshGeneration) loaded.value = true;
   }
 }
 
 async function loadLaunchOptions(): Promise<void> {
+  const host = selectedHost.value;
+  const token = ++optionsGeneration;
   try {
+    if (host) {
+      const [harnessResult, presetSettings, catalog] = await Promise.all([
+        window.patterm.call('harness_list', {}, host) as Promise<{ harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[]>,
+        window.patterm.call('harness_presets', {}, host).catch(() => ({ presets: [] })) as Promise<{ presets?: RoutinePresetOption[] } | null>,
+        window.patterm.call('harness_models', {}, host).catch(() => ({ providers: {} })) as Promise<{ providers?: Record<string, { models: RoutineModelOption[] } | null> } | null>
+      ]);
+      if (token !== optionsGeneration) return;
+      remoteHarnesses.value = Array.isArray(harnessResult) ? harnessResult : harnessResult?.harnesses ?? [];
+      presets.value = (presetSettings?.presets ?? []).map((preset) => ({ harness: preset.harness, name: preset.name }));
+      models.value = Object.fromEntries(Object.entries(catalog?.providers ?? {}).map(([harness, provider]) => [harness, provider?.models ?? []]));
+      return;
+    }
+    remoteHarnesses.value = [];
     const [presetSettings, catalog] = await Promise.all([
       harnessPresets<{ presets: RoutinePresetOption[] }>().then((settings) => settings ?? { presets: [] }),
       harnessModels<{ providers: Record<string, { models: RoutineModelOption[] } | null> }>()
     ]);
+    if (token !== optionsGeneration) return;
     presets.value = presetSettings.presets.map((preset) => ({ harness: preset.harness, name: preset.name }));
     models.value = Object.fromEntries(Object.entries(catalog.providers).map(([harness, provider]) => [harness, provider?.models ?? []]));
   } catch {
@@ -237,7 +304,26 @@ async function loadLaunchOptions(): Promise<void> {
   }
 }
 
-useTopicRefresh(['routines'], () => void refresh(), { lifecycle: true });
+function selectHost(next: string | null): void {
+  if (next === selectedHost.value) return;
+  selectedHost.value = next;
+  selectedId.value = '';
+  reportRun.value = null;
+  runProcessId.value = null;
+  routines.value = [];
+  latest.value = [];
+  remoteHarnesses.value = [];
+  presets.value = [];
+  models.value = {};
+  error.value = '';
+  loaded.value = false;
+  void router.replace({ name: 'routines', query: next ? { host: next } : {} });
+  void refresh();
+  void loadLaunchOptions();
+}
+
+useTopicRefresh(['routines'], () => { if (!selectedHost.value) void refresh(); }, { lifecycle: true });
+useTopicRefresh(['settings'], () => void loadHosts());
 // A run waiting on a permission prompt shows as agent activity, not a routine change.
 let activityTimer: ReturnType<typeof setTimeout> | null = null;
 watch(workbench.revision, () => {
@@ -245,23 +331,46 @@ watch(workbench.revision, () => {
 });
 
 onMounted(() => {
+  void loadHosts();
   void refresh().then(openRequestedRun);
   void openRequestedReport();
   void loadLaunchOptions();
 });
 // A notification clicked while this page is open only changes the query.
 // Back from a notification's report removes the query, which closes it.
+watch(() => route.query.host, () => {
+  const next = queryHost();
+  if (next === selectedHost.value) return;
+  selectedHost.value = next;
+  selectedId.value = '';
+  reportRun.value = null;
+  runProcessId.value = null;
+  routines.value = [];
+  latest.value = [];
+  remoteHarnesses.value = [];
+  presets.value = [];
+  models.value = {};
+  error.value = '';
+  loaded.value = false;
+  void refresh().then(openRequestedRun);
+  void openRequestedReport();
+  void loadLaunchOptions();
+});
 watch(() => route.query.report, (runId, previous) => {
   if (!runId && previous) reportRun.value = null;
   else void openRequestedReport();
 });
-watch(() => route.query.run, () => openRequestedRun());
+watch(() => route.query.run, (processId, previous) => {
+  if (!processId && previous) runProcessId.value = null;
+  else openRequestedRun();
+});
 onBeforeUnmount(() => {
   clearInterval(clock);
   if (activityTimer) clearTimeout(activityTimer);
 });
 
 async function create(from?: RoutineRecord): Promise<void> {
+  const host = selectedHost.value;
   creating.value = true;
   try {
     const harness = installedHarnesses.value.includes('claude') ? 'claude' : installedHarnesses.value[0] ?? 'claude';
@@ -278,19 +387,20 @@ async function create(from?: RoutineRecord): Promise<void> {
     } : { name: 'New routine', enabled: false, harness, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
     let routine: RoutineRecord;
     try {
-      routine = await createRoutine(payload);
+      routine = await createRoutine(payload, host);
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : String(cause);
       if (from?.delivery === 'bot' && (/unknown bot:/i.test(msg) || /cannot access this routine's project/i.test(msg))) {
-        routine = await createRoutine({ ...payload, delivery: 'notification', delivery_bot_id: null });
+        routine = await createRoutine({ ...payload, delivery: 'notification', delivery_bot_id: null }, host);
       } else {
         throw cause;
       }
     }
+    if (selectedHost.value !== host) return;
     routines.value = [...routines.value, routine];
     selectedId.value = routine.routine_id;
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    if (selectedHost.value === host) error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     creating.value = false;
   }
@@ -301,12 +411,16 @@ function duplicate(routine: RoutineRecord): void {
 }
 
 async function setEnabled(routine: RoutineRecord, enabled: boolean): Promise<void> {
+  const host = selectedHost.value;
   replace({ ...routine, enabled });
   try {
-    replace(await updateRoutine(routine.routine_id, { enabled }));
+    const updated = await updateRoutine(routine.routine_id, { enabled }, host);
+    if (selectedHost.value === host) replace(updated);
   } catch (cause) {
-    replace(routine);
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    if (selectedHost.value === host) {
+      replace(routine);
+      error.value = cause instanceof Error ? cause.message : String(cause);
+    }
   }
 }
 
@@ -323,25 +437,26 @@ function routineName(routineId: string | undefined): string {
   return routines.value.find((entry) => entry.routine_id === routineId)?.name ?? 'Routine run';
 }
 
-const { reportRun, runProcessId, runTitle, openRun, openConversation, refreshReport } = useRoutineRunViewer(routineName);
+const { reportRun, runProcessId, runTitle, openRun, openConversation, refreshReport } = useRoutineRunViewer(routineName, () => selectedHost.value);
 
-// Report notifications link to /routines?report=<run id>.
+// Report notifications link to /routines?report=<run id> (plus host=<name> for paired hosts).
 // A reply is used only while the URL still asks for that run, so a slower
 // earlier request, or one for a report since closed, never replaces it.
 async function openRequestedReport(): Promise<void> {
   const runId = typeof route.query.report === 'string' ? route.query.report : null;
+  const host = queryHost();
   if (!runId) return;
   try {
-    const run = await routineRun(runId);
-    if (route.query.report === runId) reportRun.value = run;
+    const run = await routineRun(runId, host);
+    if (route.query.report === runId && queryHost() === host) reportRun.value = run;
   } catch (cause) {
-    if (route.query.report === runId) error.value = cause instanceof Error ? cause.message : String(cause);
+    if (route.query.report === runId && queryHost() === host) error.value = cause instanceof Error ? cause.message : String(cause);
   }
 }
 
 function closeReport(): void {
   reportRun.value = null;
-  if (route.query.report) void router.replace({ name: 'routines' });
+  if (route.query.report) void router.replace({ name: 'routines', query: selectedHost.value ? { host: selectedHost.value } : {} });
 }
 
 // Notifications for workspace runs link to /routines?run=<process id>.
@@ -354,7 +469,7 @@ function openRequestedRun(): void {
 
 function closeRun(): void {
   runProcessId.value = null;
-  if (route.query.run) void router.replace({ name: 'routines' });
+  if (route.query.run) void router.replace({ name: 'routines', query: selectedHost.value ? { host: selectedHost.value } : {} });
 }
 
 function goBack(): void {

@@ -10,7 +10,9 @@ import type { TimerRecord } from './TimerService';
 import type { KeyedPatch, ProjectPatch, WorkbenchChanges, WorkbenchPatch } from './WorkbenchPatch';
 import type { WorkbenchRead, WorkbenchSince, WorkbenchSyncService } from './WorkbenchSyncService';
 import { CONTROL_OPERATIONS, INTEGRATED_CONTROL_TOOLS } from '../Http/BrowserTools';
+import { notificationListInput, notificationReadInput, notificationResolveInput } from '../Actions/NotificationActions';
 import type { IntegratedConversationEvent } from './IntegratedConversation';
+import type { NotificationChange, NotificationRecord, NotificationUnread } from './NotificationService';
 import type { TerminalClientRequest, TerminalClientRequestService } from './TerminalClientRequestService';
 
 // Records from a paired host carry IDs qualified with its name, such as
@@ -53,6 +55,7 @@ export const RELAY_CHANNELS = new Set([
 const MAX_DEPTH = 12;
 const RELAY_TIMEOUT_MS = 30_000;
 const ANNOUNCE_DELAY_MS = 100;
+const REMOTE_NOTIFICATION_CACHE_LIMIT = 200;
 // Raw binary peer WebSocket frame header: 'P', 'T', 0x01 (terminal-damage),
 // uint16BE processId byte length, UTF-8 processId, raw damage payload.
 const BINARY_TERMINAL_MAGIC_0 = 0x50;
@@ -79,6 +82,15 @@ export type RouteHandler = (raw: unknown) => unknown;
 // host's name, and the projects it works in as this host knows them.
 export type RemoteBot = Bot & { host: string };
 type ConversationListener = (event: IntegratedConversationEvent) => void;
+export type NotificationListResult = { items: NotificationRecord[]; total: number; next_cursor: string | null };
+
+export interface RemoteNotificationsOptions {
+  state: () => { unread: NotificationUnread[] };
+  list: (raw: unknown) => NotificationListResult;
+  read: (raw: unknown) => { updated: number };
+  resolve: (raw: unknown) => { updated: number };
+  onChange: (change: NotificationChange) => void;
+}
 
 export interface RemoteClientOptions {
   // This host's own records, without any paired host's.
@@ -104,6 +116,8 @@ export interface RemoteClientOptions {
   localBots?: () => Bot[];
   // A paired host's bots changed; clients here read them again.
   botsChanged?: () => void;
+  // Local notifications, shared with paired hosts and merged with theirs.
+  notifications?: RemoteNotificationsOptions;
 }
 
 // Shows paired hosts' records in this host's workbench and relays the UI's
@@ -114,6 +128,14 @@ export class RemoteClientService {
   private readonly workbenches = new Map<string, ProjectWorkbenchDto[]>();
   private readonly peerVersions = new Map<string, { epoch: string; version: number }>();
   private readonly bots = new Map<string, Bot[]>();
+  private readonly peerUnreads = new Map<string, NotificationUnread[]>();
+  // Recent qualified notifications from paired hosts, so delayed desktop
+  // delivery can check whether one is still unread and unresolved.
+  private readonly remoteNotifications = new Map<string, { hostId: string; record: NotificationRecord }>();
+  private readonly fetchingNotifications = new Map<string, Promise<void>>();
+  private readonly refetchNotificationsPending = new Set<string>();
+  private readonly resetNotificationsPending = new Set<string>();
+  private readonly notificationsGeneration = new Map<string, number>();
   private readonly fetching = new Map<string, Promise<void>>();
   private readonly refetchPending = new Set<string>();
   private readonly peerTerminals = new Map<string, Set<string>>();
@@ -154,6 +176,10 @@ export class RemoteClientService {
     });
     // Who the bots are and where they work. Their instructions stay here.
     peers.handle('bots.read', () => (this.options.localBots?.() ?? []).filter((bot) => bot.enabled).map((bot) => ({ ...bot, instructions: '' })));
+    peers.handle('notifications.state', () => this.options.notifications?.state() ?? { unread: [] });
+    peers.handle('notifications.list', (raw) => this.options.notifications?.list(raw) ?? { items: [], total: 0, next_cursor: null });
+    peers.handle('notifications.read', (raw) => this.options.notifications?.read(raw) ?? { updated: 0 });
+    peers.handle('notifications.resolve', (raw) => this.options.notifications?.resolve(raw) ?? { updated: 0 });
     peers.handle('client.rpc', (raw, peer) => this.serveRequest(raw, peer));
     peers.handle('client.conversation', (raw, peer) => this.serveConversation(raw, peer));
     peers.handle('client.upload', (raw) => {
@@ -162,6 +188,7 @@ export class RemoteClientService {
     });
     peers.onConnected((hostId) => {
       void this.refresh(hostId);
+      void this.refreshNotifications(hostId, true);
       // History announced while the link was down was missed.
       this.options.notifyRemoteTopics(['history']);
     });
@@ -169,6 +196,7 @@ export class RemoteClientService {
     peers.onBinary?.((hostId, payload) => this.receiveBinaryFrame(hostId, payload));
     peers.onEvent((event) => {
       if (event.event === 'workbench.changed') void this.refresh(event.host_id);
+      else if (event.event === 'notifications.changed') this.receiveNotificationChange(event.host_id, event.payload);
       else if (event.event === 'terminal.frame') this.receiveFrame(event.host_id, event.payload);
       else if (event.event === 'terminal.lifecycle') this.receiveLifecycle(event.host_id, event.payload);
       else if (event.event === 'conversation.event') this.receiveConversation(event.host_id, event.payload);
@@ -223,6 +251,327 @@ export class RemoteClientService {
       if (!topics.includes(topic)) continue;
       for (const peer of this.hosts.peers()) this.peers.emit(peer.host_id, 'data.changed', { topics: [topic] });
     }
+  }
+
+  // Forward a local notification change to connected paired hosts. Remote
+  // notifications are never echoed back.
+  localNotificationChanged(change: NotificationChange): void {
+    if (this.disposed) return;
+    if ((change.type === 'raised' || change.type === 'updated') && change.notification.host) return;
+    for (const peer of this.hosts.peers()) this.peers.emit(peer.host_id, 'notifications.changed', change);
+  }
+
+  // Called when peer visibility (show_agents, unpair, project link) changes so
+  // badges and open notification lists recalculate immediately.
+  notificationsVisibilityChanged(): void {
+    if (this.disposed) return;
+    this.options.notifications?.onChange({ type: 'reset' });
+  }
+
+  // A recently relayed remote notification, for delayed desktop delivery checks.
+  notification(id: string): NotificationRecord | null {
+    const entry = this.remoteNotifications.get(id);
+    if (!entry) return null;
+    const peer = this.hosts.peer(entry.hostId);
+    if (!peer || !peer.show_agents || !this.peers.connected(peer.host_id) || entry.record.host !== peer.name) return null;
+    return entry.record;
+  }
+
+  // Merges local unread counts with connected, visible paired hosts' counts.
+  mergeUnread(local: NotificationUnread[]): NotificationUnread[] {
+    if (this.peerUnreads.size === 0) return local;
+    const merged: NotificationUnread[] = [...local];
+    for (const peer of this.hosts.peers()) {
+      if (!peer.show_agents || !this.peers.connected(peer.host_id)) continue;
+      const rows = this.peerUnreads.get(peer.host_id);
+      if (!rows?.length) continue;
+      for (const row of rows) {
+        merged.push({
+          ...row,
+          process_id: row.process_id ? this.qualifyId(row.process_id, peer) : null,
+          project_id: row.project_id ? (this.links.localProjectFor(peer.host_id, row.project_id) ?? `${peer.name}:${row.project_id}`) : null
+        });
+      }
+    }
+    return merged;
+  }
+
+  // Lists notifications across this host and visible connected peers, merged
+  // by newest activity first with stable cursor pagination.
+  async listNotifications(
+    raw: unknown,
+    local: (input: unknown) => NotificationListResult
+  ): Promise<NotificationListResult> {
+    const input = notificationListInput.parse(raw ?? {});
+    const visiblePeers = this.hosts.peers().filter((peer) => peer.show_agents && this.peers.connected(peer.host_id));
+
+    type PeerTarget = { peer: PeerHost; args: Record<string, unknown> };
+    let includeLocal = true;
+    let peerTargets: PeerTarget[] = [];
+
+    if (input.process_id) {
+      const owner = this.splitPeerPrefix(input.process_id);
+      if (owner) {
+        includeLocal = false;
+        if (owner.peer.show_agents && this.peers.connected(owner.peer.host_id)) {
+          const remoteProject = input.project_id ? this.unqualifyProjectId(input.project_id, owner.peer) : undefined;
+          peerTargets = [{
+            peer: owner.peer,
+            args: { ...input, process_id: owner.id, ...(remoteProject !== undefined ? { project_id: remoteProject } : {}) }
+          }];
+        }
+      }
+    } else if (input.project_id) {
+      const owner = this.splitPeerPrefix(input.project_id);
+      if (owner) {
+        includeLocal = false;
+        if (owner.peer.show_agents && this.peers.connected(owner.peer.host_id)) {
+          peerTargets = [{ peer: owner.peer, args: { ...input, project_id: owner.id } }];
+        }
+      } else {
+        // A local project may be linked to projects on paired hosts.
+        peerTargets = visiblePeers.flatMap((peer) => {
+          const link = this.links.links(peer.host_id).find((candidate) => candidate.project_id === input.project_id);
+          return link ? [{ peer, args: { ...input, project_id: link.remote_project_id } }] : [];
+        });
+      }
+    } else {
+      peerTargets = visiblePeers.map((peer) => ({ peer, args: { ...input } }));
+    }
+
+    if (includeLocal && peerTargets.length === 0) return local(input);
+    if (!includeLocal && peerTargets.length === 0) return { items: [], total: 0, next_cursor: null };
+
+    const cursor = decodeNotificationCursor(input.cursor);
+    const cursorOwner = cursor ? this.splitPeerPrefix(cursor.id) : null;
+    const needed = cursor ? input.limit + 1 : input.offset + input.limit + 1;
+
+    // Pages a single host in 200-item chunks when an offset query needs more
+    // than one SQLite page, keeping multi-host offset slices lossless.
+    const fetchHostPages = async (
+      fetchPage: (pageCursor: string | undefined, pageLimit: number) => Promise<NotificationListResult | null>,
+      initialCursor: string | undefined
+    ): Promise<NotificationListResult | null> => {
+      const items: NotificationRecord[] = [];
+      let total = 0;
+      let pageCursor = initialCursor;
+      let lastNextCursor: string | null = null;
+      let gotPage = false;
+      while (items.length < needed) {
+        const batchLimit = Math.min(needed - items.length, 200);
+        const page = await fetchPage(pageCursor, batchLimit);
+        if (!page) return gotPage ? { items, total, next_cursor: lastNextCursor } : null;
+        if (!gotPage) total = page.total;
+        gotPage = true;
+        items.push(...page.items);
+        lastNextCursor = page.next_cursor;
+        if (!page.next_cursor || page.items.length === 0) break;
+        pageCursor = page.next_cursor;
+      }
+      return { items, total, next_cursor: lastNextCursor };
+    };
+
+    const queries: Array<Promise<NotificationListResult | null>> = [];
+    if (includeLocal) {
+      // Local IDs are unqualified in both SQLite and the merged list, so
+      // SQLite can apply the exact cursor predicate directly.
+      const localCursor = cursor ? input.cursor : undefined;
+      queries.push(fetchHostPages(async (pageCursor, pageLimit) => local({
+        ...input,
+        limit: pageLimit,
+        offset: 0,
+        ...(pageCursor ? { cursor: pageCursor } : { cursor: undefined })
+      }), localCursor));
+    }
+    for (const target of peerTargets) {
+      // A non-owner peer's qualified IDs all start with `${peer.name}:`, so
+      // every same-timestamp row on that peer compares `< cursor.id` iff
+      // `${peer.name}: < cursor.id`; otherwise skip same-timestamp rows with
+      // an empty ID bound so older timestamps are never crowded out.
+      const peerCursor = cursor
+        ? (cursorOwner?.peer.host_id === target.peer.host_id
+          ? `${cursor.updatedAt}|${cursorOwner.id}`
+          : `${target.peer.name}:` < cursor.id
+            ? `${cursor.updatedAt}|~`
+            : `${cursor.updatedAt}|`)
+        : undefined;
+      queries.push(fetchHostPages(async (pageCursor, pageLimit) => {
+        const peerArgs = {
+          ...target.args,
+          limit: pageLimit,
+          offset: 0,
+          ...(pageCursor ? { cursor: pageCursor } : {})
+        };
+        if (!pageCursor) delete peerArgs.cursor;
+        return this.peers.request(target.peer.host_id, 'notifications.list', peerArgs, RELAY_TIMEOUT_MS)
+          .then((response) => {
+            if (!response || typeof response !== 'object' || !Array.isArray((response as { items?: unknown }).items)) return null;
+            const page = response as NotificationListResult;
+            return {
+              items: page.items.map((item) => this.qualifyNotification(item, target.peer)),
+              total: typeof page.total === 'number' ? page.total : page.items.length,
+              next_cursor: typeof page.next_cursor === 'string' ? page.next_cursor : null
+            };
+          })
+          .catch(() => null);
+      }, peerCursor));
+    }
+
+    const results = await Promise.all(queries);
+    const combined: NotificationRecord[] = [];
+    let total = 0;
+    let anyHostHasMore = false;
+    for (const result of results) {
+      if (!result) continue;
+      total += result.total;
+      if (result.next_cursor !== null) anyHostHasMore = true;
+      for (const item of result.items) {
+        if (cursor && !(item.updated_at < cursor.updatedAt || (item.updated_at === cursor.updatedAt && item.id < cursor.id))) continue;
+        combined.push(item);
+      }
+    }
+    combined.sort((left, right) => {
+      if (left.updated_at !== right.updated_at) return left.updated_at < right.updated_at ? 1 : -1;
+      return left.id < right.id ? 1 : left.id > right.id ? -1 : 0;
+    });
+    const start = cursor ? 0 : input.offset;
+    const items = combined.slice(start, start + input.limit);
+    const hasMore = combined.length > start + input.limit || (items.length === input.limit && anyHostHasMore);
+    const last = items.at(-1);
+    return { items, total, next_cursor: hasMore && last ? `${last.updated_at}|${last.id}` : null };
+  }
+
+  // Routes mark-read to this host and/or owning paired hosts.
+  async readNotifications(
+    raw: unknown,
+    local: (input: unknown) => { updated: number }
+  ): Promise<{ updated: number }> {
+    const input = notificationReadInput.parse(raw);
+    if (input.all) {
+      const visiblePeers = this.hosts.peers().filter((peer) => peer.show_agents && this.peers.connected(peer.host_id));
+      const localResult = local(input);
+      if (!visiblePeers.length) return localResult;
+      const peerIds = [...this.remoteNotifications.entries()]
+        .filter(([, entry]) => visiblePeers.some((peer) => peer.host_id === entry.hostId))
+        .map(([id]) => id);
+      this.markCachedNotifications(peerIds, 'read');
+      const peerResults = await Promise.all(visiblePeers.map((peer) =>
+        this.peers.request(peer.host_id, 'notifications.read', { all: true }, RELAY_TIMEOUT_MS)
+          .then((res) => (res && typeof (res as { updated?: unknown }).updated === 'number' ? (res as { updated: number }).updated : 0))
+          .catch(() => 0)
+      ));
+      for (const peer of visiblePeers) void this.refreshNotifications(peer.host_id);
+      return { updated: localResult.updated + peerResults.reduce((sum, count) => sum + count, 0) };
+    }
+
+    if (input.process_id || input.session_id) {
+      const owner = (input.process_id ? this.splitPeerPrefix(input.process_id) : null)
+        ?? (input.session_id ? this.splitPeerPrefix(input.session_id) : null);
+      if (owner) {
+        const matchingIds = [...this.remoteNotifications.entries()]
+          .filter(([, entry]) => entry.hostId === owner.peer.host_id
+            && ((input.process_id && entry.record.process_id === input.process_id)
+              || (input.session_id && entry.record.session_id === input.session_id)))
+          .map(([id]) => id);
+        if (matchingIds.length) this.markCachedNotifications(matchingIds, 'read');
+        if (!this.peers.connected(owner.peer.host_id)) return { updated: 0 };
+        const payload: Record<string, unknown> = {};
+        if (input.process_id) payload.process_id = stripHost(input.process_id, owner.peer.name);
+        if (input.session_id) payload.session_id = stripHost(input.session_id, owner.peer.name);
+        const res = await this.peers.request(owner.peer.host_id, 'notifications.read', payload, RELAY_TIMEOUT_MS)
+          .catch(() => ({ updated: 0 })) as { updated?: unknown };
+        void this.refreshNotifications(owner.peer.host_id);
+        return { updated: typeof res?.updated === 'number' ? res.updated : 0 };
+      }
+      return local(input);
+    }
+
+    if (input.ids?.length) {
+      const localIds: string[] = [];
+      const byPeer = new Map<PeerHost, string[]>();
+      const qualifiedRemoteIds: string[] = [];
+      for (const id of input.ids) {
+        const owner = this.splitPeerPrefix(id);
+        if (owner) {
+          qualifiedRemoteIds.push(id);
+          let list = byPeer.get(owner.peer);
+          if (!list) byPeer.set(owner.peer, list = []);
+          list.push(owner.id);
+        } else {
+          localIds.push(id);
+        }
+      }
+      if (qualifiedRemoteIds.length) this.markCachedNotifications(qualifiedRemoteIds, 'read');
+      let updated = localIds.length ? local({ ids: localIds }).updated : 0;
+      if (byPeer.size) {
+        const counts = await Promise.all([...byPeer.entries()].map(async ([peer, ids]) => {
+          if (!this.peers.connected(peer.host_id)) return 0;
+          const res = await this.peers.request(peer.host_id, 'notifications.read', { ids }, RELAY_TIMEOUT_MS)
+            .catch(() => ({ updated: 0 })) as { updated?: unknown };
+          void this.refreshNotifications(peer.host_id);
+          return typeof res?.updated === 'number' ? res.updated : 0;
+        }));
+        updated += counts.reduce((sum, count) => sum + count, 0);
+      }
+      return { updated };
+    }
+
+    return local(input);
+  }
+
+  // Routes resolve to this host and/or owning paired hosts.
+  async resolveNotifications(
+    raw: unknown,
+    local: (input: unknown) => { updated: number }
+  ): Promise<{ updated: number }> {
+    const input = notificationResolveInput.parse(raw);
+    if (input.process_id) {
+      const owner = this.splitPeerPrefix(input.process_id);
+      if (owner) {
+        const matchingIds = [...this.remoteNotifications.entries()]
+          .filter(([, entry]) => entry.hostId === owner.peer.host_id && entry.record.process_id === input.process_id)
+          .map(([id]) => id);
+        if (matchingIds.length) this.markCachedNotifications(matchingIds, 'resolved');
+        if (!this.peers.connected(owner.peer.host_id)) return { updated: 0 };
+        const res = await this.peers.request(owner.peer.host_id, 'notifications.resolve', { process_id: owner.id }, RELAY_TIMEOUT_MS)
+          .catch(() => ({ updated: 0 })) as { updated?: unknown };
+        void this.refreshNotifications(owner.peer.host_id);
+        return { updated: typeof res?.updated === 'number' ? res.updated : 0 };
+      }
+      return local(input);
+    }
+
+    if (input.ids?.length) {
+      const localIds: string[] = [];
+      const byPeer = new Map<PeerHost, string[]>();
+      const qualifiedRemoteIds: string[] = [];
+      for (const id of input.ids) {
+        const owner = this.splitPeerPrefix(id);
+        if (owner) {
+          qualifiedRemoteIds.push(id);
+          let list = byPeer.get(owner.peer);
+          if (!list) byPeer.set(owner.peer, list = []);
+          list.push(owner.id);
+        } else {
+          localIds.push(id);
+        }
+      }
+      if (qualifiedRemoteIds.length) this.markCachedNotifications(qualifiedRemoteIds, 'resolved');
+      let updated = localIds.length ? local({ ids: localIds }).updated : 0;
+      if (byPeer.size) {
+        const counts = await Promise.all([...byPeer.entries()].map(async ([peer, ids]) => {
+          if (!this.peers.connected(peer.host_id)) return 0;
+          const res = await this.peers.request(peer.host_id, 'notifications.resolve', { ids }, RELAY_TIMEOUT_MS)
+            .catch(() => ({ updated: 0 })) as { updated?: unknown };
+          void this.refreshNotifications(peer.host_id);
+          return typeof res?.updated === 'number' ? res.updated : 0;
+        }));
+        updated += counts.reduce((sum, count) => sum + count, 0);
+      }
+      return { updated };
+    }
+
+    return local(input);
   }
 
   dispose(): void {
@@ -448,6 +797,14 @@ export class RemoteClientService {
     this.peerVersions.delete(hostId);
     this.refetchPending.delete(hostId);
     this.setBots(hostId, []);
+    this.notificationsGeneration.set(hostId, (this.notificationsGeneration.get(hostId) ?? 0) + 1);
+    this.refetchNotificationsPending.delete(hostId);
+    this.resetNotificationsPending.delete(hostId);
+    this.peerUnreads.delete(hostId);
+    for (const [id, entry] of [...this.remoteNotifications]) {
+      if (entry.hostId === hostId) this.remoteNotifications.delete(id);
+    }
+    this.options.notifications?.onChange({ type: 'reset' });
     this.options.invalidate();
     const subscriber = `peer:${hostId}`;
     void this.options.terminalSubscriptions.release(subscriber);
@@ -663,6 +1020,127 @@ export class RemoteClientService {
     for (const listener of listeners) listener(event);
   }
 
+  private async refreshNotifications(hostId: string, reset = false): Promise<void> {
+    if (!this.options.notifications) return;
+    if (reset) this.resetNotificationsPending.add(hostId);
+    const running = this.fetchingNotifications.get(hostId);
+    if (running) {
+      this.refetchNotificationsPending.add(hostId);
+      return running;
+    }
+    const generation = this.notificationsGeneration.get(hostId) ?? 0;
+    const shouldReset = this.resetNotificationsPending.delete(hostId);
+    const task = (async () => {
+      try {
+        const response = await this.peers.request(hostId, 'notifications.state').catch(() => null) as { unread?: unknown } | null;
+        if (!this.disposed && this.peers.connected(hostId)
+          && (this.notificationsGeneration.get(hostId) ?? 0) === generation
+          && response && Array.isArray(response.unread)) {
+          const next = response.unread as NotificationUnread[];
+          const previous = this.peerUnreads.get(hostId) ?? [];
+          if (next.length) this.peerUnreads.set(hostId, next);
+          else this.peerUnreads.delete(hostId);
+          const peer = this.hosts.peer(hostId);
+          if (peer?.show_agents) {
+            if (shouldReset) this.options.notifications?.onChange({ type: 'reset' });
+            else if (JSON.stringify(previous) !== JSON.stringify(next)) this.options.notifications?.onChange({ type: 'counts' });
+          }
+        }
+      } finally {
+        this.fetchingNotifications.delete(hostId);
+      }
+      if (this.refetchNotificationsPending.delete(hostId) && !this.disposed && this.peers.connected(hostId)) {
+        void this.refreshNotifications(hostId);
+      }
+    })();
+    this.fetchingNotifications.set(hostId, task);
+    return task;
+  }
+
+  private receiveNotificationChange(hostId: string, raw: unknown): void {
+    if (!this.options.notifications) return;
+    const peer = this.hosts.peer(hostId);
+    if (!peer || !raw || typeof raw !== 'object') return;
+    const change = raw as Partial<NotificationChange>;
+    if (change.type === 'raised' || change.type === 'updated') {
+      const notification = (change as { notification?: NotificationRecord }).notification;
+      if (!notification || typeof notification !== 'object' || typeof notification.id !== 'string') return;
+      if (peer.show_agents) {
+        const record = this.qualifyNotification(notification, peer);
+        this.cacheRemoteNotification(hostId, record);
+        this.options.notifications.onChange({ type: change.type, notification: record });
+      }
+      void this.refreshNotifications(hostId);
+    } else if (change.type === 'read' || change.type === 'resolved') {
+      const ids = Array.isArray((change as { ids?: unknown }).ids)
+        ? (change as { ids: unknown[] }).ids.filter((id): id is string => typeof id === 'string').map((id) => this.qualifyId(id, peer))
+        : [];
+      if (ids.length) {
+        this.markCachedNotifications(ids, change.type);
+        if (peer.show_agents) this.options.notifications.onChange({ type: change.type, ids });
+      }
+      void this.refreshNotifications(hostId);
+    } else if (change.type === 'counts') {
+      void this.refreshNotifications(hostId);
+    }
+  }
+
+  private cacheRemoteNotification(hostId: string, record: NotificationRecord): void {
+    this.remoteNotifications.delete(record.id);
+    this.remoteNotifications.set(record.id, { hostId, record });
+    while (this.remoteNotifications.size > REMOTE_NOTIFICATION_CACHE_LIMIT) {
+      const oldest = this.remoteNotifications.keys().next().value;
+      if (oldest !== undefined) this.remoteNotifications.delete(oldest);
+      else break;
+    }
+  }
+
+  private markCachedNotifications(ids: readonly string[], kind: 'read' | 'resolved'): void {
+    const at = new Date().toISOString();
+    for (const id of ids) {
+      const entry = this.remoteNotifications.get(id);
+      if (!entry) continue;
+      entry.record = {
+        ...entry.record,
+        read_at: entry.record.read_at ?? at,
+        ...(kind === 'resolved' ? { resolved_at: entry.record.resolved_at ?? at } : {})
+      };
+    }
+  }
+
+  private splitPeerPrefix(value: string): { peer: PeerHost; id: string } | null {
+    const separator = value.indexOf(':');
+    if (separator <= 0) return null;
+    const hostName = value.slice(0, separator);
+    const peer = this.hosts.peers().find((candidate) => candidate.name === hostName);
+    return peer ? { peer, id: value.slice(separator + 1) } : null;
+  }
+
+  private unqualifyProjectId(projectId: string, peer: PeerHost): string {
+    if (projectId.startsWith(`${peer.name}:`)) return projectId.slice(peer.name.length + 1);
+    const link = this.links.links(peer.host_id).find((candidate) => candidate.project_id === projectId);
+    return link ? link.remote_project_id : projectId;
+  }
+
+  private qualifyNotification(record: NotificationRecord, peer: PeerHost): NotificationRecord {
+    const id = this.qualifyId(record.id, peer);
+    const projectId = record.project_id ? (this.links.localProjectFor(peer.host_id, record.project_id) ?? `${peer.name}:${record.project_id}`) : null;
+    const processId = record.process_id ? this.qualifyId(record.process_id, peer) : null;
+    const sessionId = record.session_id ? this.qualifyId(record.session_id, peer) : null;
+    const routedTo = record.routed_to_process_id ? this.qualifyId(record.routed_to_process_id, peer) : null;
+    const url = qualifyNotificationUrl(record.url, peer.name, projectId, sessionId, processId);
+    return {
+      ...record,
+      id,
+      project_id: projectId,
+      process_id: processId,
+      session_id: sessionId,
+      routed_to_process_id: routedTo,
+      url,
+      host: peer.name
+    };
+  }
+
   private qualifyProject(remote: ProjectWorkbenchDto, peer: PeerHost): ProjectWorkbenchDto {
     const q = (value: string | null) => value === null ? null : this.qualifyId(value, peer);
     return {
@@ -747,6 +1225,56 @@ export function controlledProcess(channel: string, raw: unknown): string | undef
 
 function stripHost(value: string, name: string): string {
   return value.startsWith(`${name}:`) ? value.slice(name.length + 1) : value;
+}
+
+function decodeNotificationCursor(cursor: string | undefined): { updatedAt: string; id: string } | null {
+  const split = cursor?.indexOf('|') ?? -1;
+  if (!cursor || split < 1) return null;
+  return { updatedAt: cursor.slice(0, split), id: cursor.slice(split + 1) };
+}
+
+function qualifyNotificationUrl(
+  url: string,
+  peerName: string,
+  projectId: string | null,
+  sessionId: string | null,
+  processId: string | null
+): string {
+  let parsed: URL;
+  try { parsed = new URL(url, 'http://patterm.local'); } catch { return url; }
+  const pathname = parsed.pathname;
+  if (pathname === '/routines') {
+    const query = new URLSearchParams();
+    query.set('host', peerName);
+    const report = parsed.searchParams.get('report');
+    const run = parsed.searchParams.get('run');
+    if (report) query.set('report', report);
+    if (run) query.set('run', processId ?? (run.includes(':') ? run : `${peerName}:${run}`));
+    return `/routines?${query.toString()}`;
+  }
+  const botMatch = /^\/bots\/([^/]+)$/.exec(pathname);
+  if (botMatch) {
+    const botId = decodeURIComponent(botMatch[1]!);
+    return `/bots/${encodeURIComponent(botId.includes(':') ? botId : `${peerName}:${botId}`)}`;
+  }
+  const agentMatch = /^\/projects\/([^/]+)\/agents\/([^/]+)$/.exec(pathname);
+  if (agentMatch) {
+    const rawProject = decodeURIComponent(agentMatch[1]!);
+    const rawSession = decodeURIComponent(agentMatch[2]!);
+    return `/projects/${encodeURIComponent(projectId ?? `${peerName}:${rawProject}`)}/agents/${encodeURIComponent(sessionId ?? `${peerName}:${rawSession}`)}`;
+  }
+  const processMatch = /^\/projects\/([^/]+)\/processes\/([^/]+)$/.exec(pathname);
+  if (processMatch) {
+    const rawProject = decodeURIComponent(processMatch[1]!);
+    const rawProcess = decodeURIComponent(processMatch[2]!);
+    return `/projects/${encodeURIComponent(projectId ?? `${peerName}:${rawProject}`)}/processes/${encodeURIComponent(processId ?? `${peerName}:${rawProcess}`)}`;
+  }
+  const projectMatch = /^\/projects\/([^/]+)$/.exec(pathname);
+  if (projectMatch) {
+    const rawProject = decodeURIComponent(projectMatch[1]!);
+    return `/projects/${encodeURIComponent(projectId ?? `${peerName}:${rawProject}`)}`;
+  }
+  return url;
 }
 
 function collectPrefixes(value: unknown, names: Set<string>, depth: number): void {

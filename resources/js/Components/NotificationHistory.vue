@@ -67,6 +67,8 @@ interface Page { items: NotificationRecord[]; next_cursor: string | null }
 type Change =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
+  | { type: 'counts' }
+  | { type: 'reset' }
   | { type: 'reconnected' };
 
 const PAGE_SIZE = 30;
@@ -162,8 +164,8 @@ function applyChange(raw: unknown): void {
       marks.set(id, { read_at: mark?.read_at ?? at, ...(change.type === 'resolved' ? { resolved_at: mark?.resolved_at ?? at } : mark?.resolved_at ? { resolved_at: mark.resolved_at } : {}) });
     }
     items.value = settle(items.value);
-  } else if (change.type === 'reconnected') {
-    // Changes made while disconnected never arrived, so load the list again.
+  } else if (change.type === 'reconnected' || change.type === 'reset') {
+    // Changes made while disconnected or after peer visibility/rename changes require a fresh list.
     restart();
   } else if (change.type === 'raised' || change.type === 'updated') {
     // A repeat can make a read record unread again; the server's copy is newer.
@@ -210,6 +212,7 @@ function meta(item: NotificationRecord): string {
   return [
     origin,
     item.project_name,
+    item.host,
     item.audience === 'parent' ? 'Sent to its parent agent' : null,
     item.resolved_at ? 'Handled' : null
   ].filter(Boolean).join(' · ');

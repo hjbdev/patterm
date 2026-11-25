@@ -36,6 +36,8 @@ export interface NotificationRecord {
   // Where it came from, for history lists. Null once the process is deleted.
   project_name: string | null;
   process_name: string | null;
+  // Set for notifications relayed from a paired host.
+  host?: string;
 }
 
 export interface RaiseNotificationInput {
@@ -65,7 +67,9 @@ export type NotificationChange =
   | { type: 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
   // A project was snoozed or woke, so unread totals changed.
-  | { type: 'counts' };
+  | { type: 'counts' }
+  // The set of visible paired hosts changed (connect, disconnect, hide, rename).
+  | { type: 'reset' };
 
 export interface NotificationUnread {
   process_id: string | null;

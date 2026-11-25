@@ -8,6 +8,7 @@
         <h1 class="text-sm font-semibold">Usage</h1>
         <p class="truncate text-[11px] text-muted-foreground">Tokens from agent conversations and auto-summaries, plus remaining quota.</p>
       </div>
+      <SettingsChoice v-if="hostOptions.length > 1" :model-value="selectedHost" :options="hostOptions" aria-label="Host" class="h-7 w-36 shrink-0 text-xs" @update:model-value="selectHost" />
     </header>
 
     <main class="mx-1.5 mb-1.5 min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
@@ -159,13 +160,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { ArrowLeft } from 'lucide-vue-next';
+import SettingsChoice from '../Components/settings/SettingsChoice.vue';
 import { Button } from '../Components/ui/button';
 import UsageDailyChart from '../Components/UsageDailyChart.vue';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import { relativeTime } from '../lib/format';
+import { readHosts, type PeerHost } from '../lib/hosts';
 import { compactTokens } from '../lib/integratedUsage';
+import { useTopicRefresh } from '../lib/serverQuery';
 import { formatUsd, harnessLabel, processedTokens, untilLabel, useUsage, type UsageLimit, type UsageMetric, type UsageRange, type UsageSkill, type UsageTokens } from '../lib/usage';
 
 const RANGES: Array<{ days: UsageRange; label: string }> = [
@@ -180,10 +185,49 @@ const METRICS: Array<{ value: UsageMetric; label: string }> = [
   { value: 'cost', label: 'Cost' }
 ];
 
+const route = useRoute();
 const { router, activeProjectId } = useWorkbenchNavigation();
+const peers = ref<PeerHost[]>([]);
+const queryHost = () => (typeof route.query.host === 'string' && route.query.host.trim() ? route.query.host.trim() : null);
+const selectedHost = ref<string | null>(queryHost());
+const connectedPeers = computed(() => peers.value.filter((peer) => peer.link.state === 'connected'));
+const hostOptions = computed(() => {
+  const names = new Set(connectedPeers.value.map((peer) => peer.name));
+  const options: Array<{ value: string | null; label: string }> = [
+    { value: null, label: 'This host' },
+    ...connectedPeers.value.map((peer) => ({ value: peer.name as string | null, label: peer.name }))
+  ];
+  if (selectedHost.value && !names.has(selectedHost.value)) {
+    options.push({ value: selectedHost.value, label: `${selectedHost.value} (offline)` });
+  }
+  return options;
+});
+async function loadHosts(): Promise<void> {
+  try {
+    const overview = await readHosts();
+    peers.value = overview.peers;
+  } catch {
+    peers.value = [];
+  }
+}
+function selectHost(next: string | null): void {
+  if (next === selectedHost.value) return;
+  selectedHost.value = next;
+  allSkills.value = false;
+  void router.replace({ name: 'usage', query: next ? { host: next } : {} });
+}
+watch(() => route.query.host, () => {
+  const next = queryHost();
+  if (next === selectedHost.value) return;
+  selectedHost.value = next;
+  allSkills.value = false;
+});
+useTopicRefresh(['settings'], () => void loadHosts());
+onMounted(() => void loadHosts());
+
 const metric = ref<UsageMetric>('tokens');
 const days = ref<UsageRange>(30);
-const { summary, error } = useUsage(days);
+const { summary, error } = useUsage(days, selectedHost);
 const now = ref(Date.now());
 const clock = setInterval(() => { now.value = Date.now(); }, 30_000);
 onBeforeUnmount(() => clearInterval(clock));

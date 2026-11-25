@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type ComputedRef } from 'vue';
 import { useRoute } from 'vue-router';
 import { Bell, ChevronDown, Focus, Timer } from 'lucide-vue-next';
 import { Bubble, BubbleContent } from './ui/bubble';
@@ -79,7 +79,7 @@ import ConversationMessageFooter from './ConversationMessageFooter.vue';
 import Markdown from './Markdown.vue';
 import MentionPart from './MentionPart.vue';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { findProcess, sessionForProcess, splitProcessMentions } from '../lib/agentMentions';
+import { CONVERSATION_HOST, findProcess, sessionForProcess, splitProcessMentions } from '../lib/agentMentions';
 import { agentLabel } from '../lib/agentTabs';
 import type { TranscriptMessage, TranscriptOrigin } from '../lib/integratedConversation';
 
@@ -90,9 +90,14 @@ const props = defineProps<{ message: TranscriptMessage; origin: TranscriptOrigin
 const emit = defineEmits<{ toggle: [] }>();
 
 const route = useRoute();
+const conversationHost = inject<ComputedRef<string | null> | null>(CONVERSATION_HOST, null);
 const { projects, archivedSessions, archivedProcesses, loadArchived } = useWorkbench();
 const routeProjectId = computed(() => typeof route.params.projectId === 'string' ? route.params.projectId : null);
-const senderId = computed(() => props.origin.kind === 'agent' ? props.origin.processId : null);
+const senderId = computed(() => {
+  if (props.origin.kind !== 'agent') return null;
+  const raw = props.origin.processId;
+  return !raw.includes(':') && conversationHost?.value ? `${conversationHost.value}:${raw}` : raw;
+});
 const owner = computed(() => senderId.value ? findProcess(projects.value, senderId.value, routeProjectId.value) : null);
 // As in ProcessMention, senders that ended before the snapshot are read on demand.
 const session = computed(() => owner.value ? owner.value.session : senderId.value ? sessionForProcess(archivedSessions.value.values(), senderId.value) : null);

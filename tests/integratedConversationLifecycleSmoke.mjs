@@ -12,6 +12,7 @@ const { archiveTranscript } = require('../dist/tests/resources/js/lib/historyTra
 const { awaitingUser } = require('../dist/tests/resources/js/lib/activity.js');
 const { conversationFailure } = require('../dist/tests/resources/js/lib/conversationFailure.js');
 const { harnessLabel } = require('../dist/tests/resources/js/lib/harnessLabels.js');
+const { CONVERSATION_HOST, hostOfProcessId } = require('../dist/tests/resources/js/lib/agentMentions.js');
 const { isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH } = require('../dist/tests/app/Services/OpenCodeServiceErrors.js');
 
 // The pane keeps provider/business logic in helpers and services. This harness
@@ -116,7 +117,7 @@ function createHarness({ processId = 'process_a', exited = false, restartable = 
     failOutgoingMessage: composer.failOutgoingMessage,
     archiveTranscript,
     awaitingUser,
-    conversationFailure, harnessLabel, isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH,
+    conversationFailure, harnessLabel, CONVERSATION_HOST, hostOfProcessId, isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH,
     randomId: () => crypto.randomUUID(),
     payloadHash: composer.payloadHash,
     provide: (key, value) => provided.set(key, value),

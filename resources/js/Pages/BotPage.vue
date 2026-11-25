@@ -124,6 +124,7 @@ import { useBrowserState } from '../lib/browser';
 import { botMentionables, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
 import type { HarnessPreset } from '../lib/paletteSources';
 import { harnessPresets } from '../lib/serverQuery';
+import type { HarnessInstallationRecord } from '../types';
 import type { Peek } from '../lib/peek';
 import { phoneLayout } from '../lib/phoneLayout';
 import { hasSecrets } from '../lib/secrets';
@@ -179,21 +180,44 @@ const projectId = computed(() => ownProject.value?.project.id ?? null);
 
 // The @ menu offers the bot's helpers and the agents and processes in its
 // purview, which are what its tools can reach, and presets and harnesses for
-// launching a helper. A paired host's bot reaches only that host's records,
-// whose IDs it knows unqualified, and launches with that host's presets and
-// harnesses, so it is offered none of this host's.
+// launching a helper. A paired host's bot lists that host's live agents and
+// processes (with unqualified IDs for its MCP tools) and that host's presets
+// and harnesses.
 const mentions = computed(() => {
   const processId = row.value?.session?.processId;
-  return row.value && processId && !row.value.bot.host
-    ? botMentionables(ownProject.value, projects.value, row.value.bot.purview, processId)
+  return row.value && processId
+    ? botMentionables(ownProject.value, projects.value, row.value.bot.purview, processId, row.value.bot.host)
     : { agents: [], processes: [] };
 });
 const presets = ref<HarnessPreset[]>([]);
-const mentionLaunchers = computed(() => row.value?.bot.host ? [] : buildMentionLaunchers(harnesses.value, presets.value));
-watch(() => row.value?.session?.processId, (processId) => {
+const remoteHarnesses = ref<HarnessInstallationRecord[]>([]);
+const remotePresets = ref<HarnessPreset[]>([]);
+const mentionLaunchers = computed(() => row.value?.bot.host
+  ? buildMentionLaunchers(remoteHarnesses.value, remotePresets.value)
+  : buildMentionLaunchers(harnesses.value, presets.value));
+let launcherGeneration = 0;
+watch(() => [row.value?.session?.processId, row.value?.bot.host ?? null] as const, ([processId, host]) => {
   if (!processId) return;
+  const token = ++launcherGeneration;
+  if (host) {
+    remoteHarnesses.value = [];
+    remotePresets.value = [];
+    void Promise.all([
+      window.patterm.call('harness_list', {}, host)
+        .then((result) => Array.isArray(result) ? result : (result as { harnesses?: HarnessInstallationRecord[] } | null)?.harnesses ?? [])
+        .catch(() => [] as HarnessInstallationRecord[]),
+      window.patterm.call('harness_presets', {}, host)
+        .then((result) => (result as { presets?: HarnessPreset[] } | null)?.presets ?? [])
+        .catch(() => [] as HarnessPreset[])
+    ]).then(([nextHarnesses, nextPresets]) => {
+      if (token !== launcherGeneration) return;
+      remoteHarnesses.value = nextHarnesses;
+      remotePresets.value = nextPresets;
+    });
+    return;
+  }
   void harnessPresets<{ presets?: HarnessPreset[] }>()
-    .then((settings) => { presets.value = settings?.presets ?? []; })
+    .then((settings) => { if (token === launcherGeneration) presets.value = settings?.presets ?? []; })
     .catch(() => { /* Harnesses are still offered. */ });
 }, { immediate: true });
 

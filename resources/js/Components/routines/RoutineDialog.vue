@@ -67,6 +67,7 @@ import {
 const props = defineProps<{
   routine: RoutineRecord | null;
   now: number;
+  host?: string | null;
   harnesses: readonly string[];
   projects: ReadonlyArray<{ id: string; name: string }>;
   bots?: readonly RoutineDeliveryBot[] | undefined;
@@ -83,20 +84,33 @@ const runs = ref<RoutineRunRecord[]>([]);
 const starting = ref(false);
 const error = ref('');
 const confirmingDelete = ref(false);
+let activeHost: string | null = props.host ?? null;
+const editKey = (host: string | null, routineId: string) => `${host ?? ''}\0${routineId}`;
+const splitEditKey = (key: string): { host: string | null; routineId: string } => {
+  const split = key.indexOf('\0');
+  return split < 0 ? { host: null, routineId: key } : { host: split > 0 ? key.slice(0, split) : null, routineId: key.slice(split + 1) };
+};
 const autosave = useRoutineAutosave({
-  save: updateRoutine,
-  onSaved: (saved) => {
-    if (draft.value?.routine_id === saved.routine_id && !autosave.hasPending(saved.routine_id)) draft.value = { ...saved };
+  save: (key, patch) => {
+    const { host, routineId } = splitEditKey(key);
+    return updateRoutine(routineId, patch, host);
+  },
+  onSaved: (saved, key) => {
+    const { host } = splitEditKey(key);
+    if (host !== activeHost) return;
+    if (draft.value?.routine_id === saved.routine_id && !autosave.hasPending(key)) draft.value = { ...saved };
     emit('saved', saved);
   },
-  onError: (routineId, message) => {
-    if (draft.value?.routine_id === routineId) error.value = message ?? '';
+  onError: (key, message) => {
+    const { host, routineId } = splitEditKey(key);
+    if (host === activeHost && draft.value?.routine_id === routineId) error.value = message ?? '';
   }
 });
 const saving = autosave.saving;
 
-watch(() => props.routine?.routine_id, () => {
+watch(() => [props.routine?.routine_id, props.host ?? null] as const, ([, nextHost]) => {
   void autosave.flush();
+  activeHost = nextHost;
   draft.value = props.routine ? { ...props.routine } : null;
   error.value = '';
   confirmingDelete.value = false;
@@ -106,16 +120,17 @@ watch(() => props.routine?.routine_id, () => {
 
 // Server copies replace the draft only while nothing is waiting to save.
 watch(() => props.routine, (routine) => {
-  if (routine && draft.value?.routine_id === routine.routine_id && !autosave.hasPending(routine.routine_id) && !saving.value) draft.value = { ...routine };
+  if (routine && draft.value?.routine_id === routine.routine_id && !autosave.hasPending(editKey(activeHost, routine.routine_id)) && !saving.value) draft.value = { ...routine };
 });
 watch(() => props.revision, () => void loadRuns());
 
 async function loadRuns(): Promise<void> {
   const id = draft.value?.routine_id;
+  const host = activeHost;
   if (!id) return;
   try {
-    const loaded = await routineRuns(id, 10);
-    if (draft.value?.routine_id === id) runs.value = loaded;
+    const loaded = await routineRuns(id, 10, host);
+    if (draft.value?.routine_id === id && activeHost === host) runs.value = loaded;
   } catch {
     // The routine may have just been deleted.
   }
@@ -124,7 +139,7 @@ async function loadRuns(): Promise<void> {
 function change(patch: RoutinePatch): void {
   if (!draft.value) return;
   draft.value = { ...draft.value, ...patch };
-  autosave.change(draft.value.routine_id, patch);
+  autosave.change(editKey(activeHost, draft.value.routine_id), patch);
 }
 
 function rename(name: string): void {
@@ -136,13 +151,14 @@ function rename(name: string): void {
 async function runNow(): Promise<void> {
   if (!draft.value) return;
   const routineId = draft.value.routine_id;
+  const host = activeHost;
   starting.value = true;
   try {
-    if (!(await autosave.flush(routineId))) return;
-    await runRoutineNow(routineId);
-    if (draft.value?.routine_id === routineId) await loadRuns();
+    if (!(await autosave.flush(editKey(host, routineId)))) return;
+    await runRoutineNow(routineId, host);
+    if (draft.value?.routine_id === routineId && activeHost === host) await loadRuns();
   } catch (cause) {
-    if (draft.value?.routine_id === routineId) error.value = cause instanceof Error ? cause.message : String(cause);
+    if (draft.value?.routine_id === routineId && activeHost === host) error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     starting.value = false;
   }
@@ -151,13 +167,16 @@ async function runNow(): Promise<void> {
 async function remove(): Promise<void> {
   if (!draft.value) return;
   const id = draft.value.routine_id;
-  autosave.discard(id);
+  const host = activeHost;
+  autosave.discard(editKey(host, id));
   try {
-    await deleteRoutine(id);
-    emit('deleted', id);
+    await deleteRoutine(id, host);
+    if (activeHost === host) emit('deleted', id);
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
-    confirmingDelete.value = false;
+    if (activeHost === host) {
+      error.value = cause instanceof Error ? cause.message : String(cause);
+      confirmingDelete.value = false;
+    }
   }
 }
 

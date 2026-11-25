@@ -86,7 +86,7 @@ export function untilLabel(value: string | null, now: number): string {
 
 // Imports run in the background, so the page re-reads on a slow interval
 // rather than waiting for a change announcement.
-export function useUsage(days: Ref<UsageRange>) {
+export function useUsage(days: Ref<UsageRange>, host?: Ref<string | null>) {
   const summary = shallowRef<UsageSummary | null>(null);
   const error = ref('');
   let request = 0;
@@ -94,7 +94,7 @@ export function useUsage(days: Ref<UsageRange>) {
   async function refresh(): Promise<void> {
     const current = ++request;
     try {
-      const result = await window.patterm.call('usage_summary', { days: days.value }) as UsageSummary;
+      const result = await window.patterm.call('usage_summary', { days: days.value }, host?.value ?? undefined) as UsageSummary;
       if (current !== request) return;
       summary.value = result;
       error.value = '';
@@ -104,6 +104,13 @@ export function useUsage(days: Ref<UsageRange>) {
   }
 
   watch(days, () => void refresh());
+  if (host) {
+    watch(host, () => {
+      summary.value = null;
+      error.value = '';
+      void refresh();
+    });
+  }
   const interval = setInterval(() => void refresh(), 60_000);
   onBeforeUnmount(() => clearInterval(interval));
   void refresh();

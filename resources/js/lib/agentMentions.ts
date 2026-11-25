@@ -60,6 +60,17 @@ export interface MentionPart {
 // host names are lowercase letters, digits, and hyphens.
 const MENTION = new RegExp(String.raw`(?<![\w-])(?:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?:)?process_\d+\b|\[patterm_(preset|harness):([^\]\n]+)\]|\[patterm_figure:(${FIGURE_ID})\]`, 'g');
 
+// Vue provide/inject key for the host that owns the active conversation, so
+// unqualified process IDs (e.g. `process_7`) inside a remote agent's or bot's
+// transcript resolve on that host instead of locally.
+export const CONVERSATION_HOST = Symbol('patterm:conversation-host');
+
+export function hostOfProcessId(processId: string | null | undefined): string | null {
+  if (!processId) return null;
+  const separator = processId.indexOf(':');
+  return separator > 0 ? processId.slice(0, separator) : null;
+}
+
 export function launchToken(kind: 'preset' | 'harness', value: string): string {
   return `[patterm_${kind}:${value}]`;
 }
@@ -126,20 +137,36 @@ export function mentionableProcesses(processes: readonly ProcessRecord[], sessio
 
 // What a bot's @ menu offers: its own helpers first, then the live agents and
 // processes of the user projects its purview reaches, each labelled with its
-// project. Paired hosts' records stay out, since purview names only this
-// host's projects.
+// project. For a bot on a paired host (`botHost`), it gathers live agents and
+// processes running on that host in projects within the bot's purview, and
+// emits unqualified process IDs that the remote bot's own MCP tools accept.
 type Purview = { kind: 'none' } | { kind: 'all' } | { kind: 'projects'; projectIds: readonly string[] };
 
-export function botMentionables(own: ProjectWorkbench | null, projects: readonly ProjectWorkbench[], purview: Purview, selfProcessId: string): { agents: MentionAgent[]; processes: MentionProcess[] } {
-  const reached = projects.filter((item) => !item.project.host && (purview.kind === 'all' || (purview.kind === 'projects' && purview.projectIds.includes(item.project.id))));
+export function botMentionables(own: ProjectWorkbench | null, projects: readonly ProjectWorkbench[], purview: Purview, selfProcessId: string, botHost?: string | null): { agents: MentionAgent[]; processes: MentionProcess[] } {
+  const host = botHost || null;
+  const matchesProjectHost = (item: ProjectWorkbench): boolean => host
+    ? item.project.host === host || Boolean(item.project.remotes?.some((remote) => remote.host === host))
+    : !item.project.host;
+  const matchesRecordHost = (recordHost?: string): boolean => host ? recordHost === host : !recordHost;
+  const emitId = (id: string): string => host && id.startsWith(`${host}:`) ? id.slice(host.length + 1) : id;
+
+  const reached = projects.filter((item) => matchesProjectHost(item) && (purview.kind === 'all' || (purview.kind === 'projects' && purview.projectIds.includes(item.project.id))));
   const label = (base: string | null, project: string): string => base ? `${base} · ${project}` : project;
   const agents: MentionAgent[] = [];
   const processes: MentionProcess[] = [];
   for (const item of own ? [own, ...reached] : reached) {
-    const sessions = item.projectSessions.filter((session) => !session.host);
+    const sessions = item.projectSessions.filter((session) => matchesRecordHost(session.host));
     const named = item !== own;
-    agents.push(...mentionableAgents(sessions, selfProcessId).map((agent) => named ? { ...agent, parent: label(agent.parent, item.project.name) } : agent));
-    processes.push(...mentionableProcesses(item.processes.filter((process) => !process.host), sessions).map((process) => named ? { ...process, owner: label(process.owner, item.project.name) } : process));
+    agents.push(...mentionableAgents(sessions, selfProcessId).map((agent) => ({
+      ...agent,
+      processId: emitId(agent.processId),
+      ...(named ? { parent: label(agent.parent, item.project.name) } : {})
+    })));
+    processes.push(...mentionableProcesses(item.processes.filter((process) => matchesRecordHost(process.host)), sessions).map((process) => ({
+      ...process,
+      processId: emitId(process.processId),
+      ...(named ? { owner: label(process.owner, item.project.name) } : {})
+    })));
   }
   return { agents, processes };
 }
