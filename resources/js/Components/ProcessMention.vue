@@ -28,11 +28,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { computed, inject, watch, type ComputedRef } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { cn } from '@/lib/utils';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { sessionForProcess } from '../lib/agentMentions';
+import { CONVERSATION_HOST, sessionForProcess } from '../lib/agentMentions';
 import { agentLabel } from '../lib/agentTabs';
 import { hostLabel } from '../lib/hosts';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
@@ -45,15 +45,19 @@ const props = defineProps<{ processId: string }>();
 
 const route = useRoute();
 const router = useRouter();
+const conversationHost = inject<ComputedRef<string | null> | null>(CONVERSATION_HOST, null);
+const resolvedProcessId = computed(() => !props.processId.includes(':') && conversationHost?.value
+  ? `${conversationHost.value}:${props.processId}`
+  : props.processId);
 const { projects, archivedSessions, archivedProcesses, loadArchived, lookupProcess } = useWorkbench();
 const routeProjectId = computed(() => typeof route.params.projectId === 'string' ? route.params.projectId : null);
 const project = computed(() => projects.value.find((item) => item.project.id === routeProjectId.value) ?? null);
 // Bots live in their own projects, after every listed one; their links open
 // the bot beside a project it works in.
-const owner = computed(() => lookupProcess(props.processId, routeProjectId.value));
+const owner = computed(() => lookupProcess(resolvedProcessId.value, routeProjectId.value));
 // Ended processes outside the snapshot are only looked up in the route's project.
-const session = computed(() => owner.value ? owner.value.session : sessionForProcess(archivedSessions.value.values(), props.processId));
-const process = computed(() => owner.value ? owner.value.process : archivedProcesses.value.get(props.processId) ?? null);
+const session = computed(() => owner.value ? owner.value.session : sessionForProcess(archivedSessions.value.values(), resolvedProcessId.value));
+const process = computed(() => owner.value ? owner.value.process : archivedProcesses.value.get(resolvedProcessId.value) ?? null);
 const projectId = computed(() => owner.value?.projectId ?? routeProjectId.value);
 const name = computed(() => session.value ? agentLabel(session.value) : process.value?.name ?? props.processId);
 const label = computed(() => session.value ? hostLabel(agentLabel(session.value), session.value.host) : process.value ? hostLabel(process.value.name, process.value.host) : props.processId);
@@ -66,7 +70,7 @@ const openable = computed(() => session.value
   : Boolean(process.value?.ptyProcessId && process.value.status === 'running'));
 
 // Processes that ended before the snapshot's window are read on demand.
-watch([project, () => props.processId], ([current, processId]) => {
+watch([project, resolvedProcessId], ([current, processId]) => {
   if (current && !session.value && !process.value) void loadArchived(current.project.id, { processId });
 }, { immediate: true });
 

@@ -85,44 +85,46 @@ export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode', 'agy'] as const
 
 // Routine reads are cached until routines or the workbench change: a run's
 // waiting and needs-you state follow its agent's activity. Writes here mark
-// routines changed, so the next read is fresh.
-function routineRead<T>(name: string, args: Record<string, unknown>): Promise<T> {
+// routines changed, so the next read is fresh. Paired hosts do not announce
+// routine changes here, so their reads bypass the local topic cache.
+function routineRead<T>(name: string, args: Record<string, unknown>, host?: string | null): Promise<T> {
+  if (host) return window.patterm.call(name, args, host) as Promise<T>;
   return topicRead('routines', [name, args, useWorkbench().revision.value], () => window.patterm.call(name, args) as Promise<T>);
 }
 
-function routineWrite<T>(name: string, args: Record<string, unknown>): Promise<T> {
-  return (window.patterm.call(name, args) as Promise<T>).then((result) => {
-    topicChanged('routines');
+function routineWrite<T>(name: string, args: Record<string, unknown>, host?: string | null): Promise<T> {
+  return (window.patterm.call(name, args, host ?? undefined) as Promise<T>).then((result) => {
+    if (!host) topicChanged('routines');
     return result;
   });
 }
 
-export function listRoutines(): Promise<RoutineRecord[]> {
-  return routineRead<{ routines: RoutineRecord[] }>('routine_list', {}).then((result) => result.routines);
+export function listRoutines(host?: string | null): Promise<RoutineRecord[]> {
+  return routineRead<{ routines: RoutineRecord[] }>('routine_list', {}, host).then((result) => result.routines);
 }
 
-export function createRoutine(input: RoutinePatch & { name: string }): Promise<RoutineRecord> {
-  return routineWrite<RoutineRecord>('routine_create', input);
+export function createRoutine(input: RoutinePatch & { name: string }, host?: string | null): Promise<RoutineRecord> {
+  return routineWrite<RoutineRecord>('routine_create', input, host);
 }
 
-export function updateRoutine(routineId: string, patch: RoutinePatch): Promise<RoutineRecord> {
-  return routineWrite<RoutineRecord>('routine_update', { routine_id: routineId, ...patch });
+export function updateRoutine(routineId: string, patch: RoutinePatch, host?: string | null): Promise<RoutineRecord> {
+  return routineWrite<RoutineRecord>('routine_update', { routine_id: routineId, ...patch }, host);
 }
 
-export function deleteRoutine(routineId: string): Promise<unknown> {
-  return routineWrite('routine_delete', { routine_id: routineId });
+export function deleteRoutine(routineId: string, host?: string | null): Promise<unknown> {
+  return routineWrite('routine_delete', { routine_id: routineId }, host);
 }
 
-export function runRoutineNow(routineId: string): Promise<RoutineRunRecord> {
-  return routineWrite<RoutineRunRecord>('routine_run_now', { routine_id: routineId });
+export function runRoutineNow(routineId: string, host?: string | null): Promise<RoutineRunRecord> {
+  return routineWrite<RoutineRunRecord>('routine_run_now', { routine_id: routineId }, host);
 }
 
-export function routineRun(runId: string): Promise<RoutineRunRecord> {
-  return window.patterm.call('routine_run', { run_id: runId }) as Promise<RoutineRunRecord>;
+export function routineRun(runId: string, host?: string | null): Promise<RoutineRunRecord> {
+  return window.patterm.call('routine_run', { run_id: runId }, host ?? undefined) as Promise<RoutineRunRecord>;
 }
 
-export function routineLog(input: { limit?: number; offset?: number; routine_id?: string } = {}): Promise<RoutineRunRecord[]> {
-  return routineRead<{ runs: RoutineRunRecord[] }>('routine_log', input).then((result) => result.runs);
+export function routineLog(input: { limit?: number; offset?: number; routine_id?: string } = {}, host?: string | null): Promise<RoutineRunRecord[]> {
+  return routineRead<{ runs: RoutineRunRecord[] }>('routine_log', input, host).then((result) => result.runs);
 }
 
 // A run sits at the time it reported, or when it started if it has not.
@@ -130,8 +132,8 @@ export function runTime(run: RoutineRunRecord): number {
   return Date.parse(run.reported_at ?? run.finished_at ?? run.started_at ?? run.scheduled_for);
 }
 
-export function routineRuns(routineId: string, limit = 20): Promise<RoutineRunRecord[]> {
-  return routineRead<{ runs: RoutineRunRecord[] }>('routine_runs', { routine_id: routineId, limit }).then((result) => result.runs);
+export function routineRuns(routineId: string, limit = 20, host?: string | null): Promise<RoutineRunRecord[]> {
+  return routineRead<{ runs: RoutineRunRecord[] }>('routine_runs', { routine_id: routineId, limit }, host).then((result) => result.runs);
 }
 
 export const WEEKDAYS = [

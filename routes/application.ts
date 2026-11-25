@@ -275,10 +275,10 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
     return result;
   });
 
-  ipcMain.handle('patterm:notifications:state', () => application.notifications.state());
-  ipcMain.handle('patterm:notifications:list', (_event, raw) => application.notifications.list(raw));
-  ipcMain.handle('patterm:notifications:read', (_event, raw) => application.notifications.read(raw));
-  ipcMain.handle('patterm:notifications:resolve', (_event, raw) => application.notifications.resolve(raw));
+  ipcMain.handle('patterm:notifications:state', () => application.notificationsState());
+  ipcMain.handle('patterm:notifications:list', (_event, raw) => application.notificationsList(raw));
+  ipcMain.handle('patterm:notifications:read', (_event, raw) => application.notificationsRead(raw));
+  ipcMain.handle('patterm:notifications:resolve', (_event, raw) => application.notificationsResolve(raw));
   ipcMain.handle('patterm:notifications:test', () => application.notifications.test());
   ipcMain.handle('patterm:settings:notifications:get', () => application.notifications.readSettings());
   ipcMain.handle('patterm:settings:notifications:update', (_event, raw) => application.notifications.updateSettings(raw));

@@ -28,6 +28,7 @@ export interface NotificationRecord {
   url: string;
   project_name: string | null;
   process_name: string | null;
+  host?: string;
 }
 
 interface Unread {

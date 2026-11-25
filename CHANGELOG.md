@@ -42,6 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Paired-host projects and agents now support creating projects on a paired
     host (with remote folder browsing), project menu actions (rename, logo,
     snooze, remove), agent snooze, and status labels.
+  - Paired-host notifications, Routines, Usage, and remote bot mentions:
+    - Notifications stream from visible paired hosts into the notification tray,
+      tab/project unread badges, Electron dock/taskbar badge, and native desktop
+      alerts (without duplicating Web Push or local bot digests), with read and
+      resolve actions routed back to the owning host.
+    - Scheduled routines, Reports, and Usage pages now include a host switcher
+      when paired hosts are connected (and support `?host=<name>` deep links
+      from remote routine notifications).
+    - Paired-host bots now support `@` mentions for agents and processes on
+      their host (within their purview) and launch chips for their host's
+      harnesses and presets.
 - Antigravity agents get Patterm's tools through a gateway. Antigravity
   drops the largest MCP tools once all servers' declarations pass its size
   budget, which Patterm's catalogue nearly filled on its own. Its sessions now

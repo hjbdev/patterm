@@ -4,7 +4,7 @@ import { routineRun, type RoutineRunRecord } from '../lib/routines';
 
 // Opens a routine run from the Routines pages: a running run shows its
 // conversation, any other its report.
-export function useRoutineRunViewer(routineName: (routineId: string) => string) {
+export function useRoutineRunViewer(routineName: (routineId: string) => string, host?: () => string | null) {
   const router = useRouter();
   const reportRun = ref<RoutineRunRecord | null>(null);
   const runProcessId = ref<string | null>(null);
@@ -35,9 +35,10 @@ export function useRoutineRunViewer(routineName: (routineId: string) => string) 
     const runId = reportRun.value?.run_id;
     if (!runId) return;
     const request = ++reportRequest;
+    const targetHost = host?.() ?? null;
     try {
-      const fresh = await routineRun(runId);
-      if (request === reportRequest && reportRun.value?.run_id === runId) reportRun.value = fresh;
+      const fresh = await routineRun(runId, targetHost);
+      if (request === reportRequest && reportRun.value?.run_id === runId && (host?.() ?? null) === targetHost) reportRun.value = fresh;
     } catch {
       // A deleted routine takes its runs with it; the open copy stays until closed.
     }

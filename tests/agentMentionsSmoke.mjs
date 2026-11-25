@@ -88,6 +88,42 @@ test('a bot mentions its helpers and what its purview reaches, labelled by proje
   assert.deepEqual(botMentionables(null, projects, { kind: 'none' }, 'process_1'), { agents: [], processes: [] });
 });
 
+test('a paired-host bot mentions its own host helpers and projects with unqualified process IDs', () => {
+  const process = (id, fields = {}) => ({ id, parentProcessId: null, kind: 'shell', name: id, command: 'bash', cwd: null, argv: [], status: 'running', activity: 'idle', ptyProcessId: `pty_${id}`, worktreeId: null, autoRestart: false, exitedAt: null, exitCode: null, ...fields });
+  const project = (id, name, projectSessions, processes = [], fields = {}) => ({ project: { id, name, ...fields }, projectSessions, processes });
+  const own = project('beta:p_bot', 'Bots', [
+    session('beta:s_bot', 'beta:process_1', { displayName: 'Robin', sessionRole: 'bot', host: 'beta' }),
+    session('beta:s_helper', 'beta:process_2', { parentId: 'beta:s_bot', displayName: 'Helper', host: 'beta' })
+  ], [], { host: 'beta' });
+  const projects = [
+    // Linked project has both local and beta sessions/processes.
+    project('p_linked', 'Alpha', [
+      session('s_local', 'process_10', { displayName: 'Local Builder' }),
+      session('beta:s_remote', 'beta:process_7', { displayName: 'Remote Builder', host: 'beta' })
+    ], [
+      process('process_11', { name: 'local server' }),
+      process('beta:process_8', { name: 'remote server', parentProcessId: 'beta:process_7', host: 'beta' })
+    ], { remotes: [{ host: 'beta', projectId: 'beta:p_linked' }] }),
+    // Unlinked remote project on beta.
+    project('beta:p_only', 'RemoteOnly', [
+      session('beta:s_only', 'beta:process_30', { displayName: 'Watcher', host: 'beta' })
+    ], [], { host: 'beta' }),
+    // Local-only project should never appear for a beta bot.
+    project('p_local', 'LocalOnly', [session('s_l', 'process_40', { displayName: 'Local' })])
+  ];
+  const all = botMentionables(own, projects, { kind: 'all' }, 'beta:process_1', 'beta');
+  assert.deepEqual(all.agents.map((agent) => [agent.processId, agent.parent]), [
+    ['process_2', 'Robin'],
+    ['process_7', 'Alpha'],
+    ['process_30', 'RemoteOnly']
+  ], 'remote bot mentions only beta agents and emits unqualified process IDs');
+  assert.deepEqual(all.processes.map((item) => [item.processId, item.owner]), [
+    ['process_8', 'Remote Builder · Alpha']
+  ], 'remote bot mentions only beta processes and emits unqualified process IDs');
+  const scoped = botMentionables(own, projects, { kind: 'projects', projectIds: ['p_linked'] }, 'beta:process_1', 'beta');
+  assert.deepEqual(scoped.agents.map((agent) => agent.processId), ['process_2', 'process_7'], 'purview scoping works on linked projects');
+});
+
 test('process IDs split out of message text as whole words', () => {
   assert.deepEqual(splitProcessMentions('ask process_12, then process_3.'), [
     { text: 'ask ' },

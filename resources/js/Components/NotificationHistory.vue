@@ -67,6 +67,7 @@ interface Page { items: NotificationRecord[]; next_cursor: string | null }
 type Change =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
+  | { type: 'counts' }
   | { type: 'reconnected' };
 
 const PAGE_SIZE = 30;
@@ -169,6 +170,8 @@ function applyChange(raw: unknown): void {
     // A repeat can make a read record unread again; the server's copy is newer.
     marks.delete(change.notification.id);
     void refreshHead();
+  } else if (change.type === 'counts') {
+    void refreshHead();
   }
 }
 
@@ -210,6 +213,7 @@ function meta(item: NotificationRecord): string {
   return [
     origin,
     item.project_name,
+    item.host,
     item.audience === 'parent' ? 'Sent to its parent agent' : null,
     item.resolved_at ? 'Handled' : null
   ].filter(Boolean).join(' · ');

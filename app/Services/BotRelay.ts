@@ -242,6 +242,8 @@ export class BotRelay {
   handleNotification(change: NotificationChange): void {
     if (change.type !== 'raised') return;
     const notification = change.notification;
+    // Paired hosts run their own bot relays; never double-digest remote notices here.
+    if (notification.host) return;
     if (notification.audience !== 'user' || !FORWARDED_KINDS.has(notification.kind)) return;
     // A routine turn, quieted by triage, is not news.
     if (notification.kind === 'turn_finished' && notification.urgency === 'low') return;

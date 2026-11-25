@@ -119,7 +119,7 @@ import { createMcpRegistry, type McpToolRegistry } from './MCP/createMcpRegistry
 import { McpSocketServer } from './MCP/McpSocketServer';
 import { LaunchingMcpIdentities, McpHelperAccess } from './MCP/McpHelperAccess';
 import { TerminalClientRequestService, type TerminalClientRequest } from './Services/TerminalClientRequestService';
-import { NotificationService, type NotificationChange, type NotificationRecord } from './Services/NotificationService';
+import { NotificationService, type NotificationChange, type NotificationRecord, type NotificationUnread } from './Services/NotificationService';
 import { NotificationDelivery } from './Services/NotificationDelivery';
 import { NotificationTriage, TurnDigests } from './Services/NotificationTriage';
 import { PresenceService } from './Services/PresenceService';
@@ -208,6 +208,11 @@ export interface PattermApplication {
   // Local videos agents show in HTML figures, served to clients as bytes.
   figureVideos: Pick<FigureVideoStore, 'locate' | 'read'>;
   bootstrap(): BootstrapPayload;
+  // Combined local + visible paired-host notification state, history, and updates.
+  notificationsState(): { unread: NotificationUnread[] };
+  notificationsList(raw: unknown): Promise<{ items: NotificationRecord[]; total: number; next_cursor: string | null }>;
+  notificationsRead(raw: unknown): Promise<{ updated: number }>;
+  notificationsResolve(raw: unknown): Promise<{ updated: number }>;
   // Notification records changed. Clients update badges and show toasts.
   onNotificationsChanged(handler: (change: NotificationChange) => void): () => void;
   // The user is away and a notification should reach the desktop.
@@ -422,15 +427,19 @@ async function createApplicationResources(
     return assistantInbox.deliverNotice(processId, text, fromProcessId,
       () => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated));
   };
-  const notificationService = new NotificationService(database, settings, timeline, messageProcess,
-    (change) => events.emit('notifications:changed', change));
+  const notificationService = new NotificationService(database, settings, timeline, messageProcess, (change) => {
+    events.emit('notifications:changed', change);
+    remoteClient?.localNotificationChanged(change);
+  });
   defer(integrated.onPromptDispatch((processId) => {
     notificationService.resolve({ process_id: processId, kinds: ['failure'], dedupe_key: 'failure' });
   }));
   const notifications = new NotificationActions(notificationService, settings, presence, push);
   const delivery = new NotificationDelivery(presence, {
-    current: (id) => notificationService.get(id),
+    current: (id) => notificationService.get(id) ?? remoteClient?.notification(id) ?? null,
     push: (notification) => {
+      // Paired hosts send Web Push to subscribed phones themselves.
+      if (notification.host) return Promise.resolve();
       const botId = notification.process_id ? assistantInbox.botFor(notification.process_id) : null;
       const bot = botId ? settings.bots().bots.find((candidate) => candidate.id === botId) : undefined;
       return push.deliver(notification, bot ? { id: bot.id, name: bot.name } : null);
@@ -843,7 +852,14 @@ async function createApplicationResources(
       'integrated_restart', 'bot_restart'
     ]),
     localBots: () => settings.bots().bots,
-    botsChanged: () => notifyChanged(['settings'], true)
+    botsChanged: () => notifyChanged(['settings'], true),
+    notifications: {
+      state: () => notifications.state(),
+      list: (raw) => notifications.list(raw),
+      read: (raw) => notifications.read(raw),
+      resolve: (raw) => notifications.resolve(raw),
+      onChange: (change) => events.emit('notifications:changed', change)
+    }
   });
   const remote = remoteClient;
   defer(() => remote.dispose());
@@ -852,11 +868,11 @@ async function createApplicationResources(
     pairingBlocked,
     passwordSet: () => serverAccess.passwordSet(),
     // Pairing, linking, and hiding change which records the workbench shows.
-    onChange: () => notifyChanged(['settings', 'workbench']),
+    onChange: () => { notifyChanged(['settings', 'workbench']); remote.notificationsVisibilityChanged(); },
     projectLinks: (hostId) => projectLinks.links(hostId),
     onUnpaired: (peer) => { void crossHost.bounceQueued(peer.host_id, peer.name); }
   });
-  const projectLinkActions = new ProjectLinkActions(projectLinks, hostService, peers, () => notifyChanged(['settings', 'workbench']));
+  const projectLinkActions = new ProjectLinkActions(projectLinks, hostService, peers, () => { notifyChanged(['settings', 'workbench']); remote.notificationsVisibilityChanged(); });
 
   const routines = new RoutineService({
     database,
@@ -1104,6 +1120,10 @@ async function createApplicationResources(
       appName: 'patterm-desktop',
       sidecarAvailable: terminal.isAvailable()
     }),
+    notificationsState: () => ({ unread: remote.mergeUnread(notifications.state().unread) }),
+    notificationsList: (raw) => remote.listNotifications(raw, (input) => notifications.list(input)),
+    notificationsRead: (raw) => remote.readNotifications(raw, (input) => notifications.read(input)),
+    notificationsResolve: (raw) => remote.resolveNotifications(raw, (input) => notifications.resolve(input)),
     notifyChanged,
     readWorkbench: (since) => sync.read(since),
     currentWorkbench: () => sync.snapshot(),

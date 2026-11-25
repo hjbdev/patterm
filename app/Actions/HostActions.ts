@@ -163,6 +163,7 @@ export class HostActions {
   setShowAgents(raw: unknown): HostOverview {
     const { host_id, show_agents } = showAgentsInput.parse(raw);
     if (!this.hosts.setShowAgents(host_id, show_agents)) throw new Error('That host is not paired.');
+    this.options.onChange?.();
     return this.overview();
   }
 }

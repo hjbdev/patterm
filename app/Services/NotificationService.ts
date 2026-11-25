@@ -36,6 +36,8 @@ export interface NotificationRecord {
   // Where it came from, for history lists. Null once the process is deleted.
   project_name: string | null;
   process_name: string | null;
+  // Set for notifications relayed from a paired host.
+  host?: string;
 }
 
 export interface RaiseNotificationInput {
