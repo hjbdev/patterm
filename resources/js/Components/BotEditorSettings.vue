@@ -311,9 +311,15 @@ function saveLook(next: Avatar['look']): void {
   look.value = { ...next };
   avatarKind.value = 'face';
   avatarError.value = '';
-  // A failed save shows the saved face again, so trying again sends the change.
+  // A failed save puts back the saved value of each part it changed, unless
+  // that part has changed again since, so trying again sends the change.
   void save('avatar', (bot) => ({ avatar: { ...bot.avatar, kind: 'face', look: { ...bot.avatar.look, ...changed } } }))
-    .then((saved) => { if (!saved) look.value = { ...current().avatar.look }; });
+    .then((saved) => {
+      if (saved) return;
+      const stored = current().avatar.look;
+      const reverted = Object.fromEntries(Object.entries(changed).filter(([key, value]) => look.value[key as keyof Avatar['look']] === value).map(([key]) => [key, stored[key as keyof Avatar['look']]]));
+      look.value = { ...look.value, ...reverted };
+    });
 }
 // A picture saves once one is chosen; the other kinds save straight away.
 function chooseKind(kind: Avatar['kind']): void {
