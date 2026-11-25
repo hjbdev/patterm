@@ -27,7 +27,8 @@ model-selected tools, including shell, patching, and collaboration. The requeste
 model must exist in that catalog; Patterm never substitutes another model.
 Sessions are ephemeral and temporary files are removed after the CLI exits.
 
-OpenCode uses its native `api POST /api/generate` command and shared server.
+OpenCode uses the shared server’s stateless `/api/generate` endpoint directly
+when available, falling back to its native `api POST /api/generate` command.
 This stateless endpoint sends one prompt with no tools or session context; it
 creates no conversation to delete. The default model is `openai/gpt-5.6-luna`;
 the model field also accepts the short ID `gpt-5.6-luna`. Sign in to OpenAI through
@@ -36,8 +37,8 @@ configuration, so an explicitly configured API-key connection still uses that
 connection. Patterm strips inherited API-key environment variables and does not
 fall back to another provider or model. Unlike the session-generation endpoint,
 this endpoint does not include existing conversation or project instructions.
-The prompt is passed through the CLI's `--data` argument and can be visible in
-local process inspection while that command runs.
+On the CLI fallback, the prompt is passed through `--data` and can be visible
+in local process inspection while that command runs.
 
 Each provider becomes selectable when its CLI is discovered. Use **Test
 summariser** to check the installed CLI, login, and model access before enabling
@@ -127,9 +128,8 @@ summaries wait for it.
 
 ## Scheduling and privacy
 
-An agent becomes eligible when you message it through Patterm (the terminal or
-Integrated input, or steering a queued message), and stays enrolled across
-restarts. Only top-level agents are summarised; children that other agents
+An agent becomes eligible when you message it through Patterm (conversation
+input or steering a queued message), and stays enrolled across restarts. Only top-level agents are summarised; children that other agents
 spawned are skipped. Shell processes need fresh input after Patterm restarts or
 settings change. An agent is skipped while a permission prompt is open.
 
