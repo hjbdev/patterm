@@ -55,7 +55,10 @@ export const DISCORD_SNOWFLAKE = /^\d{15,22}$/;
 export const botDiscordInput = z.object({
   enabled: z.boolean().default(false),
   allowedUserIds: z.array(z.string().trim().regex(DISCORD_SNOWFLAKE, 'use a Discord user ID')).max(20).default([])
-    .transform((ids) => [...new Set(ids)])
+    .transform((ids) => [...new Set(ids)]),
+  // Reads the message an allowed user's mention replies to, which needs
+  // Message Content turned on for the Discord application.
+  readReplies: z.boolean().default(false)
 });
 
 export type BotDiscord = z.infer<typeof botDiscordInput>;

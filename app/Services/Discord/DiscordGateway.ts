@@ -9,8 +9,15 @@ export const DISCORD_API = 'https://discord.com/api/v10';
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 // GUILD_MESSAGES | DIRECT_MESSAGES. Message content is a privileged intent,
 // but Discord includes it for messages that mention the bot and for DMs,
-// which are the only messages the bot answers.
+// which are the only messages the bot answers. Reading the message such a
+// mention replies to needs MESSAGE_CONTENT, which the owner turns on for
+// their application first.
 const INTENTS = (1 << 9) | (1 << 12);
+const MESSAGE_CONTENT_INTENT = 1 << 15;
+// Application flags saying Message Content is turned on for the application.
+const MESSAGE_CONTENT_FLAGS = (1 << 18) | (1 << 19);
+// A reply, the only message type whose referenced_message is the message replied to.
+export const DISCORD_REPLY_TYPE = 19;
 const USER_AGENT = 'DiscordBot (patterm, 1)';
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 15_000, 30_000, 60_000];
 const REST_TIMEOUT_MS = 15_000;
@@ -32,7 +39,14 @@ const FRESH_SESSION_CODES = new Set([4007, 4009]);
 export interface DiscordUser {
   id: string;
   username: string;
+  global_name?: string | null;
   bot?: boolean;
+}
+
+export interface DiscordApplication {
+  id: string;
+  // Whether Message Content is turned on for it in the Developer Portal.
+  messageContent: boolean;
 }
 
 export interface DiscordMessage {
@@ -43,11 +57,16 @@ export interface DiscordMessage {
   content: string;
   mentions?: DiscordUser[];
   attachments?: Array<{ id: string; filename: string; url: string; size?: number }>;
+  type?: number;
+  message_reference?: { message_id?: string; channel_id?: string };
+  // For a reply: the message replied to, null once deleted, or absent when
+  // Discord didn't look it up.
+  referenced_message?: DiscordMessage | null;
 }
 
 export type DiscordGatewayStatus =
   | { state: 'connecting' }
-  | { state: 'connected'; user: DiscordUser }
+  | { state: 'connected'; user: DiscordUser; application: DiscordApplication | null }
   | { state: 'error'; message: string; retrying: boolean }
   | { state: 'stopped' };
 
@@ -66,6 +85,8 @@ interface GatewayPayload {
 type Socket = Pick<WebSocket, 'send' | 'close' | 'on' | 'readyState'>;
 
 export interface DiscordGatewayOptions {
+  // Asks for message content, so replied-to messages from others can be read.
+  messageContent?: boolean;
   connect?: (url: string) => Socket;
   fetch?: typeof fetch;
   log?: (event: string, data: Record<string, unknown>) => void;
@@ -81,6 +102,7 @@ export class DiscordGateway {
   private attempts = 0;
   private stopped = false;
   private self: DiscordUser | null = null;
+  private application: DiscordApplication | null = null;
 
   constructor(
     private readonly token: string,
@@ -112,6 +134,10 @@ export class DiscordGateway {
   async send(channelId: string, body: Record<string, unknown>): Promise<{ id: string }> {
     const result = await this.rest('POST', `/channels/${channelId}/messages`, body);
     return { id: String((result as { id?: unknown } | null)?.id ?? '') };
+  }
+
+  async message(channelId: string, messageId: string): Promise<DiscordMessage> {
+    return await this.rest('GET', `/channels/${channelId}/messages/${messageId}`) as DiscordMessage;
   }
 
   async react(channelId: string, messageId: string, emoji: string): Promise<void> {
@@ -154,7 +180,7 @@ export class DiscordGateway {
         const interval = Number((payload.d as { heartbeat_interval?: unknown } | undefined)?.heartbeat_interval);
         this.startHeartbeat(socket, Number.isFinite(interval) && interval > 0 ? interval : 41_250);
         if (this.session) this.write(socket, { op: 6, d: { token: this.token, session_id: this.session.id, seq: this.sequence } });
-        else this.write(socket, { op: 2, d: { token: this.token, intents: INTENTS, properties: { os: process.platform, browser: 'patterm', device: 'patterm' } } });
+        else this.write(socket, { op: 2, d: { token: this.token, intents: INTENTS | (this.options.messageContent ? MESSAGE_CONTENT_INTENT : 0), properties: { os: process.platform, browser: 'patterm', device: 'patterm' } } });
         return;
       }
       case 11:
@@ -183,11 +209,14 @@ export class DiscordGateway {
 
   private dispatch(type: string, data: unknown): void {
     if (type === 'READY') {
-      const ready = data as { session_id?: unknown; resume_gateway_url?: unknown; user?: DiscordUser };
+      const ready = data as { session_id?: unknown; resume_gateway_url?: unknown; user?: DiscordUser; application?: { id?: unknown; flags?: unknown } };
       if (typeof ready.session_id === 'string' && typeof ready.resume_gateway_url === 'string') {
         this.session = { id: ready.session_id, resumeUrl: ready.resume_gateway_url.replace(/\/+$/, '') };
       }
       if (ready.user?.id) this.self = { id: String(ready.user.id), username: String(ready.user.username ?? ''), bot: true };
+      if (ready.application?.id) {
+        this.application = { id: String(ready.application.id), messageContent: (Number(ready.application.flags) & MESSAGE_CONTENT_FLAGS) !== 0 };
+      }
       this.connected();
       return;
     }
@@ -203,7 +232,7 @@ export class DiscordGateway {
 
   private connected(): void {
     this.attempts = 0;
-    if (this.self) this.events.status({ state: 'connected', user: this.self });
+    if (this.self) this.events.status({ state: 'connected', user: this.self, application: this.application });
   }
 
   private startHeartbeat(socket: Socket, interval: number): void {
@@ -223,7 +252,9 @@ export class DiscordGateway {
 
   private closed(code: number): void {
     if (this.stopped) return;
-    const fatal = FATAL_CLOSE_CODES[code];
+    const fatal = code === 4014 && this.options.messageContent
+      ? 'Discord hasn\'t allowed this application Message Content. Turn on Message Content Intent on its Bot page in the Developer Portal, or turn off Read replied-to messages.'
+      : FATAL_CLOSE_CODES[code];
     if (fatal) {
       this.session = null;
       this.log('closed.fatal', { code });
