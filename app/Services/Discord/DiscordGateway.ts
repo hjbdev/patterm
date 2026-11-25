@@ -9,13 +9,10 @@ export const DISCORD_API = 'https://discord.com/api/v10';
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 // GUILD_MESSAGES | DIRECT_MESSAGES. Message content is a privileged intent,
 // but Discord includes it for messages that mention the bot and for DMs,
-// which are the only messages the bot answers. Reading the message such a
-// mention replies to needs MESSAGE_CONTENT, which the owner turns on for
-// their application first.
+// which are the only messages the bot answers. The gateway never asks for
+// it: the message such a mention replies to is fetched on its own, which
+// needs only Message Content turned on for the application.
 const INTENTS = (1 << 9) | (1 << 12);
-const MESSAGE_CONTENT_INTENT = 1 << 15;
-// Application flags saying Message Content is turned on for the application.
-const MESSAGE_CONTENT_FLAGS = (1 << 18) | (1 << 19);
 // A reply, the only message type whose referenced_message is the message replied to.
 export const DISCORD_REPLY_TYPE = 19;
 const USER_AGENT = 'DiscordBot (patterm, 1)';
@@ -45,8 +42,6 @@ export interface DiscordUser {
 
 export interface DiscordApplication {
   id: string;
-  // Whether Message Content is turned on for it in the Developer Portal.
-  messageContent: boolean;
 }
 
 export interface DiscordMessage {
@@ -85,8 +80,6 @@ interface GatewayPayload {
 type Socket = Pick<WebSocket, 'send' | 'close' | 'on' | 'readyState'>;
 
 export interface DiscordGatewayOptions {
-  // Asks for message content, so replied-to messages from others can be read.
-  messageContent?: boolean;
   connect?: (url: string) => Socket;
   fetch?: typeof fetch;
   log?: (event: string, data: Record<string, unknown>) => void;
@@ -180,7 +173,7 @@ export class DiscordGateway {
         const interval = Number((payload.d as { heartbeat_interval?: unknown } | undefined)?.heartbeat_interval);
         this.startHeartbeat(socket, Number.isFinite(interval) && interval > 0 ? interval : 41_250);
         if (this.session) this.write(socket, { op: 6, d: { token: this.token, session_id: this.session.id, seq: this.sequence } });
-        else this.write(socket, { op: 2, d: { token: this.token, intents: INTENTS | (this.options.messageContent ? MESSAGE_CONTENT_INTENT : 0), properties: { os: process.platform, browser: 'patterm', device: 'patterm' } } });
+        else this.write(socket, { op: 2, d: { token: this.token, intents: INTENTS, properties: { os: process.platform, browser: 'patterm', device: 'patterm' } } });
         return;
       }
       case 11:
@@ -209,13 +202,14 @@ export class DiscordGateway {
 
   private dispatch(type: string, data: unknown): void {
     if (type === 'READY') {
-      const ready = data as { session_id?: unknown; resume_gateway_url?: unknown; user?: DiscordUser; application?: { id?: unknown; flags?: unknown } };
+      // READY names the application, for the link that adds the bot to a server.
+      const ready = data as { session_id?: unknown; resume_gateway_url?: unknown; user?: DiscordUser; application?: { id?: unknown } };
       if (typeof ready.session_id === 'string' && typeof ready.resume_gateway_url === 'string') {
         this.session = { id: ready.session_id, resumeUrl: ready.resume_gateway_url.replace(/\/+$/, '') };
       }
       if (ready.user?.id) this.self = { id: String(ready.user.id), username: String(ready.user.username ?? ''), bot: true };
       if (ready.application?.id) {
-        this.application = { id: String(ready.application.id), messageContent: (Number(ready.application.flags) & MESSAGE_CONTENT_FLAGS) !== 0 };
+        this.application = { id: String(ready.application.id) };
       }
       this.connected();
       return;
@@ -252,9 +246,7 @@ export class DiscordGateway {
 
   private closed(code: number): void {
     if (this.stopped) return;
-    const fatal = code === 4014 && this.options.messageContent
-      ? 'Discord hasn\'t allowed this application Message Content. Turn on Message Content Intent on its Bot page in the Developer Portal, then turn Read replied-to messages off and on again to reconnect. Or leave it off.'
-      : FATAL_CLOSE_CODES[code];
+    const fatal = FATAL_CLOSE_CODES[code];
     if (fatal) {
       this.session = null;
       this.log('closed.fatal', { code });

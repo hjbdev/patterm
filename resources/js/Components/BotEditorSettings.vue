@@ -137,7 +137,7 @@
       </SettingsSection>
 
       <SettingsSection v-if="!host" title="Discord" :scope="`${scope}.discord`" keywords="mentions dm token">
-        <template #description>Create an application in the Discord Developer Portal and copy its bot token from the Bot page. Once the bot connects, invite it to your server from here.</template>
+        <template #description>Create an application in the Discord Developer Portal. On its Bot page, copy the token and turn on Message Content Intent, so the bot can read messages you tag it in a reply to. Once it connects, add it to a server from here.</template>
         <SettingsRow label="Answer on Discord" description="Answers your mentions and DMs with short replies, and pings you there when work you started finishes." html-for="bot-discord" :save-key="`${scope}.discord.enabled`" toggle>
           <Switch id="bot-discord" :model-value="Boolean(bot.discord?.enabled)" @update:model-value="saveDiscord('enabled', { enabled: Boolean($event) })" />
         </SettingsRow>
@@ -151,9 +151,6 @@
           </SettingsRow>
           <SettingsRow label="Your user ID" description="In Discord, turn on Developer Mode, then right-click your name and choose Copy User ID. Separate several with commas." html-for="bot-discord-users" :save-key="`${scope}.discord.users`" inset>
             <Input id="bot-discord-users" v-model="userIds" class="h-8 w-full text-xs [@container(min-width:26rem)]:w-56" placeholder="123456789012345678" autocomplete="off" spellcheck="false" @blur="saveUserIds" @keydown.enter="saveUserIds" />
-          </SettingsRow>
-          <SettingsRow label="Read replied-to messages" description="When you tag the bot in a reply, it reads the message you replied to. Turn on Message Content Intent on your application's Bot page first. The bot still ignores messages that don't come from you." html-for="bot-discord-replies" :save-key="`${scope}.discord.replies`" toggle inset>
-            <Switch id="bot-discord-replies" :model-value="Boolean(bot.discord?.readReplies)" @update:model-value="saveDiscord('replies', { readReplies: Boolean($event) })" />
           </SettingsRow>
           <SettingsRow v-if="status" label="Status" inset>
             <template v-if="status.invite_url" #description>Add the bot to a server you manage, then mention it there.</template>
@@ -410,7 +407,7 @@ const token = ref('');
 const userIds = ref((props.bot.discord?.allowedUserIds ?? []).join(', '));
 const status = ref<DiscordBotStatus | null>(null);
 function discordOf(bot: Bot): NonNullable<Bot['discord']> {
-  return { enabled: bot.discord?.enabled ?? false, allowedUserIds: [...(bot.discord?.allowedUserIds ?? [])], readReplies: bot.discord?.readReplies ?? false };
+  return { enabled: bot.discord?.enabled ?? false, allowedUserIds: [...(bot.discord?.allowedUserIds ?? [])]};
 }
 async function saveDiscord(key: string, patch: Partial<NonNullable<Bot['discord']>> | (() => Partial<NonNullable<Bot['discord']>>)): Promise<void> {
   await save(`discord.${key}`, (bot) => ({ discord: { ...discordOf(bot), ...(typeof patch === 'function' ? patch() : patch) } }));
@@ -440,7 +437,7 @@ function removeToken(): void {
 const statusText = computed(() => {
   const value = status.value;
   if (!value) return '';
-  if (value.state === 'connected') return `Connected as ${value.user?.username ?? 'the bot'}${current().discord?.readReplies || !value.message_content ? '' : '. Message Content is on, so you can turn on Read replied-to messages'}`;
+  if (value.state === 'connected') return `Connected as ${value.user?.username ?? 'the bot'}`;
   if (value.state === 'connecting') return 'Connecting…';
   if (value.state === 'error') return value.error ?? 'Couldn\'t connect';
   return value.reason ?? 'Not connected';

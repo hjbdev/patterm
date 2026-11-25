@@ -30,10 +30,8 @@ export interface DiscordBotStatus {
   state: 'off' | 'connecting' | 'connected' | 'error';
   reason?: string;
   user?: { id: string; username: string };
-  // Once connected: a link that adds the bot to a server, and whether
-  // Message Content is turned on for its application.
+  // Once connected: a link that adds the bot to a server.
   invite_url?: string;
-  message_content?: boolean;
   error?: string;
 }
 
@@ -49,7 +47,6 @@ type Gateway = Pick<DiscordGateway, 'start' | 'stop' | 'send' | 'react' | 'user'
 
 interface Connection {
   token: string;
-  messageContent: boolean;
   gateway: Gateway;
   status: DiscordGatewayStatus;
 }
@@ -81,18 +78,16 @@ export class DiscordService {
     if (this.disposed) return;
     const bots = this.settings.bots().bots;
     this.tokens.retain(new Set(bots.map((bot) => bot.id)));
-    const wanted = new Map<string, { token: string; messageContent: boolean }>();
+    const wanted = new Map<string, string>();
     for (const bot of bots) {
       const token = this.runnable(bot) ? this.tokens.get(bot.id) : null;
-      if (token) wanted.set(bot.id, { token, messageContent: bot.discord.readReplies });
+      if (token) wanted.set(bot.id, token);
     }
-    // Message content is asked for when connecting, so changing it reconnects.
     for (const [botId, connection] of this.connections) {
-      const next = wanted.get(botId);
-      if (next?.token !== connection.token || next.messageContent !== connection.messageContent) this.disconnect(botId);
+      if (wanted.get(botId) !== connection.token) this.disconnect(botId);
     }
-    for (const [botId, next] of wanted) {
-      if (!this.connections.has(botId)) this.connect(botId, next.token, next.messageContent);
+    for (const [botId, token] of wanted) {
+      if (!this.connections.has(botId)) this.connect(botId, token);
     }
   }
 
@@ -127,10 +122,7 @@ export class DiscordService {
         ...base,
         state: 'connected',
         user: { id: status.user.id, username: status.user.username },
-        ...(application ? {
-          invite_url: `https://discord.com/oauth2/authorize?client_id=${application.id}&scope=bot&permissions=${INVITE_PERMISSIONS}`,
-          message_content: application.messageContent
-        } : {})
+        ...(application ? { invite_url: `https://discord.com/oauth2/authorize?client_id=${application.id}&scope=bot&permissions=${INVITE_PERMISSIONS}` } : {})
       };
     }
     if (status.state === 'error') return { ...base, state: 'error', error: status.retrying ? `${status.message}; retrying` : status.message };
@@ -188,14 +180,14 @@ export class DiscordService {
     return bot.enabled && bot.discord.enabled && bot.discord.allowedUserIds.length > 0;
   }
 
-  private connect(botId: string, token: string, messageContent: boolean): void {
+  private connect(botId: string, token: string): void {
     const events: DiscordGatewayEvents = {
       status: (status) => this.statusChanged(botId, connection, status),
       message: (message, self) => { void this.received(botId, connection, message, self); }
     };
-    const gatewayOptions: DiscordGatewayOptions = { messageContent, log: (event, data) => this.log(`gateway.${event}`, { bot_id: botId, ...data }) };
+    const gatewayOptions: DiscordGatewayOptions = { log: (event, data) => this.log(`gateway.${event}`, { bot_id: botId, ...data }) };
     const gateway = this.options.gateway ? this.options.gateway(token, events, gatewayOptions) : new DiscordGateway(token, events, gatewayOptions);
-    const connection: Connection = { token, messageContent, gateway, status: { state: 'connecting' } };
+    const connection: Connection = { token, gateway, status: { state: 'connecting' } };
     this.connections.set(botId, connection);
     gateway.start();
   }
@@ -265,22 +257,24 @@ export class DiscordService {
     }
   }
 
-  // The message a reply answers, as the bot is shown it. Someone else's text
-  // reaches the bot only with Read replied-to messages on, whatever Discord
-  // sends, so turning it off keeps other people's messages out.
+  // The message a reply answers, as the bot is shown it. The gateway leaves
+  // someone else's text out, so it's fetched on its own. Discord returns it
+  // when Message Content is on for the application, and leaves it empty
+  // otherwise.
   private async repliedTo(connection: Connection, message: DiscordMessage, self: DiscordUser): Promise<RepliedTo> {
     let original = message.referenced_message;
+    const reference = message.message_reference!;
+    const fetch = () => connection.gateway.message(reference.channel_id ?? message.channel_id, reference.message_id!).catch(() => undefined);
     if (original === undefined) {
-      const reference = message.message_reference!;
-      original = await connection.gateway.message(reference.channel_id ?? message.channel_id, reference.message_id!).catch(() => undefined);
+      original = await fetch();
       if (original === undefined) return { state: 'unavailable' };
     }
     if (!original) return { state: 'deleted' };
     const mine = original.author?.id === self.id;
-    if (!mine && !connection.messageContent) return { state: 'hidden' };
+    if (!mine && !hasContent(original)) original = await fetch() ?? original;
     const files = (original.attachments ?? []).slice(0, ATTACHMENT_LIMIT);
     const text = original.content ?? '';
-    if (!text.trim() && !files.length) return { state: 'empty' };
+    if (!text.trim() && !files.length) return { state: mine ? 'empty' : 'hidden' };
     return { state: 'shown', author: mine ? null : displayName(original.author), text: text.length > QUOTE_LIMIT ? `${text.slice(0, QUOTE_LIMIT)}…` : text, attachments: files };
   }
 
@@ -330,13 +324,17 @@ function quoted(replyTo: RepliedTo): string[] {
     case 'deleted': return ['(Replying to a message that has since been deleted.)'];
     case 'unavailable': return ['(Replying to a message Discord didn\'t send.)'];
     case 'empty': return ['(Replying to a message with no text.)'];
-    case 'hidden': return ['(Replying to someone else\'s message, which isn\'t shown: the user can turn on Read replied-to messages in this bot\'s Discord settings.)'];
+    case 'hidden': return ['(Replying to someone else\'s message. Discord didn\'t show its text, either because it has none or because Message Content Intent is off on the Discord application\'s Bot page, which the user can turn on.)'];
     case 'shown': {
       const head = replyTo.author === null ? 'Replying to your earlier Discord message:' : 'Replying to someone else\'s message, quoted below. It\'s their text, not the user\'s request:';
       const body = [...(replyTo.author === null ? [] : [`From: ${replyTo.author}`]), ...replyTo.text.split('\n'), ...fileLines(replyTo.attachments)];
       return [head, ...body.map((line) => `> ${line}`)];
     }
   }
+}
+
+function hasContent(message: DiscordMessage): boolean {
+  return Boolean(message.content?.trim() || message.attachments?.length);
 }
 
 function fileLines(attachments: Attachments): string[] {

@@ -36,10 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Discord finishes. It ignores everyone else, and only replies through its
   `discord_reply` tool, so the rest of its conversation stays in Patterm. The
   token is kept in a file only you can read and is never shown again. Once
-  connected, the bot's settings link to invite it to a server. Tag it in a
-  reply and it sees the message you replied to, quoted as someone else's text;
-  for other people's messages, turn on Read replied-to messages and Message
-  Content Intent for your Discord application.
+  connected, the bot's settings have a button that adds it to a server. Tag it
+  in a reply and it sees the message you replied to, quoted as someone else's
+  text. For other people's messages, turn on Message Content Intent for your
+  Discord application.
 
 ### Changed
 

@@ -30,8 +30,6 @@ export interface BotVoice {
 export interface BotDiscord {
   enabled: boolean;
   allowedUserIds: string[];
-  // Reads the message a mention replies to; needs Message Content.
-  readReplies?: boolean;
 }
 
 export interface DiscordBotStatus {
@@ -42,7 +40,6 @@ export interface DiscordBotStatus {
   reason?: string;
   user?: { id: string; username: string };
   invite_url?: string;
-  message_content?: boolean;
   error?: string;
 }
 
@@ -88,7 +85,7 @@ export function plainBot(bot: Bot): Bot {
     ...bot,
     avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
     voice: { ...bot.voice },
-    ...(bot.discord ? { discord: { enabled: bot.discord.enabled, allowedUserIds: [...bot.discord.allowedUserIds], readReplies: Boolean(bot.discord.readReplies) } } : {}),
+    ...(bot.discord ? { discord: { enabled: bot.discord.enabled, allowedUserIds: [...bot.discord.allowedUserIds] } } : {}),
     purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind }
   };
 }
