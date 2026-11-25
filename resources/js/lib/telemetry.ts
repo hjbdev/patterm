@@ -131,18 +131,18 @@ function appOwner(instance: ComponentInternalInstance): string | null {
   return null;
 }
 
-export async function loadTelemetrySettings(): Promise<TelemetrySettings> {
-  return await window.patterm.call('settings_telemetry_get', {}) as TelemetrySettings;
+export async function loadTelemetrySettings(host?: string | null): Promise<TelemetrySettings> {
+  return await window.patterm.call('settings_telemetry_get', {}, host ?? undefined) as TelemetrySettings;
 }
 
-export async function saveTelemetrySettings(settings: TelemetrySettings): Promise<TelemetrySettings> {
-  const saved = await window.patterm.call('settings_telemetry_update', settings) as TelemetrySettings;
-  window.dispatchEvent(new CustomEvent('patterm:telemetry-changed', { detail: saved }));
+export async function saveTelemetrySettings(settings: TelemetrySettings, host?: string | null): Promise<TelemetrySettings> {
+  const saved = await window.patterm.call('settings_telemetry_update', settings, host ?? undefined) as TelemetrySettings;
+  if (!host) window.dispatchEvent(new CustomEvent('patterm:telemetry-changed', { detail: saved }));
   return saved;
 }
 
-export async function sendTelemetryFeedback(feedback: { sentiment: 'like' | 'dislike'; feature?: string; note: string }): Promise<boolean> {
-  const result = await window.patterm.call('telemetry_feedback', feedback) as { accepted: boolean };
+export async function sendTelemetryFeedback(feedback: { sentiment: 'like' | 'dislike'; feature?: string; note: string }, host?: string | null): Promise<boolean> {
+  const result = await window.patterm.call('telemetry_feedback', feedback, host ?? undefined) as { accepted: boolean };
   return result.accepted;
 }
 

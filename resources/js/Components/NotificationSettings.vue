@@ -29,7 +29,7 @@
       </SettingsRow>
     </SettingsSection>
 
-    <SettingsSection v-if="isBrowser" title="This device" :description="deviceHint" scope="notifications.device">
+    <SettingsSection v-if="!host && isBrowser" title="This device" :description="deviceHint" scope="notifications.device">
       <SettingsRow :label="subscribed ? 'Notifications are on for this device' : 'Push notifications'" :description="subscribed ? 'Turn them off here, or remove other devices below.' : 'Ask this browser for permission to show notifications.'">
         <Button v-if="!subscribed" type="button" size="sm" variant="outline" :disabled="busy || !pushSupported" @click="enablePush">{{ busy ? 'Enabling…' : 'Enable on this device' }}</Button>
         <Button v-else type="button" size="sm" variant="outline" :disabled="busy" @click="disablePush">Turn off on this device</Button>
@@ -38,8 +38,11 @@
         <Button type="button" size="sm" variant="ghost" class="text-destructive hover:text-destructive" :disabled="busy" @click="removeDevice(device)">Remove</Button>
       </SettingsRow>
     </SettingsSection>
-    <SettingsSection v-else title="This device" description="The desktop app shows native notifications.">
+    <SettingsSection v-else-if="!host" title="This device" description="The desktop app shows native notifications.">
       <p class="text-xs leading-relaxed text-muted-foreground">To get notifications on a phone, open Patterm’s browser server there and turn them on in this tab.</p>
+    </SettingsSection>
+    <SettingsSection v-else title="Paired delivery" :description="`Notifications from ${host} stream into this app while it is connected and shown.`">
+      <p class="text-xs leading-relaxed text-muted-foreground">To manage phone push subscriptions on {{ host }}, open its browser server directly on that device.</p>
     </SettingsSection>
   </SettingsPanel>
 </template>
@@ -57,6 +60,7 @@ import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 
 interface Device { id: string; endpoint: string; label: string; last_success_at: string | null; }
 
@@ -80,6 +84,7 @@ const URGENCY: Array<{ value: 'low' | 'normal' | 'high'; label: string; short: s
   { value: 'high', label: 'High: permission prompts and failures only', short: 'High' }
 ];
 
+const host = useSettingsHost().value;
 const draft = ref(notificationSettingsInput.parse({}));
 const loading = ref(true);
 const busy = ref(false);
@@ -102,8 +107,10 @@ const deviceHint = computed(() => {
 
 onMounted(async () => {
   try {
-    draft.value = notificationSettingsInput.parse(await window.patterm.notificationSettings());
-    if (isBrowser) await loadDevices();
+    draft.value = notificationSettingsInput.parse(await (host
+      ? window.patterm.call('settings_notifications_get', {}, host)
+      : window.patterm.notificationSettings()));
+    if (!host && isBrowser) await loadDevices();
   } catch { error.value = 'Could not load notification settings. Close and reopen Settings to retry.'; }
   finally { loading.value = false; }
 });
@@ -113,17 +120,20 @@ let revision = 0;
 function save(key: string): void {
   const current = ++revision;
   void autosave(key, async () => {
-    const saved = notificationSettingsInput.parse(await window.patterm.notificationSettingsUpdate(notificationSettingsInput.parse(draft.value)));
+    const payload = notificationSettingsInput.parse(draft.value);
+    const saved = notificationSettingsInput.parse(await (host
+      ? window.patterm.call('settings_notifications_update', payload, host)
+      : window.patterm.notificationSettingsUpdate(payload)));
     if (current !== revision) return;
     draft.value = saved;
-    setNotificationToasts(saved.toasts);
+    if (!host) setNotificationToasts(saved.toasts);
   });
 }
 
 async function sendTest(): Promise<void> {
   error.value = '';
   try {
-    await window.patterm.notificationTest();
+    await (host ? window.patterm.call('notifications_test', {}, host) : window.patterm.notificationTest());
     toast('Test notification sent', { description: 'Switch away from Patterm within five seconds to see a desktop or push notification.' });
   } catch (caught) { error.value = caught instanceof Error ? caught.message : 'The test notification was not sent.'; }
 }

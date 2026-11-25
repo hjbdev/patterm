@@ -178,7 +178,7 @@ import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { botPicture } from '../lib/botPicture';
-import { botProcess, isAssistantBot, restartBotFromSettings, restartNeed, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice } from '../lib/bots';
+import { botProcess, isAssistantBot, readBots, restartBotFromSettings, restartNeed, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotSettings, type BotVoice } from '../lib/bots';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { facePalette, randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
@@ -187,6 +187,7 @@ import { profileName, type ProfileSettings } from '../lib/profiles';
 import { readFileAsDataUrl } from '../lib/projectLogo';
 import { randomId } from '../lib/randomId';
 import { harnessModels, harnessPresets } from '../lib/serverQuery';
+import type { HarnessInstallationRecord } from '../types';
 import BotAvatar from './BotAvatar.vue';
 import FaceMaker from './FaceMaker.vue';
 import HarnessProfileFields from './HarnessProfileFields.vue';
@@ -195,6 +196,7 @@ import SettingsItem from './settings/SettingsItem.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
@@ -248,13 +250,23 @@ const PURVIEW_KINDS = [
 const HARNESS_CHOICES = PROFILE_HARNESSES.map((harness) => ({ value: harness, label: harnessLabel(harness) }));
 const EMOJI = ['🦊', '🐙', '🦉', '🐢', '🤖', '🌱', '⚡', '🧠', '🎩', '🍄'];
 
+const host = useSettingsHost().value;
 const route = useRoute();
 const router = useRouter();
-const { settings, rows, voices } = useBots();
-const { projects, harnesses } = useWorkbench();
-const bots = computed(() => settings.value.bots);
+const { settings: localSettings, rows, voices: localVoices } = useBots();
+const { projects, harnesses: localHarnesses } = useWorkbench();
+const remoteSettings = ref<BotSettings>({ bots: [], userName: null });
+const remoteVoices = ref<string[]>([]);
+const remoteHarnesses = ref<HarnessInstallationRecord[]>([]);
+const remoteProjects = ref<Array<{ id: string; name: string }>>([]);
+const activeSettings = computed(() => host ? remoteSettings.value : localSettings.value);
+const voices = computed(() => host ? remoteVoices.value : localVoices.value);
+const harnesses = computed(() => host ? remoteHarnesses.value : localHarnesses.value);
+const bots = computed(() => activeSettings.value.bots);
 const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, agy: null } });
-const userProjects = computed(() => projects.value.map((item) => item.project).filter((project) => project.kind === 'workspace' || project.kind === 'personal' || !project.kind));
+const userProjects = computed(() => host
+  ? remoteProjects.value
+  : projects.value.map((item) => item.project).filter((project) => !project.host && (project.kind === 'workspace' || project.kind === 'personal' || !project.kind)));
 const catalog = ref<ModelCatalog>(emptyModelCatalog());
 const presetOptions = computed(() => presets.value.presets.map((preset) => ({ value: preset.id as string | null, label: `${profileName(preset)} · ${harnessLabel(preset.harness)}` })));
 const editorIsAssistant = computed(() => editor.value ? isAssistantBot(editor.value) : false);
@@ -271,7 +283,7 @@ const voiceOptions = computed(() => [
 // The name saves once typing pauses, or when the field loses focus.
 const userName = ref('');
 let nameTimer: ReturnType<typeof setTimeout> | undefined;
-watch(() => settings.value.userName, (value) => { if (nameTimer === undefined) userName.value = value ?? ''; }, { immediate: true });
+watch(() => activeSettings.value.userName, (value) => { if (nameTimer === undefined) userName.value = value ?? ''; }, { immediate: true });
 function typeName(value: string): void {
   userName.value = value;
   clearTimeout(nameTimer);
@@ -299,10 +311,29 @@ const restarting = ref(false);
 
 onMounted(async () => {
   try {
-    [presets.value, catalog.value] = await Promise.all([
-      harnessPresets<ProfileSettings>().then((value) => value ?? presets.value),
-      harnessModels<ModelCatalog>()
-    ]);
+    if (host) {
+      const [botData, presetData, modelData, harnessResult, projectResult] = await Promise.all([
+        readBots(host),
+        window.patterm.call('harness_presets', {}, host).catch(() => null) as Promise<ProfileSettings | null>,
+        window.patterm.call('harness_models', {}, host).catch(() => emptyModelCatalog()) as Promise<ModelCatalog>,
+        window.patterm.call('harness_list', {}, host).catch(() => []) as Promise<{ harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[]>,
+        window.patterm.call('project_list', {}, host).catch(() => ({ projects: [] })) as Promise<{ projects?: Array<{ id: string; name: string; kind?: string }> } | Array<{ id: string; name: string; kind?: string }>>
+      ]);
+      remoteSettings.value = { bots: botData.bots ?? [], userName: botData.userName ?? null };
+      remoteVoices.value = botData.voices ?? [];
+      if (presetData) presets.value = presetData;
+      catalog.value = modelData;
+      remoteHarnesses.value = Array.isArray(harnessResult) ? harnessResult : harnessResult?.harnesses ?? [];
+      const listed = Array.isArray(projectResult) ? projectResult : projectResult?.projects ?? [];
+      remoteProjects.value = listed
+        .filter((project) => project.kind === 'workspace' || project.kind === 'personal' || !project.kind)
+        .map((project) => ({ id: project.id, name: project.name }));
+    } else {
+      [presets.value, catalog.value] = await Promise.all([
+        harnessPresets<ProfileSettings>().then((value) => value ?? presets.value),
+        harnessModels<ModelCatalog>()
+      ]);
+    }
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
   }
@@ -314,7 +345,8 @@ onMounted(async () => {
 });
 
 function rowFor(botId: string) {
-  return rows.value.find((row) => row.bot.id === botId) ?? null;
+  const qualified = host ? `${host}:${botId}` : botId;
+  return rows.value.find((row) => row.bot.id === qualified) ?? null;
 }
 
 function purviewLabel(purview: BotPurview): string {
@@ -410,11 +442,12 @@ function plain(bot: Bot): Bot {
   return { ...bot, avatar: { ...bot.avatar, look: { ...bot.avatar.look } }, voice: { ...bot.voice }, purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind } };
 }
 
-async function persist(next: Bot[], name = settings.value.userName): Promise<boolean> {
+async function persist(next: Bot[], name = activeSettings.value.userName): Promise<boolean> {
   saving.value = true;
   try {
-    const saved = await saveBots({ bots: next.map(plain), userName: name });
-    settings.value = saved;
+    const saved = await saveBots({ bots: next.map(plain), userName: name }, host);
+    if (host) remoteSettings.value = saved;
+    else localSettings.value = saved;
     error.value = '';
     return true;
   } catch (caught) {
@@ -446,7 +479,7 @@ async function applyEditor(): Promise<void> {
   if (!await persist(next)) return;
   editorOpen.value = false;
   const need = before && bot.enabled ? restartNeed(before, bot) : null;
-  const processId = need ? await botProcess(bot.id).catch(() => null) : null;
+  const processId = need ? await botProcess(host ? `${host}:${bot.id}` : bot.id).catch(() => null) : null;
   if (need && processId) {
     restartError.value = '';
     restart.value = { processId, name, harness: bot.harness, need };

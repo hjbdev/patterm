@@ -36,6 +36,7 @@ import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
@@ -43,6 +44,7 @@ import { Textarea } from './ui/textarea';
 
 const HOST_OPTIONS = [{ value: 'us' as const, label: 'US' }, { value: 'eu' as const, label: 'EU' }];
 
+const host = useSettingsHost().value;
 const draft = reactive<TelemetrySettings>({ enabled: false, apiKey: '', host: 'us' });
 const saved = reactive<TelemetrySettings>({ ...draft });
 const loaded = ref(false);
@@ -70,7 +72,7 @@ function save(key: string): Promise<unknown> {
     if (draft.enabled === saved.enabled && draft.apiKey === saved.apiKey && draft.host === saved.host) return;
     return autosave(key, async () => {
       try {
-        Object.assign(saved, await saveTelemetrySettings({ enabled: draft.enabled, apiKey: draft.apiKey, host: draft.host }));
+        Object.assign(saved, await saveTelemetrySettings({ enabled: draft.enabled, apiKey: draft.apiKey, host: draft.host }, host));
       } catch (caught) {
         error.value = errorMessage(caught);
         throw caught;
@@ -86,7 +88,7 @@ async function sendFeedback(sentiment: 'like' | 'dislike'): Promise<void> {
   sending.value = true;
   feedbackStatus.value = '';
   try {
-    feedbackStatus.value = await sendTelemetryFeedback({ sentiment, note: note.value }) ? 'Sent.' : 'Telemetry is off.';
+    feedbackStatus.value = await sendTelemetryFeedback({ sentiment, note: note.value }, host) ? 'Sent.' : 'Telemetry is off.';
     note.value = '';
   } catch (caught) {
     feedbackStatus.value = errorMessage(caught);
@@ -97,9 +99,9 @@ async function sendFeedback(sentiment: 'like' | 'dislike'): Promise<void> {
 
 onMounted(async () => {
   try {
-    const { enabled, apiKey, host } = await loadTelemetrySettings();
-    Object.assign(draft, { enabled, apiKey, host });
-    Object.assign(saved, { enabled, apiKey, host });
+    const { enabled, apiKey, host: region } = await loadTelemetrySettings(host);
+    Object.assign(draft, { enabled, apiKey, host: region });
+    Object.assign(saved, { enabled, apiKey, host: region });
     loaded.value = true;
   } catch (caught) {
     error.value = errorMessage(caught);

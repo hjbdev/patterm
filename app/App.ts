@@ -32,7 +32,6 @@ import { UploadService } from './Http/UploadService';
 import { RemoteClientService } from './Services/RemoteClientService';
 import { ServerAccess } from './Http/ServerAccess';
 import { BROWSER_TOOLS } from './Http/BrowserTools';
-import { MCP_SERVER_TOOLS } from './MCP/registerMcpServerTools';
 import { resolvePtyProcessId } from './Services/ProcessIdentity';
 import { ProjectLinkService } from './Services/ProjectLinkService';
 import { ProjectLinkActions } from './Actions/ProjectLinkActions';
@@ -44,7 +43,7 @@ import { registerSemanticSearchTools, SemanticSearchActions } from './Actions/Se
 import { registerTabLayoutTools, TabLayoutActions } from './Actions/TabLayoutActions';
 import { BrowserActions, registerBrowserTools } from './Actions/BrowserActions';
 import { BrowserService } from './Services/Browser/BrowserService';
-import { SecretActions, registerSecretTools } from './Actions/SecretActions';
+import { SECRET_CONTROL_TOOLS, SecretActions, registerSecretTools } from './Actions/SecretActions';
 import { SecretService } from './Services/Secrets/SecretService';
 import { SecretVault, type SecretKeyWrapper } from './Services/Secrets/SecretVault';
 import { SecretProxyService } from './Services/Secrets/SecretProxyService';
@@ -842,14 +841,15 @@ async function createApplicationResources(
     isIntegrated: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? limit 1`).get(processId)),
     subscribeConversation: (processId, listener) => integrated.subscribeConversation(processId, listener),
     // A paired host's UI runs the same tools as a browser, except ones that
-    // change this host's settings or pairing.
+    // change this host's pairing topology. Write-only session secrets and
+    // per-host settings are allowed for the paired owner.
     allowedTools: new Set([
-      // Secrets are entered only on the agent's own host.
-      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && (!tool.startsWith('settings_') || tool === 'settings_status_labels_get') && !tool.startsWith('secret_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
+      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_')),
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume',
       // Socket-only for browsers; the peer route checks control itself.
-      'integrated_restart', 'bot_restart'
+      'integrated_restart', 'bot_restart',
+      ...SECRET_CONTROL_TOOLS
     ]),
     localBots: () => settings.bots().bots,
     botsChanged: () => notifyChanged(['settings'], true),

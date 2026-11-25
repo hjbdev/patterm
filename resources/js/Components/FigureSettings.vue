@@ -35,12 +35,14 @@ import SettingsItem from './settings/SettingsItem.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import { Badge } from './ui/badge';
 import { Switch } from './ui/switch';
 
 interface TemplateVersion { name: string; version: number; description: string; published_at: string; published_by: { role: string; name: string | null } }
 type ListedVersion = TemplateVersion & { latest: boolean; count: number };
 
+const host = useSettingsHost().value;
 const enabled = ref<boolean | null>(null);
 const error = ref('');
 
@@ -52,7 +54,7 @@ function save(value: boolean): void {
   enabled.value = value;
   const current = ++revision;
   saving = saving.then(() => autosave('figures.enabled', async () => {
-    const saved = await window.patterm.call('settings_figures_update', { enabled: value }) as { enabled: boolean };
+    const saved = await window.patterm.call('settings_figures_update', { enabled: value }, host ?? undefined) as { enabled: boolean };
     if (current === revision) enabled.value = saved.enabled;
   }));
 }
@@ -61,7 +63,7 @@ function save(value: boolean): void {
 // sees what agents published and when.
 const templates = ref<ListedVersion[] | null>(null);
 async function loadTemplates(): Promise<void> {
-  const { versions } = await window.patterm.call('settings_figure_templates', {}) as { versions: TemplateVersion[] };
+  const { versions } = await window.patterm.call('settings_figure_templates', {}, host ?? undefined) as { versions: TemplateVersion[] };
   const counts = new Map<string, number>();
   for (const version of versions) counts.set(version.name, (counts.get(version.name) ?? 0) + 1);
   templates.value = versions.map((version, index) => ({ ...version, latest: versions[index - 1]?.name !== version.name, count: counts.get(version.name) ?? 1 }));
@@ -74,11 +76,11 @@ function publisher(version: TemplateVersion): string {
   return name ? `${role} "${name}"` : role === 'agent' ? 'an agent' : `a ${role}`;
 }
 
-useTopicRefresh(['settings'], () => { void loadTemplates().catch(() => {}); });
+useTopicRefresh(['settings'], () => { if (!host) void loadTemplates().catch(() => {}); });
 
 onMounted(async () => {
   try {
-    const [figures] = await Promise.all([window.patterm.call('settings_figures_get', {}) as Promise<{ enabled: boolean }>, loadTemplates()]);
+    const [figures] = await Promise.all([window.patterm.call('settings_figures_get', {}, host ?? undefined) as Promise<{ enabled: boolean }>, loadTemplates()]);
     enabled.value = figures.enabled;
   } catch (caught) {
     error.value = errorMessage(caught);

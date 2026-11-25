@@ -33,34 +33,47 @@ async function load(): Promise<void> {
 
 // A state this client just received outdates any read under way and the
 // cached one.
-function remember(): void {
+function remember(next: UpdateState): void {
   reads++;
   topicChanged('updates');
-}
-
-export function useUpdates() {
-  useTopicRefresh(['updates'], () => void load());
-  onMounted(() => { void load(); });
-  return state;
-}
-
-export async function saveUpdateSettings(settings: UpdateState['settings']): Promise<void> {
-  const next = await window.patterm.call('settings_updates_update', settings) as UpdateState;
-  remember();
   state.value = next;
 }
 
-export async function checkForUpdates(): Promise<void> {
-  const next = await window.patterm.call('settings_updates_check', {}) as UpdateState;
-  remember();
-  state.value = next;
+export function useUpdates(host?: string | null) {
+  if (!host) {
+    useTopicRefresh(['updates'], () => void load());
+    onMounted(() => { void load(); });
+    return state;
+  }
+  const remoteState = shallowRef<UpdateState | null>(null);
+  let remoteReads = 0;
+  const loadRemote = async (): Promise<void> => {
+    const read = ++remoteReads;
+    try {
+      const next = await window.patterm.call('settings_updates_get', {}, host) as UpdateState;
+      if (read === remoteReads) remoteState.value = next;
+    } catch { /* Handled by the panel's actions if offline. */ }
+  };
+  onMounted(() => { void loadRemote(); });
+  return remoteState;
+}
+
+export async function saveUpdateSettings(settings: UpdateState['settings'], host?: string | null): Promise<UpdateState> {
+  const next = await window.patterm.call('settings_updates_update', settings, host ?? undefined) as UpdateState;
+  if (!host) remember(next);
+  return next;
+}
+
+export async function checkForUpdates(host?: string | null): Promise<UpdateState> {
+  const next = await window.patterm.call('settings_updates_check', {}, host ?? undefined) as UpdateState;
+  if (!host) remember(next);
+  return next;
 }
 
 // Starts the installer for the version the owner confirmed. On the desktop
 // the caller then quits Patterm; a server restarts itself.
-export async function applyUpdate(version: string): Promise<{ quit: boolean }> {
-  const result = await window.patterm.call('settings_updates_apply', { confirmed: true, version }) as { quit: boolean; state: UpdateState };
-  remember();
-  state.value = result.state;
+export async function applyUpdate(version: string, host?: string | null): Promise<{ quit: boolean; state: UpdateState }> {
+  const result = await window.patterm.call('settings_updates_apply', { confirmed: true, version }, host ?? undefined) as { quit: boolean; state: UpdateState };
+  if (!host) remember(result.state);
   return result;
 }

@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Paired-host bots now support `@` mentions for agents and processes on
       their host (within their purview) and launch chips for their host's
       harnesses and presets.
+  - Paired-host Settings host-switcher and write-only agent secrets:
+    - Settings now includes a host switcher when paired hosts are connected,
+      allowing direct management of a paired host's harnesses & profiles, bots,
+      auto-summaries, idle compaction, status labels, figures, notifications,
+      conversation history & semantic search, MCP servers, updates, and
+      telemetry (while keeping local appearance, pairing, and remote access
+      scoped to this host).
+    - Clicking "Edit bot…" on a paired-host bot opens `Settings → Bots`
+      directly on that host with the bot editor open.
+    - Write-only session secrets now work for paired-host agents and bots:
+      secret requests pop open on Desktop/browser and values are sent directly
+      into the remote host's own vault without ever returning to clients.
 - Antigravity agents get Patterm's tools through a gateway. Antigravity
   drops the largest MCP tools once all servers' declarations pass its size
   budget, which Patterm's catalogue nearly filled on its own. Its sessions now

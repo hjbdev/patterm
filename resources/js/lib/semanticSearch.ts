@@ -37,21 +37,37 @@ async function load(): Promise<void> {
   } catch { /* The next announcement retries. */ }
 }
 
-async function act(tool: string, args: Record<string, unknown> = {}): Promise<void> {
-  const next = await window.patterm.call(tool, args) as SemanticSearchState;
-  reads++;
-  topicChanged('semantic-search');
-  state.value = next;
+async function act(tool: string, args: Record<string, unknown> = {}, host?: string | null): Promise<SemanticSearchState> {
+  const next = await window.patterm.call(tool, args, host ?? undefined) as SemanticSearchState;
+  if (!host) {
+    reads++;
+    topicChanged('semantic-search');
+    state.value = next;
+  }
+  return next;
 }
 
-export function useSemanticSearch() {
-  useTopicRefresh(['semantic-search'], () => void load());
-  onMounted(() => { void load(); });
-  return state;
+export function useSemanticSearch(host?: string | null) {
+  if (!host) {
+    useTopicRefresh(['semantic-search'], () => void load());
+    onMounted(() => { void load(); });
+    return { state, refresh: load };
+  }
+  const remoteState = shallowRef<SemanticSearchState | null>(null);
+  let remoteReads = 0;
+  const refresh = async (): Promise<void> => {
+    const read = ++remoteReads;
+    try {
+      const next = await window.patterm.call('settings_semantic_search_get', {}, host) as SemanticSearchState;
+      if (read === remoteReads) remoteState.value = next;
+    } catch { /* The user can retry from the panel. */ }
+  };
+  onMounted(() => { void refresh(); });
+  return { state: remoteState, refresh };
 }
 
-export const setSemanticSearchEnabled = (enabled: boolean) => act('settings_semantic_search_update', { enabled });
-export const installEmbeddingModel = () => act('settings_semantic_search_install');
-export const cancelEmbeddingModelInstall = () => act('settings_semantic_search_cancel_install');
-export const rebuildSemanticIndex = () => act('settings_semantic_search_rebuild');
-export const removeEmbeddingModel = () => act('settings_semantic_search_remove', { confirmed: true });
+export const setSemanticSearchEnabled = (enabled: boolean, host?: string | null) => act('settings_semantic_search_update', { enabled }, host);
+export const installEmbeddingModel = (host?: string | null) => act('settings_semantic_search_install', {}, host);
+export const cancelEmbeddingModelInstall = (host?: string | null) => act('settings_semantic_search_cancel_install', {}, host);
+export const rebuildSemanticIndex = (host?: string | null) => act('settings_semantic_search_rebuild', {}, host);
+export const removeEmbeddingModel = (host?: string | null) => act('settings_semantic_search_remove', { confirmed: true }, host);

@@ -22,4 +22,13 @@ export function registerAutoSummaryControl(registry: McpToolRegistry, actions: A
     changes: ['workbench'], inputSchema: { type: 'object', properties: {
       session_id: { type: 'string' }, project_id: { type: 'string' }, operation: { type: 'string', enum: ['inspect', 'rebuild', 'cancel', 'resume'] }
     }, required: ['session_id', 'project_id'], additionalProperties: false } }, (raw) => actions.control(raw));
+  registry.register({ name: 'settings_summaries_get', namespace: 'settings', hidden: true,
+    description: 'Read automatic summary settings and provider status for this host.',
+    changes: [], inputSchema: { type: 'object' } }, () => actions.read());
+  registry.register({ name: 'settings_summaries_update', namespace: 'settings', hidden: true,
+    description: 'Update automatic summary settings for this host.',
+    changes: ['settings'], inputSchema: { type: 'object' } }, (raw) => actions.update(raw));
+  registry.register({ name: 'settings_summaries_test', namespace: 'settings', hidden: true,
+    description: 'Test automatic summary settings on this host.',
+    changes: [], inputSchema: { type: 'object' } }, (raw) => actions.test(raw));
 }

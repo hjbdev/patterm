@@ -76,6 +76,7 @@ import { errorMessage } from '../lib/utils';
 import SettingsItem from './settings/SettingsItem.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsSection from './settings/SettingsSection.vue';
+import { useSettingsHost } from './settings/settingsHost';
 import StatusLabelPill from './StatusLabelPill.vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -85,6 +86,7 @@ import { Textarea } from './ui/textarea';
 
 interface EditorState { id: string | null; name: string; color: StatusLabelColor; description: string }
 
+const host = useSettingsHost().value;
 const labels = ref<StatusLabel[]>([]);
 const loaded = ref(false);
 const error = ref('');
@@ -97,7 +99,7 @@ onMounted(() => void load());
 async function load(): Promise<void> {
   error.value = '';
   try {
-    labels.value = (await readStatusLabels()).labels ?? [];
+    labels.value = (await readStatusLabels(host)).labels ?? [];
     loaded.value = true;
   } catch (caught) {
     error.value = errorMessage(caught);
@@ -109,7 +111,7 @@ async function load(): Promise<void> {
 // reload the list while no save is pending; a failed save reloads it too.
 let pending = 0;
 
-useTopicRefresh(['settings'], () => { if (!pending) void load(); });
+useTopicRefresh(['settings'], () => { if (!host && !pending) void load(); });
 
 function persist(key: string, local: StatusLabel[], save: () => Promise<StatusLabelSettings>): void {
   labels.value = local;
@@ -153,12 +155,12 @@ function applyEditor(): void {
   // A new label appears once the server gives it an id.
   persist(`status_labels.${edit.id ?? 'list'}`,
     edit.id ? labels.value.map((label) => label.id === edit.id ? { ...label, name, color: edit.color, description: edit.description } : label) : labels.value,
-    () => saveStatusLabel(edit));
+    () => saveStatusLabel(edit, host));
   editorOpen.value = false;
 }
 
 // Agents showing a deleted label lose it.
 function removeLabel(label: StatusLabel): void {
-  persist('status_labels.list', labels.value.filter((item) => item.id !== label.id), () => deleteStatusLabel(label.id));
+  persist('status_labels.list', labels.value.filter((item) => item.id !== label.id), () => deleteStatusLabel(label.id, host));
 }
 </script>

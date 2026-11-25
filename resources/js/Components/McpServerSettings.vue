@@ -174,29 +174,28 @@ import { autosave } from '../Composables/useSettingsAutosave';
 import { harnessLabel } from '../lib/harnesses';
 import {
   MCP_HARNESSES,
-  cancelMcpSignIn,
-  completeMcpSignIn,
-  deleteMcpServer,
   draftFromServer,
   errorMessage,
-  importMcpServers,
   mcpServerSummary,
   mcpSignInStatus,
   newMcpServerDraft,
   openSignInPage,
-  saveMcpServer,
-  setMcpServerEnabled,
-  signOutMcpServer,
-  startMcpSignIn,
-  testMcpServer,
   useMcpServers,
   type McpHarness,
   type McpImportResult,
   type McpServerDraft,
   type McpServerView
 } from '../lib/mcpServers';
+import { useSettingsHost } from './settings/settingsHost';
 
-const { servers, redirect, loaded, error: listError, tests } = useMcpServers();
+const host = useSettingsHost().value;
+const {
+  servers, redirect, loaded, error: listError, tests,
+  save: saveMcpServer, setEnabled: setMcpServerEnabled, remove: deleteMcpServer,
+  importAll: importMcpServers, test: testMcpServer,
+  startSignIn: startMcpSignIn, completeSignIn: completeMcpSignIn,
+  cancelSignIn: cancelMcpSignIn, signOut: signOutMcpServer
+} = useMcpServers(host);
 const error = ref('');
 const busyId = ref<string | null>(null);
 const importBusy = ref(false);
