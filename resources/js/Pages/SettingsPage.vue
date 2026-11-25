@@ -251,11 +251,7 @@ function open(value: string): void {
   }
 }
 
-// Opening a bot from search results ends the search, so its page shows.
-watch(() => router.currentRoute.value.query.bot, (bot) => {
-  if (typeof bot === 'string') query.value = '';
-  scroller.value?.scrollTo({ top: 0 });
-});
+watch(() => router.currentRoute.value.query.bot, () => scroller.value?.scrollTo({ top: 0 }));
 
 function clearSearch(): void {
   query.value = '';

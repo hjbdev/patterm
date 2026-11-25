@@ -31,6 +31,12 @@ export function provideSettingsSearch(query: Ref<string>): void {
   provide(queryKey, query);
 }
 
+// Clears the search, such as when a result opens a page of its own.
+export function useEndSettingsSearch(): () => void {
+  const query = inject(queryKey, null);
+  return () => { if (query) query.value = ''; };
+}
+
 // `row` marks a single setting, which counts as one match and has no children.
 export function useSettingsSearch(texts: () => Array<string | null | undefined>, options: { row?: boolean } = {}) {
   const query = inject(queryKey, null);

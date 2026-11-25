@@ -202,7 +202,9 @@ const props = defineProps<{
   projects: Array<{ id: string; name: string }>;
   // Saves a change to this bot. The list owns one queue for every save, so
   // each builds on the last, whichever page made it.
-  update: (key: string, patch: (bot: Bot) => Partial<Bot>) => Promise<boolean>;
+  // It names the bot, so a save still pending when the page closes reaches
+  // this bot, whichever page opens next.
+  update: (botId: string, key: string, patch: (bot: Bot) => Partial<Bot>) => Promise<boolean>;
   // A saved change that applies once the running bot restarts.
   restart: { need: 'harness' | 'settings'; busy: boolean; error: string } | null;
 }>();
@@ -249,7 +251,7 @@ const summary = computed(() => {
 
 // Saving
 function save(key: string, patch: Partial<Bot> | ((bot: Bot) => Partial<Bot>)): Promise<boolean> {
-  return props.update(key, typeof patch === 'function' ? patch : () => patch);
+  return props.update(id, key, typeof patch === 'function' ? patch : () => patch);
 }
 
 // Text fields save once typing pauses, or when they lose focus.
@@ -309,7 +311,9 @@ function saveLook(next: Avatar['look']): void {
   look.value = { ...next };
   avatarKind.value = 'face';
   avatarError.value = '';
-  void save('avatar', (bot) => ({ avatar: { ...bot.avatar, kind: 'face', look: { ...bot.avatar.look, ...changed } } }));
+  // A failed save shows the saved face again, so trying again sends the change.
+  void save('avatar', (bot) => ({ avatar: { ...bot.avatar, kind: 'face', look: { ...bot.avatar.look, ...changed } } }))
+    .then((saved) => { if (!saved) look.value = { ...current().avatar.look }; });
 }
 // A picture saves once one is chosen; the other kinds save straight away.
 function chooseKind(kind: Avatar['kind']): void {

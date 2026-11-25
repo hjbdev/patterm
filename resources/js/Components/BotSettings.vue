@@ -11,7 +11,7 @@
     :harnesses="harnesses"
     :voices="voices"
     :projects="userProjects"
-    :update="(key, patch) => updateBot(openBot!.id, key, patch)"
+    :update="updateBot"
     :restart="restarts[openBot.id] ?? null"
     @back="closeBot(false)"
     @remove="removeBot(openBot)"
@@ -98,7 +98,7 @@ import SettingsRow from './settings/SettingsRow.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsSection from './settings/SettingsSection.vue';
 import { useSettingsHost } from './settings/settingsHost';
-import { useSettingsSearch } from './settings/settingsSearch';
+import { useEndSettingsSearch, useSettingsSearch } from './settings/settingsSearch';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
@@ -110,6 +110,7 @@ const host = useSettingsHost().value;
 const route = useRoute();
 const router = useRouter();
 const { searching } = useSettingsSearch(() => []);
+const endSearch = useEndSettingsSearch();
 const { settings: localSettings, rows, voices: localVoices } = useBots();
 const { projects, harnesses: localHarnesses } = useWorkbench();
 const remoteSettings = ref<BotSettings>({ bots: [], userName: null });
@@ -135,6 +136,7 @@ const openBot = computed(() => {
   return bots.value.find((bot) => bot.id === botId) ?? null;
 });
 function showBot(botId: string): void {
+  endSearch();
   void router.push({ query: { ...route.query, tab: 'bots', bot: botId } });
 }
 function closeBot(replace: boolean): void {
