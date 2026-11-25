@@ -271,6 +271,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Claude or Codex agent started on a busy machine no longer fails at once
+  with "host is no longer running". Patterm now waits until the new host
+  accepts connections, not just until its socket file appears.
 - The sidebar shows when a bot has replied: an unread dot, with the start of
   its reply under its name. A reply stays unread until you open the bot, even
   if it starts other work or restarts first. Opening a bot marks its replies

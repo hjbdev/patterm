@@ -382,11 +382,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal(state.status, 'working', 'a refused steer leaves the earlier turn running');
       assert(!state.messages.data.some((row: any) => row.clientMessageId === rejected.messageId));
       const refusedSends = () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === rejected.text).length;
-      const beforeEnd = refusedSends();
+      // Holding it also tries it once more at once, in case the turn ended
+      // before it was stored. Let that refusal settle back into the queue
+      // before ending the turn, or the count below races it.
+      await waitFor(provider, () => refusedSends() === 2 && Boolean(database.connection.prepare("select 1 from integrated_held_prompts where message_id = 'held-rejected' and state = 'held'").get()));
       fs.writeFileSync(trace + '.end-turn', '');
       await waitFor(provider, () => Boolean(database.connection.prepare("select 1 from integrated_held_prompts where message_id = 'held-rejected' and error is not null").get()));
       assert.equal(await provider.reconcile('process', 'held-rejected'), 'unknown');
-      assert.equal(refusedSends(), beforeEnd + 1, 'it is sent once more when that turn ends, then held with its error');
+      assert.equal(refusedSends(), 3, 'it is sent once more when that turn ends, then held with its error');
       await queue.updateQueued('process', 'held-rejected', 'cancel');
       fs.unlinkSync(trace + '.end-turn');
     } finally { queue.dispose(); }

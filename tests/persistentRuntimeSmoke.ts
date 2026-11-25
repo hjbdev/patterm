@@ -34,14 +34,16 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const [, , record, gate] = process.argv;
+// Written then renamed, so a reader that sees the file sees all of it.
+const save = (value) => { fs.writeFileSync(record + '.tmp', JSON.stringify(value)); fs.renameSync(record + '.tmp', record); };
 if (gate) {
-  fs.writeFileSync(record, JSON.stringify({ pid: process.pid, parent: process.ppid }));
+  save({ pid: process.pid, parent: process.ppid });
   setInterval(() => { if (fs.existsSync(gate)) process.exit(23); }, 10);
 } else {
   const sleep = process.platform === 'win32'
     ? spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3600000)'], { detached: true, stdio: 'ignore' })
     : spawn('/bin/sleep', ['3600'], { detached: true, stdio: 'ignore' });
-  fs.writeFileSync(record, JSON.stringify({ pid: process.pid, sleepPid: sleep.pid }));
+  save({ pid: process.pid, sleepPid: sleep.pid });
   console.log('fixture ready');
   createInterface({ input: process.stdin }).on('line', line => console.log('reply:' + line));
 }

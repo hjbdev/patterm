@@ -599,10 +599,11 @@ export function integratedHostListening(socketPath: string, timeoutMs = 2_000): 
   });
 }
 
-// Whether a starting host has created its control socket. A named pipe has no
-// file to look for, so Windows asks whether it accepts a connection.
+// Whether a starting host accepts connections on its control socket. A Unix
+// socket file appears at bind, before listen, so its existence alone can still
+// refuse a connection on a busy machine. A named pipe has no file to look for.
 export async function integratedHostReady(socketPath: string): Promise<boolean> {
-  if (process.platform !== 'win32') return fs.existsSync(socketPath);
+  if (process.platform !== 'win32' && !fs.existsSync(socketPath)) return false;
   return integratedHostListening(socketPath, 1_000);
 }
 

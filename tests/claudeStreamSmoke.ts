@@ -24,7 +24,7 @@ import { removeTree } from './fixtures/TempTree';
 
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-claude-stream-'));
-  const executable = writeNodeCli(path.join(directory, 'claude'), `if (process.env.ARGV_FILE) require('node:fs').writeFileSync(process.env.ARGV_FILE, JSON.stringify(process.argv.slice(2)));
+  const executable = writeNodeCli(path.join(directory, 'claude'), `if (process.env.ARGV_FILE) { require('node:fs').writeFileSync(process.env.ARGV_FILE + '.tmp', JSON.stringify(process.argv.slice(2))); require('node:fs').renameSync(process.env.ARGV_FILE + '.tmp', process.env.ARGV_FILE); }
 // ACTIVITY scripts native turn shapes recorded from Claude Code 2.1.299. Like
 // the real CLI, session states are reported only when the host asks for them,
 // and command_lifecycle frames only in that mode here so the fallback is tested.
