@@ -253,7 +253,7 @@ export class DiscordGateway {
   private closed(code: number): void {
     if (this.stopped) return;
     const fatal = code === 4014 && this.options.messageContent
-      ? 'Discord hasn\'t allowed this application Message Content. Turn on Message Content Intent on its Bot page in the Developer Portal, or turn off Read replied-to messages.'
+      ? 'Discord hasn\'t allowed this application Message Content. Turn on Message Content Intent on its Bot page in the Developer Portal, then turn Read replied-to messages off and on again to reconnect. Or leave it off.'
       : FATAL_CLOSE_CODES[code];
     if (fatal) {
       this.session = null;
