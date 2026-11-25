@@ -47,8 +47,7 @@ const answered = inject(figureAnsweredKey, null);
 const frame = ref<HTMLIFrameElement | null>(null);
 const src = figureFrameUrl();
 const generation = ref(0);
-const height = ref(remembered()?.height ?? props.initialHeight);
-let viewportSized = remembered()?.viewportSized ?? false;
+const height = ref(remembered() ?? props.initialHeight);
 // The link the page asked to open, waiting for the user. A newer one replaces
 // it. The revision and time are Patterm's own, so the page cannot reuse them.
 interface PageRequest { url: string; requestId: unknown; revision: number; shownAt: number }
@@ -68,9 +67,7 @@ let armed: { revision: number; place: string } | null = null;
 watch(() => props.html, () => {
   settle(false, 'The page changed.');
   generation.value++;
-  height.value = remembered()?.height ?? props.initialHeight;
-  viewportSized = remembered()?.viewportSized ?? false;
-  echoes = 0;
+  height.value = remembered() ?? props.initialHeight;
 });
 
 const answers = computed(() => {
@@ -81,7 +78,7 @@ const answers = computed(() => {
 const canAnswer = computed(() => Boolean(channel?.canSend.value));
 watch([answers, canAnswer], () => pushState());
 
-function remembered(): Measured | undefined {
+function remembered(): number | undefined {
   return props.measureKey ? measured.get(props.measureKey) : undefined;
 }
 
@@ -101,29 +98,14 @@ function onMessage(event: MessageEvent): void {
     post({ type: 'render', html: props.html, ...(props.media?.size ? { media: Object.fromEntries(props.media) } : {}) });
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
-    resize(data.height);
+    const next = Math.min(FIGURE_HEIGHT.limit, Math.max(16, Math.ceil(data.height)));
+    height.value = next;
+    if (props.measureKey) remember(props.measureKey, height.value);
   } else if (data.type === 'answer') {
     void answer(data);
   } else if (data.type === 'open-link' && typeof data.url === 'string' && /^https?:\/\//i.test(data.url) && data.url.length <= 2048) {
     show({ url: data.url, requestId: data.requestId });
   }
-}
-
-// The frame takes the page's full height, so it scrolls with the reply rather
-// than inside it. A page sized by its viewport, such as 100vh under a heading,
-// grows again straight after each resize; after a few such echoes it keeps
-// the old FIGURE_HEIGHT.max, remembered so a remount does not grow it again.
-let resizedAt = 0;
-let echoes = 0;
-function resize(reported: number): void {
-  const now = performance.now();
-  const size = Math.max(16, Math.ceil(reported));
-  echoes = size > height.value && now - resizedAt < ECHO_MS ? echoes + 1 : 0;
-  if (echoes >= RUNAWAY_ECHOES) viewportSized = true;
-  const next = Math.min(viewportSized ? FIGURE_HEIGHT.max : FIGURE_HEIGHT.limit, size);
-  if (next !== height.value) resizedAt = now;
-  height.value = next;
-  if (props.measureKey) remember(props.measureKey, { height: height.value, viewportSized });
 }
 
 // A pick sends at once, but only right after a click or key press, while
@@ -224,8 +206,6 @@ onBeforeUnmount(() => {
 <script lang="ts">
 const ID = new RegExp(`^${FIGURE_ID}$`);
 const STEADY_MS = 500;
-const ECHO_MS = 100;
-const RUNAWAY_ECHOES = 3;
 
 // Picks become one line each in the user's message.
 function readPicks(raw: unknown): Array<{ item?: string; label: string; value: string }> | null {
@@ -251,12 +231,10 @@ function linkParts(url: string): { host: string; rest: string } {
 
 // Heights pages reported, so a row that scrolls back into view opens at its
 // size instead of growing again.
-// A page found sized by its viewport stays capped when it opens again.
-interface Measured { height: number; viewportSized: boolean }
-const measured = new Map<string, Measured>();
-function remember(key: string, value: Measured): void {
+const measured = new Map<string, number>();
+function remember(key: string, height: number): void {
   measured.delete(key);
-  measured.set(key, value);
+  measured.set(key, height);
   if (measured.size > 64) measured.delete(measured.keys().next().value!);
 }
 </script>
