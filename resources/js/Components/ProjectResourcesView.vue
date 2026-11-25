@@ -44,7 +44,7 @@
             <label for="worktree-path" class="text-xs font-medium text-muted-foreground">{{ remoteHost ? `Path on ${remoteHost}` : isBrowser ? 'Server path' : 'Path' }}{{ formMode === 'create' ? ' (optional)' : '' }}</label>
             <div class="flex gap-2">
               <Input id="worktree-path" v-model="path" class="font-mono" placeholder="/path/to/worktree" :required="formMode === 'link'" />
-              <Button v-if="!remoteHost" type="button" variant="outline" @click="browse">Browse…</Button>
+              <Button type="button" variant="outline" @click="browse">Browse…</Button>
             </div>
           </div>
           <p v-if="error" role="alert" class="text-sm text-destructive">{{ error }}</p>
@@ -61,6 +61,7 @@ import { Link2, Plus } from 'lucide-vue-next';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import type { ProjectWorkbench } from '../types';
 import { useWorkbench } from '../Composables/useWorkbench';
+import { pickServerDirectory } from '../lib/directoryPicker';
 import EmptyState from './EmptyState.vue';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -89,7 +90,12 @@ function openForm(mode: 'create' | 'link'): void {
 }
 
 async function browse(): Promise<void> {
-  await run(async () => { path.value = await window.patterm.pickDirectory(path.value.trim()) ?? path.value; });
+  await run(async () => {
+    const picked = remoteHost.value
+      ? await pickServerDirectory(path.value.trim(), remoteHost.value)
+      : await window.patterm.pickDirectory(path.value.trim());
+    path.value = picked ?? path.value;
+  });
 }
 
 async function submit(): Promise<void> {

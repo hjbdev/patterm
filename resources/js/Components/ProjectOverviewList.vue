@@ -45,8 +45,17 @@
 
         <!-- Quiet desktop hover actions so resting rows stay uncluttered. -->
         <div class="hidden shrink-0 items-center gap-0.5 pr-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 sm:flex">
-          <LaunchAgentMenu :project-id="overview.project.id" />
-          <ProjectMenu v-if="!overview.project.host" :project="overview.project" :live-agents="overview.agents.length" @change-logo="logoProjectId = overview.project.id" />
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-7 w-7 rounded-tab text-muted-foreground"
+            :title="`New conversation in ${overview.project.name}`"
+            :aria-label="`New conversation in ${overview.project.name}`"
+            @click="openNewConversation(overview.project.id)"
+          >
+            <Plus class="h-4 w-4" />
+          </Button>
+          <ProjectMenu :project="overview.project" :live-agents="overview.agents.length" @change-logo="logoProjectId = overview.project.id" />
         </div>
       </div>
     </div>
@@ -64,15 +73,17 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { ChevronRight, FolderPlus } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { ChevronRight, FolderPlus, Plus } from 'lucide-vue-next';
 import HostBadge from './HostBadge.vue';
-import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import ProjectLogoDialog from './ProjectLogoDialog.vue';
 import ProjectMenu from './ProjectMenu.vue';
 import ProjectStatusLogo from './ProjectStatusLogo.vue';
 import SnoozeIcon from './SnoozeIcon.vue';
 import UnreadDot from './UnreadDot.vue';
+import { Button } from './ui/button';
 import { projectUnread } from '../Composables/useNotifications';
+import { allAgents } from '../lib/allAgents';
 import { relativeTime } from '../lib/format';
 import { displayPath, type ProjectOverview } from '../lib/projectOverview';
 import { projectSnoozed } from '../lib/projectSnooze';
@@ -83,6 +94,12 @@ const props = defineProps<{ overviews: ProjectOverview[]; now: number; loaded: b
 const emit = defineEmits<{
   openProject: [projectId: string];
 }>();
+
+const router = useRouter();
+function openNewConversation(projectId: string): void {
+  allAgents.active = false;
+  void router.push({ name: 'newConversation', params: { projectId } });
+}
 
 // The dialog reads the live project so it reflects a logo change made elsewhere.
 const logoProjectId = ref<string | null>(null);

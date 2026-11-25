@@ -1,12 +1,10 @@
 <template>
-  <span class="inline-flex shrink-0 items-center gap-0.5 text-[12px] font-normal text-muted-foreground" :title="`On ${host}, a paired host`">
-    <Link2 class="h-3 w-3" aria-hidden="true" />{{ host }}
+  <span class="inline-flex shrink-0 items-center text-[11.5px] font-normal text-muted-foreground/80" :title="`On ${host}`">
+    {{ host }}
   </span>
 </template>
 
 <script setup lang="ts">
-import { Link2 } from 'lucide-vue-next';
-
-// Marks a record that belongs to a paired host.
+// Quietly names the paired host a record belongs to when hosts are mixed.
 defineProps<{ host: string }>();
 </script>

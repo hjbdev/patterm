@@ -19,17 +19,18 @@ export interface DirectoryListing {
 
 export interface DirectoryPickerRequest {
   initial: string;
+  host?: string | undefined;
   resolve(path: string | null): void;
 }
 
-// The open server-directory picker, if any. The browser runtime has no native
-// dialog, so `pickDirectory` asks the mounted DirectoryPickerDialog instead.
+// The open server-directory picker, if any. Used in the browser runtime and
+// whenever browsing a paired host's filesystem from desktop.
 export const directoryPickerRequest = shallowRef<DirectoryPickerRequest | null>(null);
 
-export function pickServerDirectory(initial = ''): Promise<string | null> {
+export function pickServerDirectory(initial = '', host?: string): Promise<string | null> {
   directoryPickerRequest.value?.resolve(null);
   return new Promise((resolve) => {
-    directoryPickerRequest.value = { initial, resolve };
+    directoryPickerRequest.value = { initial, ...(host ? { host } : {}), resolve };
   });
 }
 

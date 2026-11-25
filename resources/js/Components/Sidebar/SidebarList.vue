@@ -21,7 +21,16 @@
         <span>Needs you</span>
         <span v-if="waitingCount > 0" class="tabular-nums text-[12px]" :class="onlyWaiting ? 'text-amber-200' : 'text-amber-400'">{{ waitingCount }}</span>
       </button>
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" pointable trigger-class="h-8 w-8 rounded-lg hover:bg-white/[0.06]" />
+      <Button
+        variant="ghost"
+        size="icon"
+        :class="cn('h-8 w-8 rounded-lg text-muted-foreground hover:bg-white/[0.06]', launchPointed && 'launch-pulse')"
+        title="New conversation"
+        aria-label="New conversation"
+        @click="openNewConversation()"
+      >
+        <Plus class="h-4 w-4" />
+      </Button>
     </div>
     <!-- Bots come first: each is one persistent conversation. -->
     <BotList :phone="placement === 'phone'" :compact="placement !== 'phone'" :project-id="sidebar.projectId.value" :all="sidebar.allAgents.value" class="shrink-0 px-0.5 pt-0.5" />
@@ -41,7 +50,16 @@
             <span class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
             <HostBadge v-if="entry.project.host" :host="entry.project.host" />
             <span class="text-[12px] tabular-nums opacity-60 group-hover/rule:hidden">{{ entry.count }}</span>
-            <LaunchAgentMenu :project-id="entry.project.id" trigger-class="hidden h-6 w-6 group-hover/rule:inline-flex focus-visible:inline-flex [&_svg]:h-3.5 [&_svg]:w-3.5" />
+            <Button
+              variant="ghost"
+              size="icon"
+              class="hidden h-6 w-6 rounded-tab text-muted-foreground group-hover/rule:inline-flex focus-visible:inline-flex [&_svg]:h-3.5 [&_svg]:w-3.5"
+              :title="`New conversation in ${entry.project.name}`"
+              :aria-label="`New conversation in ${entry.project.name}`"
+              @click="openNewConversation(entry.project.id)"
+            >
+              <Plus class="h-3.5 w-3.5" />
+            </Button>
           </div>
           <div v-else-if="entry.kind === 'heading'" data-sidebar-slide class="flex h-7 items-center gap-2 px-2 text-[12.5px] font-medium text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
             <span class="flex-1">{{ entry.label }}</span>
@@ -82,11 +100,12 @@
               :subtitle="subtitle(entry.tab)"
               :waiting="Boolean(familyWaitingOn(sidebar, entry.tab.family))"
               :project="rowProject(entry.tab)"
+              :parent-host="rowParentHost(entry.tab)"
               expand-on-select
               @toggle="setExpanded(entry.tab.family.rootId, !expanded(entry.tab))"
               @expand="(open) => setFamilyOpen(entry.tab, open)"
             />
-            <SidebarMemberRow v-else :process="entry.tab.process" :tab="entry.tab" :project="rowProject(entry.tab)" />
+            <SidebarMemberRow v-else :process="entry.tab.process" :tab="entry.tab" :project="rowProject(entry.tab)" :parent-host="rowParentHost(entry.tab)" />
           </div>
         </template>
       </TransitionGroup>
@@ -122,7 +141,7 @@
               @click.capture="consumeClick($event, tab.key)"
             >
               <span v-if="dropLine?.key === tab.key" class="pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary/70" :class="dropLine.edge === 'before' ? '-top-px' : '-bottom-px'" aria-hidden="true" />
-              <SidebarMemberRow :process="tab.process" :tab="tab" :project="sidebar.allAgents.value ? sidebar.projectOf(tab) : null" />
+              <SidebarMemberRow :process="tab.process" :tab="tab" :project="sidebar.allAgents.value ? sidebar.projectOf(tab) : null" :parent-host="sidebar.allAgents.value ? undefined : sidebar.projectHost.value" />
             </div>
           </TransitionGroup>
         </Transition>
@@ -143,10 +162,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, provide, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { useHarnessLaunchesFor } from '../../Composables/useHarnessLaunch';
-import { ChevronRight } from 'lucide-vue-next';
+import { ChevronRight, Plus } from 'lucide-vue-next';
 import { isFolderKey, layoutEntries, type LayoutEntry, type StripTab, type TabFolder } from '../../lib/tabStrip';
-import LaunchAgentMenu from '../LaunchAgentMenu.vue';
+import { launchPointed } from '../../lib/launchPointer';
+import { cn } from '../../lib/utils';
+import { Button } from '../ui/button';
+import { sidebarLayout } from './sidebarLayout';
 import GetStarted from '../GetStarted.vue';
 import BotList from '../BotList.vue';
 import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
@@ -178,7 +201,13 @@ import type { ProjectSummary } from '../../types';
 // are open is the user's choice, remembered on this device. Selecting an agent
 // opens it.
 withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'phone' }>(), { placement: 'docked' });
+const router = useRouter();
 const sidebar = useSidebar();
+function openNewConversation(projectId = sidebar.projectId.value): void {
+  if (!projectId) return;
+  sidebarLayout.drawerOpen = false;
+  void router.push({ name: 'newConversation', params: { projectId } });
+}
 const pendingLaunches = useHarnessLaunchesFor(() => sidebar.shownProjectIds.value);
 const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 const onlyWaiting = ref(false);
@@ -269,6 +298,9 @@ const entries = computed<Entry[]>(() => groups.value.flatMap((group, groupIndex)
 // Sorted freely, each row shows its project's logo; grouped, the rule does,
 // except over rows in folders.
 const rowProject = (tab: StripTab) => sidebar.allAgents.value && (!byProject.value || tab.folder) ? sidebar.projectOf(tab) : null;
+const rowParentHost = (tab: StripTab) => sidebar.allAgents.value
+  ? (byProject.value && !tab.folder ? sidebar.projectOf(tab)?.host : undefined)
+  : sidebar.projectHost.value;
 
 // When rows change group (a status settling, or filing), or recent activity
 // reorders them, measure them before the list redraws and slide them from

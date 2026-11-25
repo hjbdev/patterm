@@ -284,10 +284,21 @@ export class RemoteClientService {
 
   // The paired host a request names, if any.
   target(raw: unknown): PeerHost | null {
+    const explicitName = raw && typeof raw === 'object'
+      && typeof (raw as { tool?: unknown }).tool === 'string'
+      && typeof (raw as { host?: unknown }).host === 'string'
+      ? (raw as { host: string }).host.trim()
+      : '';
     const names = new Set<string>();
     collectPrefixes(raw, names, 0);
-    if (names.size === 0) return null;
-    const peers = this.hosts.peers().filter((peer) => names.has(peer.name));
+    const allPeers = this.hosts.peers();
+    const peers = allPeers.filter((peer) => names.has(peer.name));
+    if (explicitName) {
+      const explicit = allPeers.find((peer) => peer.name === explicitName);
+      if (!explicit) throw new Error(`No paired host is called ${explicitName}.`);
+      if (peers.some((peer) => peer.host_id !== explicit.host_id)) throw new Error('A request cannot name records on two hosts.');
+      return explicit;
+    }
     if (peers.length > 1) throw new Error('A request cannot name records on two hosts.');
     return peers[0] ?? null;
   }
@@ -295,8 +306,16 @@ export class RemoteClientService {
   // Runs a UI request on the paired host it names.
   async relay(host: PeerHost, channel: string, raw: unknown): Promise<unknown> {
     if (!RELAY_CHANNELS.has(channel)) throw new Error('That request cannot reach another host.');
-    const args = this.unqualify(raw, host, 0);
+    const payload = channel === 'patterm:mcp:call' && raw && typeof raw === 'object' && 'host' in raw
+      ? (({ host: _host, ...rest }) => rest)(raw as Record<string, unknown>)
+      : raw;
+    const args = this.unqualify(payload, host, 0);
     const result = await this.peers.request(host.host_id, 'client.rpc', { channel, args }, RELAY_TIMEOUT_MS);
+    if (channel === 'patterm:mcp:call' && payload && typeof payload === 'object' && (payload as { tool?: unknown }).tool === 'project_create') {
+      await this.refresh(host.host_id);
+      const pending = this.fetching.get(host.host_id);
+      if (pending) await pending;
+    }
     return this.qualify(result, host, 0);
   }
 

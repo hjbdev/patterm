@@ -2,7 +2,7 @@
   <!-- A menu's Status submenu: pin a configured label on the agent, or clear
        it. `dropdown` builds it from dropdown parts, for a ⋯ menu. -->
   <component :is="parts.Sub">
-    <component :is="parts.SubTrigger" :disabled="!session.processId || session.processStatus !== 'running' || Boolean(session.host)">
+    <component :is="parts.SubTrigger" :disabled="!session.processId || session.processStatus !== 'running'">
       <Tag class="h-4 w-4" />
       <span>Status</span>
     </component>
@@ -34,7 +34,7 @@ import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubCo
 import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu';
 
 const props = defineProps<{ session: SessionRecord; dropdown?: boolean }>();
-const { labels } = useStatusLabels();
+const { labels } = useStatusLabels(() => props.session.host);
 const parts = computed(() => props.dropdown
   ? { Sub: DropdownMenuSub, SubTrigger: DropdownMenuSubTrigger, SubContent: DropdownMenuSubContent, Item: DropdownMenuItem, Separator: DropdownMenuSeparator }
   : { Sub: ContextMenuSub, SubTrigger: ContextMenuSubTrigger, SubContent: ContextMenuSubContent, Item: ContextMenuItem, Separator: ContextMenuSeparator });

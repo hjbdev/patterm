@@ -13,6 +13,13 @@
         </template>
         <template #meta>{{ harnessLabel(bot.harness) }} · {{ settingsSummary(catalog, bot.harness, bot) }} · {{ purviewLabel(bot.purview) }} · {{ statusLabel(bot.id) }}</template>
         <template #actions>
+          <Switch
+            :model-value="bot.enabled"
+            :disabled="saving"
+            :aria-label="`Turn ${bot.name} ${bot.enabled ? 'off' : 'on'}`"
+            title="Off stops it and hides it until turned back on"
+            @update:model-value="toggleEnabled(bot, Boolean($event))"
+          />
           <Button type="button" size="sm" variant="ghost" class="h-7 px-2" @click="editBot(bot)">Edit</Button>
           <Button v-if="!isAssistantBot(bot)" type="button" size="sm" variant="ghost" class="h-7 px-2 text-destructive hover:text-destructive" @click="removeBot(bot)">Delete</Button>
         </template>
@@ -458,6 +465,14 @@ async function restartNow(fresh: boolean): Promise<void> {
   } finally {
     restarting.value = false;
   }
+}
+
+function toggleEnabled(bot: Bot, enabled: boolean): void {
+  if (bot.enabled === enabled) return;
+  const next = bots.value.map((candidate) => candidate.id === bot.id ? { ...candidate, enabled } : candidate);
+  void autosave(`bots.${bot.id}`, async () => {
+    if (!await persist(next)) throw new Error(error.value || `Could not update ${bot.name}`);
+  });
 }
 
 async function removeBot(bot: Bot): Promise<void> {

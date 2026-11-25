@@ -20,7 +20,7 @@
             <RowStatus :activity="processActivity(process)" />
             <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
             <span class="min-w-0 flex-1 truncate">{{ process.name }}</span>
-            <HostBadge v-if="process.host" :host="process.host" />
+            <HostBadge v-if="process.host && process.host !== parentHost" :host="process.host" />
             <UnreadDot :urgency="unreadUrgency(process.id)" />
           </button>
         </TooltipTrigger>
@@ -93,6 +93,7 @@ defineProps<{
   tab?: StripTab | undefined;
   // Shown while listing all agents.
   project?: ProjectSummary | null | undefined;
+  parentHost?: string | undefined;
 }>();
 
 const emit = defineEmits<{

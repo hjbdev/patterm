@@ -185,28 +185,55 @@ test('a launch view that cannot load still opens the agent, unless the user move
   } finally { app.unmount(); delete globalThis.window; fs.unlinkSync(output); }
 });
 
-test('menu handlers submit every launch with click-time arguments', () => {
+test('new conversation launches pass profile, overrides, and worktree for both local and remote targets', () => {
   const calls = [];
-  const menu = fs.readFileSync('resources/js/Components/LaunchAgentMenu.vue', 'utf8');
-  function handler(page, values) {
-    const parsed = ts.createSourceFile('launch.ts', page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true);
-    const fn = parsed.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'launchHarness').getText(parsed);
-    const js = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-    return new Function(...Object.keys(values), `${js};return launchHarness;`)(...Object.values(values));
-  }
-  const props = { projectId: 'p1' }, targetProjectId = { value: 'p1' };
-  const menuLaunch = handler(menu, { menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
-  menuLaunch('opencode', null, { projectId: props.projectId, targetProjectId: targetProjectId.value, host: null });
-  menuLaunch('claude', 'fast', { projectId: 'p1', targetProjectId: 'p1:remote', host: 'remote' });
-  // Tab's first message travels with the launch; blank ones don't.
-  menuLaunch('codex', 'smarty', { projectId: 'p1', targetProjectId: 'p1', host: null }, '  Review PR 126  ');
-  menuLaunch('codex', null, { projectId: 'p1', targetProjectId: 'p1', host: null }, '   ');
-  props.projectId = 'p2'; targetProjectId.value = 'p2';
-  assert.deepEqual(calls.map(input => [input.harness, input.projectId]), [['opencode', 'p1'], ['claude', 'p1'], ['codex', 'p1'], ['codex', 'p1']]);
-  // Another host keeps its presets, so the launch there drops the local one.
-  assert.equal(calls[1].preset, undefined);
-  assert.equal(calls[1].host, 'remote');
-  assert.equal(calls[2].preset, 'smarty');
-  assert.equal(calls[2].initialPrompt, 'Review PR 126');
-  assert.equal(calls[3].initialPrompt, undefined);
+  const page = fs.readFileSync('resources/js/Components/NewConversation.vue', 'utf8');
+  const parsed = ts.createSourceFile('new.ts', page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true);
+  const fn = parsed.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'start').getText(parsed);
+  const js = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const target = { value: { projectId: 'p1', targetProjectId: 'p1', host: null } };
+  const harness = { value: 'codex' };
+  const newConversationDraft = { value: '  Review PR 126  ' };
+  const profile = { value: { id: 'smarty', model: 'gpt-6.2-sol', reasoning: 'max' } };
+  const model = { value: 'gpt-6.2-sol' };
+  const reasoning = { value: 'max' };
+  const worktreeId = { value: null };
+  const start = new Function('target', 'harness', 'newConversationDraft', 'profile', 'model', 'reasoning', 'worktreeId', 'card', 'handOffComposer', 'rememberNewConversationHarness', 'launchHarness', `${js};return start;`)(
+    target, harness, newConversationDraft, profile, model, reasoning, worktreeId, { value: null }, () => {}, () => {}, input => calls.push(input)
+  );
+
+  // Local launch using its chosen profile.
+  start();
+  // Remote launch with overridden model, reasoning, and remote worktree.
+  target.value = { projectId: 'p1', targetProjectId: 'remote:p9', host: 'remote' };
+  harness.value = 'claude';
+  profile.value = { id: 'preset_remote', model: 'claude-sonnet', reasoning: null };
+  model.value = 'claude-opus';
+  reasoning.value = 'high';
+  worktreeId.value = 'remote:worktree_7';
+  newConversationDraft.value = 'Ship it';
+  start();
+  // Blank drafts never launch.
+  newConversationDraft.value = '   ';
+  start();
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], {
+    harness: 'codex',
+    projectId: 'p1',
+    targetProjectId: 'p1',
+    initialPrompt: 'Review PR 126',
+    preset: 'smarty'
+  });
+  assert.deepEqual(calls[1], {
+    harness: 'claude',
+    projectId: 'p1',
+    targetProjectId: 'remote:p9',
+    initialPrompt: 'Ship it',
+    host: 'remote',
+    preset: 'preset_remote',
+    model: 'claude-opus',
+    reasoning: 'high',
+    worktreeId: 'remote:worktree_7'
+  });
 });

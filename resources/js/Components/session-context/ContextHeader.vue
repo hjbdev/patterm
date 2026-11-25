@@ -10,7 +10,7 @@
         <slot name="leading" />
         <SidebarItemMenu :session="session" :tab="menuTab">
           <h1 class="min-w-0 flex-1 select-none truncate font-medium [-webkit-touch-callout:none]" :class="phoneLayout ? 'text-[16px]' : 'text-[15.5px]'">
-            {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
+            {{ agentLabel(session) }}<HostBadge v-if="session.host && (sidebar.allAgents.value || phoneLayout || session.host !== sidebar.projectHost.value)" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
           </h1>
         </SidebarItemMenu>
         <slot name="trailing" />
@@ -78,7 +78,7 @@
           <button v-for="member in agents" :key="member.id" type="button" :class="[ROW, 'relative isolate']" @click="openAgent(member)">
             <RowStatus :activity="sidebar.activity(member)" />
             <span class="min-w-0 flex-1 truncate">{{ agentLabel(member) }}</span>
-            <HostBadge v-if="member.host" :host="member.host" />
+            <HostBadge v-if="member.host && member.host !== session.host" :host="member.host" />
           </button>
         </ResponsivePopover>
 

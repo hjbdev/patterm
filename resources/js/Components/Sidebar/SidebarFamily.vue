@@ -31,7 +31,7 @@
               <span class="truncate" :class="sidebar.familyActive(tab.family) && 'font-medium'">{{ label }}</span>
               <BotOwnerPill v-if="ownerBot" :bot="ownerBot" />
               <StatusLabelPill v-if="root.statusLabel" :label="root.statusLabel" dot />
-              <HostBadge v-if="root.host" :host="root.host" />
+              <HostBadge v-if="root.host && root.host !== parentHost" :host="root.host" />
             </span>
             <Transition :css="false" @enter="expandIn" @leave="collapseOut">
               <span v-if="twoLines" class="mt-0.5 flex items-center gap-2 text-[13px] leading-[18px]">
@@ -114,10 +114,12 @@ const props = withDefaults(defineProps<{
   waiting?: boolean | undefined;
   // Shown while listing all agents, where rows from several projects mix.
   project?: ProjectSummary | null;
+  // The host the surrounding project or heading already names.
+  parentHost?: string | undefined;
   // Off, the row keeps its member count but its subagents and processes
   // don't list below it; the agent's header lists them instead.
   membersShown?: boolean;
-}>(), { subtitle: null, waiting: false, project: null, membersShown: true });
+}>(), { subtitle: null, waiting: false, project: null, parentHost: undefined, membersShown: true });
 // `expand` asks to open or close the family after the agent was clicked:
 // clicking opens it, and clicking it again while it's selected closes it.
 const emit = defineEmits<{ toggle: []; expand: [open: boolean] }>();

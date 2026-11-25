@@ -25,7 +25,7 @@
         <RowStatus :activity="activity(option.session)" />
         <span class="min-w-0 flex-1 truncate">{{ agentLabel(option.session) }}</span>
         <StatusLabelPill v-if="option.session.statusLabel" :label="option.session.statusLabel" />
-        <HostBadge v-if="option.session.host" :host="option.session.host" />
+        <HostBadge v-if="option.session.host && option.session.host !== family.root.session.host" :host="option.session.host" />
         <UnreadDot :urgency="unreadUrgency(option.session.processId)" />
       </button>
     </ContextMenuTrigger>

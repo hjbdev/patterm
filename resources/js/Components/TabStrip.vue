@@ -92,7 +92,7 @@
                     <!-- The tab's menu names the label in full, so the dot's tooltip waits while it's open. -->
                     <StatusLabelPill v-if="tab.family.root.session.statusLabel" :label="tab.family.root.session.statusLabel" dot :no-tooltip="openRootId === tab.family.rootId" />
                     <BotOwnerPill v-if="ownerBotOf(tab.family.root.session)" :bot="ownerBotOf(tab.family.root.session)!" />
-                    <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
+                    <HostBadge v-if="tab.family.root.session.host && (sidebar.allAgents.value || tab.family.root.session.host !== sidebar.projectHost.value)" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
                   </span>
                   <!-- The timer and count sit close together, tucked against the close button. -->
@@ -174,6 +174,7 @@
           v-else
           :process="tab.process"
           :project="tabProject(tab)"
+          :parent-host="sidebar.allAgents.value ? undefined : sidebar.projectHost.value"
           :tab="tab"
           :active="tab.process.ptyProcessId === activeTerminalId"
           @select="selectProcess(tab.process)"

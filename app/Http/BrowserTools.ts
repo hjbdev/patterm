@@ -14,7 +14,7 @@ import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS } from '../Actions/SecretAction
 export const BROWSER_TOOLS = new Set([
   ...Object.keys(contextSchemas),
   'project_create', 'fs_directories', 'project_list', 'project_get', 'project_logo_candidates', 'project_set_logo', 'project_snooze', 'project_wake', 'project_rename', 'project_remove',
-  'harness_launch', 'harness_list', 'harness_discover', 'harness_presets', 'opencode_service_restart',
+  'harness_launch', 'harness_list', 'harness_discover', 'harness_presets', 'harness_models', 'opencode_service_restart',
   'integrated_get', 'integrated_history', 'integrated_image', 'integrated_send', 'integrated_controls', 'integrated_files_search', 'integrated_delivery', 'integrated_configure', 'integrated_command', 'integrated_goal', 'integrated_interrupt',
   'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_task_stop', 'integrated_task_output', 'integrated_queue_update', 'integrated_new',
   'settings_figures_get', 'settings_figures_update', 'settings_figure_templates', 'figure_template_page',
