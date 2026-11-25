@@ -13,6 +13,8 @@ export interface HarnessLaunchInput {
   host?: string;
   // Sent as the agent's first message once it is ready.
   initialPrompt?: string;
+  // Uploaded files sent with the first message.
+  initialAttachments?: Array<{ path: string; name: string; mime: string }>;
 }
 
 export interface HarnessLaunch {
@@ -49,7 +51,8 @@ function start(input: HarnessLaunchInput, call: (args: Record<string, unknown>) 
     ...(launch.input.model ? { model: launch.input.model } : {}),
     ...(launch.input.reasoning ? { reasoning: launch.input.reasoning } : {}),
     ...(launch.input.worktreeId ? { worktree_id: launch.input.worktreeId } : {}),
-    ...(launch.input.initialPrompt ? { initial_prompt: launch.input.initialPrompt } : {})
+    ...(launch.input.initialPrompt ? { initial_prompt: launch.input.initialPrompt } : {}),
+    ...(launch.input.initialAttachments?.length ? { initial_attachments: launch.input.initialAttachments } : {})
   })).then((result) => {
     const sessionId = (result as { session_id?: unknown } | null)?.session_id;
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('The launch returned no session. Check the project’s agents before launching again.');

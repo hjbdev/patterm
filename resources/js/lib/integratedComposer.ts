@@ -73,6 +73,9 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   yaml: 'application/yaml', yml: 'application/yaml'
 };
 
+// The file picker's filter; drops and pastes are checked by attachmentMime.
+export const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env';
+
 function fileExtension(name: string): string {
   const index = name.lastIndexOf('.');
   return index > 0 ? name.slice(index + 1).toLowerCase() : '';
@@ -412,6 +415,55 @@ export function removeAttachment(processId: string, attachmentId: string): void 
   if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
   files.delete(attachmentId);
   draft.attachments = draft.attachments.filter((item) => item.id !== attachmentId);
+}
+
+// The new conversation page keeps its attachments under the launch target's
+// project ID, which also routes a paired host's uploads to that host. When the
+// target changes, they follow it. Another host needs its own copy, so files
+// are uploaded again; ones without the original file must be attached again.
+export function moveAttachments(from: string, to: string, sameHost: boolean): void {
+  if (from === to) return;
+  const source = draftFor(from);
+  const moving = source.attachments;
+  if (!moving.length) return;
+  source.attachments = [];
+  const target = draftFor(to);
+  for (const attachment of moving) {
+    const file = files.get(attachment.id);
+    if (sameHost || attachment.status === 'error') {
+      target.attachments.push(attachment);
+      if (sameHost && file && attachment.status === 'uploading') void uploadAttachment(to, attachment.id);
+      continue;
+    }
+    if (!file) {
+      target.attachments.push({ ...attachment, serverPath: undefined, status: 'error', error: 'Attach this file again for this machine' });
+      continue;
+    }
+    target.attachments.push({ ...attachment, serverPath: undefined, status: 'uploading', error: undefined });
+    void uploadAttachment(to, attachment.id);
+  }
+}
+
+// Takes the ready attachments out of a draft for a message sent elsewhere,
+// such as a new agent's first message.
+export function takeAttachments(key: string): Array<{ path: string; name: string; mime: string }> {
+  const draft = draftFor(key);
+  const taken = draft.attachments.map((attachment) => ({ path: attachment.serverPath as string, name: attachment.name, mime: attachment.mime }));
+  for (const attachment of draft.attachments) {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    files.delete(attachment.id);
+  }
+  draft.attachments = [];
+  return taken;
+}
+
+// Puts uploaded attachments back, as when a launch that failed is dismissed.
+export function restoreAttachments(key: string, attachments: Array<{ path: string; name: string; mime: string }>): void {
+  const draft = draftFor(key);
+  for (const attachment of attachments) {
+    if (draft.attachments.some((item) => item.serverPath === attachment.path)) continue;
+    draft.attachments.push({ id: randomId(), name: attachment.name, mime: attachment.mime, size: 0, image: isImageMime(attachment.mime), status: 'ready', serverPath: attachment.path });
+  }
 }
 
 export function payloadFor(processId: string): { ok: true; payload: ComposerSendPayload; hash: string } | { ok: false; error: string } {

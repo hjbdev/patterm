@@ -8,22 +8,55 @@
       </div>
       <!-- With no agent CLI on the chosen machine, the project picker stays so you can pick another. -->
       <p v-if="!harness" class="text-center text-sm text-muted-foreground">{{ emptyText }}</p>
-      <div v-else ref="card" class="flex items-end gap-1.5 rounded-[26px] border border-foreground/[0.07] bg-muted/50 p-2 shadow-sm">
-        <textarea
-          ref="field"
-          v-model="newConversationDraft"
-          rows="1"
-          class="block max-h-44 min-h-8 min-w-0 flex-1 resize-none self-center bg-transparent px-3 py-1 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
-          :placeholder="`What should ${harnessLabel(harness)} work on?`"
-          aria-label="First message"
-          data-patterm-new-conversation-input
-          @input="grow"
-          @keydown="onKeydown"
-        />
-        <Button type="submit" size="icon" class="h-8 w-8 shrink-0 rounded-full" :disabled="!canStart" :aria-label="`Start ${harnessLabel(harness)}`" :title="`Start ${harnessLabel(harness)}`">
-          <ArrowUp class="h-4 w-4" />
-        </Button>
+      <div
+        v-else
+        ref="card"
+        class="rounded-[26px] border bg-muted/50 shadow-sm transition-colors"
+        :class="dragging ? 'border-dashed border-primary/70' : 'border-foreground/[0.07]'"
+        @dragover.prevent="dragging = true"
+        @dragleave="dragging = false"
+        @drop.prevent="onDrop"
+      >
+        <div v-if="attachments.length" class="flex flex-wrap items-center gap-2 px-3 pt-3">
+          <div
+            v-for="attachment in attachments"
+            :key="attachment.id"
+            class="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-xs"
+            :class="attachment.status === 'error' ? 'border-destructive/50 text-destructive' : 'border-border/60 bg-muted/30'"
+          >
+            <img v-if="attachment.image && attachment.previewUrl" :src="attachment.previewUrl" :alt="attachment.name" class="h-9 w-11 shrink-0 rounded object-cover">
+            <div class="min-w-0">
+              <p class="truncate">{{ attachment.name }}</p>
+              <p class="truncate text-[10px] text-muted-foreground">
+                {{ attachment.status === 'uploading' ? 'Uploading…' : attachment.status === 'error' ? attachment.error : attachment.size ? formatBytes(attachment.size) : 'Ready' }}
+              </p>
+            </div>
+            <button v-if="attachment.status === 'error'" type="button" class="shrink-0 text-muted-foreground hover:text-foreground" :aria-label="`Retry ${attachment.name}`" title="Retry upload" @click="retryUpload(draftKey, attachment.id)">↻</button>
+            <button type="button" class="shrink-0 text-muted-foreground hover:text-foreground" :aria-label="`Remove ${attachment.name}`" @click="removeAttachment(draftKey, attachment.id)">×</button>
+          </div>
+        </div>
+        <div class="flex items-end gap-1.5 p-2">
+          <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 rounded-full text-muted-foreground" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+            <Paperclip class="h-4 w-4" />
+          </Button>
+          <textarea
+            ref="field"
+            v-model="newConversationDraft"
+            rows="1"
+            class="block max-h-44 min-h-8 min-w-0 flex-1 resize-none self-center bg-transparent px-1 py-1 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
+            :placeholder="`What should ${harnessLabel(harness)} work on?`"
+            aria-label="First message"
+            data-patterm-new-conversation-input
+            @input="grow"
+            @keydown="onKeydown"
+            @paste="onPaste"
+          />
+          <Button type="submit" size="icon" class="h-8 w-8 shrink-0 rounded-full" :disabled="!canStart" :aria-label="`Start ${harnessLabel(harness)}`" :title="startTitle">
+            <ArrowUp class="h-4 w-4" />
+          </Button>
+        </div>
       </div>
+      <input ref="picker" type="file" multiple class="hidden" :accept="ATTACHMENT_ACCEPT" @change="onPick">
       <div class="flex flex-wrap items-center justify-center gap-0.5 pt-3.5 text-muted-foreground">
         <template v-if="harness">
           <template v-if="profileSelector">
@@ -85,7 +118,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { ArrowUp, Check, ChevronsUpDown, GitBranch } from 'lucide-vue-next';
+import { ArrowUp, Check, ChevronsUpDown, GitBranch, Paperclip } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import HarnessFan from './HarnessFan.vue';
 import HostBadge from './HostBadge.vue';
@@ -97,6 +130,7 @@ import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { allAgents, allAgentsHiding, launchTargets } from '../lib/allAgents';
 import { handOffComposer } from '../lib/composerFlip';
+import { ATTACHMENT_ACCEPT, addFiles, draftFor, formatBytes, moveAttachments, removeAttachment, retryUpload, takeAttachments } from '../lib/integratedComposer';
 import { harnessLabel, launchableHarnesses } from '../lib/harnesses';
 import { lastNewConversationHarness, newConversationDraft, rememberNewConversationHarness } from '../lib/newConversation';
 import { emptyModelCatalog, modelsFor, type ModelCatalog, type ProfileHarness } from '../lib/profileFields';
@@ -117,6 +151,8 @@ const { harnesses, projects } = useWorkbench();
 const { launchHarness } = useHarnessLaunch();
 const card = ref<HTMLElement>();
 const field = ref<HTMLTextAreaElement>();
+const picker = ref<HTMLInputElement>();
+const dragging = ref(false);
 
 // Where the agent can start: this project and its paired hosts, or every
 // shown project when choosing among them.
@@ -130,6 +166,15 @@ watch([targets, () => props.projectId], ([, projectId], previous) => {
   targetProjectId.value = targets.value.find((option) => option.targetProjectId === props.projectId)?.targetProjectId ?? targets.value[0]?.targetProjectId ?? props.projectId;
 }, { immediate: true });
 const target = computed(() => targets.value.find((option) => option.targetProjectId === targetProjectId.value) ?? null);
+
+// Attachments wait in a draft keyed by the target's project ID, which sends
+// a paired host's uploads to that host. They follow the target when it changes.
+const draftKey = computed(() => targetProjectId.value);
+const attachments = computed(() => draftFor(draftKey.value).attachments);
+watch(targetProjectId, (next, previous) => {
+  const hostOf = (id: string) => targets.value.find((option) => option.targetProjectId === id)?.host ?? null;
+  if (previous && next !== previous) moveAttachments(previous, next, hostOf(previous) === hostOf(next));
+});
 
 // Another host lists its own CLIs, profiles, and model catalog.
 const hostHarnesses = ref<Record<string, HarnessInstallationRecord[]>>({});
@@ -270,11 +315,18 @@ function chooseTarget(id: string): void {
   targetProjectId.value = id;
 }
 
-const canStart = computed(() => Boolean(harness.value && target.value && newConversationDraft.value.trim()));
+const uploading = computed(() => attachments.value.some((attachment) => attachment.status === 'uploading'));
+const failedUpload = computed(() => attachments.value.some((attachment) => attachment.status === 'error'));
+const canStart = computed(() => Boolean(harness.value && target.value && newConversationDraft.value.trim()) && !uploading.value && !failedUpload.value);
+const startTitle = computed(() => {
+  if (uploading.value) return 'Wait for attachments to finish uploading';
+  if (failedUpload.value) return 'Remove failed attachments first';
+  return harness.value ? `Start ${harnessLabel(harness.value)}` : 'Start';
+});
 
 function start(): void {
   const chosen = target.value, cli = harness.value, prompt = newConversationDraft.value.trim();
-  if (!chosen || !cli || !prompt) return;
+  if (!chosen || !cli || !prompt || !canStart.value) return;
   // The chosen profile's own settings launch as that profile; anything else
   // overrides its model and thinking level for this agent.
   const base = profile.value;
@@ -282,11 +334,13 @@ function start(): void {
   if (card.value) handOffComposer(card.value);
   rememberNewConversationHarness(cli);
   newConversationDraft.value = '';
+  const files = takeAttachments(draftKey.value);
   launchHarness({
     harness: cli,
     projectId: chosen.projectId,
     targetProjectId: chosen.targetProjectId,
     initialPrompt: prompt,
+    ...(files.length ? { initialAttachments: files } : {}),
     ...(chosen.host ? { host: chosen.host } : {}),
     // The preset still applies under an override, keeping its Codex speed.
     ...(base ? { preset: base.id } : {}),
@@ -300,6 +354,34 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault();
     start();
   }
+}
+
+function attach(files: File[]): void {
+  void addFiles(draftKey.value, files);
+}
+
+function onPick(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  if (input.files?.length) attach(Array.from(input.files));
+  input.value = '';
+  focusField();
+}
+
+function onDrop(event: DragEvent): void {
+  dragging.value = false;
+  const dropped = event.dataTransfer?.files;
+  if (dropped?.length) attach(Array.from(dropped));
+}
+
+// Pasted files attach; pasted text goes in the field as usual.
+function onPaste(event: ClipboardEvent): void {
+  const pasted = Array.from(event.clipboardData?.items ?? []).flatMap((item) => {
+    const file = item.kind === 'file' ? item.getAsFile() : null;
+    return file ? [file] : [];
+  });
+  if (!pasted.length) return;
+  event.preventDefault();
+  attach(pasted);
 }
 
 function grow(): void {

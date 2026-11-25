@@ -8,6 +8,12 @@
         <Bubble variant="muted" align="end" class="max-w-[min(82%,64ch)] self-end">
           <BubbleContent class="whitespace-pre-wrap break-words px-[0.95em] py-[0.65em] text-[length:var(--patterm-conversation-font-size,0.875rem)]">{{ launch.input.initialPrompt }}</BubbleContent>
         </Bubble>
+        <div v-if="launch.input.initialAttachments?.length" class="-mt-2 flex flex-wrap justify-end gap-1.5 self-end">
+          <span v-for="attachment in launch.input.initialAttachments" :key="attachment.path" class="flex max-w-56 items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-xs text-muted-foreground">
+            <Paperclip class="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span class="truncate">{{ attachment.name }}</span>
+          </span>
+        </div>
         <p role="status" class="flex items-center gap-2 text-sm text-muted-foreground">
           <AgentIcon :harness="launch.input.harness" class="h-3.5 w-3.5" />
           <ShimmerText :text="harnessLaunchLabel(launch)" />
@@ -35,7 +41,7 @@
       <p v-if="launch.state !== 'failed'" role="status" class="text-sm text-muted-foreground">Waiting for the agent to start. You can switch tabs or launch another agent.</p>
       <template v-else>
         <p role="alert" class="max-w-lg text-sm text-destructive">{{ launch.error }}</p>
-        <p v-if="launch.input.initialPrompt" class="max-w-lg text-sm text-muted-foreground">Dismiss puts your first message back in the new conversation.</p>
+        <p v-if="launch.input.initialPrompt" class="max-w-lg text-sm text-muted-foreground">Dismiss puts your first message{{ launch.input.initialAttachments?.length ? ' and its files' : '' }} back in the new conversation.</p>
         <p class="max-w-lg text-sm text-muted-foreground">Check the project’s agents before launching again if the connection was interrupted.</p>
         <Button v-if="versionMismatch && !launch.input.host" variant="outline" @click="recover">Restart server…</Button>
         <Button variant="ghost" @click="dismiss">Dismiss</Button>
@@ -48,7 +54,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { LoaderCircle } from 'lucide-vue-next';
+import { LoaderCircle, Paperclip } from 'lucide-vue-next';
 import { harnessLaunches, harnessLaunchLabel } from '../lib/harnessLaunches';
 import { harnessLabel } from '../lib/harnesses';
 import { toastLaunchError } from '../lib/launchErrors';
@@ -60,6 +66,7 @@ import ShimmerText from '../Components/ShimmerText.vue';
 import { Bubble, BubbleContent } from '../Components/ui/bubble';
 import { flipComposer, handOffRunningComposer, takeComposerHandoff } from '../lib/composerFlip';
 import { newConversationDraft } from '../lib/newConversation';
+import { restoreAttachments } from '../lib/integratedComposer';
 import { Button } from '../Components/ui/button';
 
 const route = useRoute(), router = useRouter();
@@ -79,6 +86,7 @@ function dismiss(): void {
   // Put the prompt back, ahead of anything written since.
   const prompt = current.input.initialPrompt, draft = newConversationDraft.value.trim();
   if (prompt) newConversationDraft.value = draft ? `${prompt}\n\n${draft}` : prompt;
+  if (current.input.initialAttachments?.length) restoreAttachments(current.input.targetProjectId, current.input.initialAttachments);
   void router.replace({ name: 'project', params: { projectId: current.input.projectId } });
 }
 

@@ -151,7 +151,7 @@
       <!-- A compact composer, as in a bot's chat, is one row: the text, attach and send. -->
       <div :class="hero ? 'flex items-end gap-1.5 p-2' : compact ? 'flex items-end gap-1 p-1.5' : ''">
         <Button v-if="hero" type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 rounded-full text-muted-foreground" :disabled="!controlling || ended || goalMode" aria-label="Attach files" title="Attach files" @click="picker?.click()">
-          <Plus class="h-4 w-4" />
+          <Paperclip class="h-4 w-4" />
         </Button>
         <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', (compact || hero) && 'min-w-0 flex-1 self-center')" />
         <template v-if="compact || hero">
@@ -227,7 +227,7 @@
       </template>
       <slot name="meta" />
     </div>
-    <input ref="picker" type="file" multiple class="hidden" :accept="accept" @change="onPick">
+    <input ref="picker" type="file" multiple class="hidden" :accept="ATTACHMENT_ACCEPT" @change="onPick">
   </form>
 </template>
 
@@ -235,7 +235,7 @@
 import { cn } from '@/lib/utils';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { EditorContent } from '@tiptap/vue-3';
-import { ArrowUp, Paperclip, Plus, Square, Target, TerminalSquare } from 'lucide-vue-next';
+import { ArrowUp, Paperclip, Square, Target, TerminalSquare } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import AgentIcon from './AgentIcon.vue';
 import ComposerWorkingBorder from './ComposerWorkingBorder.vue';
@@ -245,6 +245,7 @@ import IntegratedGoalChip from './IntegratedGoalChip.vue';
 import HostBadge from './HostBadge.vue';
 import TabActivity from './TabActivity.vue';
 import {
+  ATTACHMENT_ACCEPT,
   addFiles,
   draftFor,
   formatBytes,
@@ -323,7 +324,6 @@ const picker = ref<HTMLInputElement>();
 const dragging = ref(false);
 const mode = ref<'mention' | 'slash' | null>(null);
 const menuIndex = ref(0);
-const accept = 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env';
 
 const agents = computed(() => props.agents ?? []);
 const bots = computed(() => props.bots ?? []);
