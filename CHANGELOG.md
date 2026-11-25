@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a reply and it sees the message you replied to, quoted as someone else's
   text. For other people's messages, turn on Message Content Intent for your
   Discord application.
+- Pinned panels beside an agent's conversation, tiled like a window manager.
+  Pin a chip's list (todos, scratchpads, links, servers, subagents and more)
+  from its popover, or drag the chip beside the conversation. Each pin is its
+  own card: drag a header or tab to move it, drop it on another card's centre
+  to make tabs, and drag the gaps to resize. While panels are pinned,
+  `Alt+H/J/K/L` or `Alt+arrows` move focus, `Alt+Shift` moves the
+  panel, `Alt+=`/`Alt+-` resize it across, `Alt+Shift+=`/`Alt+Shift+-` resize it
+  up and down, `Alt+F` maximises, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
+  and `Alt+Q` unpins. `Alt`+drag moves a panel from anywhere on it. Each
+  agent keeps its own layout.
 
 ### Changed
 
@@ -47,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out like the rest of Settings and saved as you change them, instead of one
   long dialog. Adding a bot asks for its name and harness, then opens its page.
   Changes that apply only after a restart offer one at the top of the page.
+- The agent's browser, images and session context open as pinned panels when
+  the window has room, instead of in the docked side peek, and as a sheet when
+  it doesn't.
+- The agent's browser decodes its streamed frames natively and hands them to
+  the canvas without copying, more than halving its main-thread cost per frame,
+  so the app stays smooth while the page moves.
 - Every local agent can now end a turn quietly, not just bots and the
   assistant. The tool is renamed from `bot_stay_quiet` to `stay_quiet`.
 - Paired-host experience and unified New conversation launch:

@@ -96,10 +96,13 @@
 
       <main
         id="workbench-main"
-        class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background"
-        :class="sidebarMode && !mobile
-          ? 'my-2 mr-2 border border-white/[0.06]'
-          : ['mx-1.5 mb-1.5 border-t border-white/5', mobile && route.name !== 'project' && 'mt-1.5']"
+        class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl"
+        :class="[
+          sidebarMode && !mobile
+            ? 'my-2 mr-2 border border-white/[0.06]'
+            : ['mx-1.5 mb-1.5 border-t border-white/5', mobile && route.name !== 'project' && 'mt-1.5'],
+          workspaceTiled ? 'border-transparent' : 'bg-background'
+        ]"
       >
         <div v-if="!loaded" class="p-5 text-sm text-muted-foreground">Loading project…</div>
         <div v-else-if="!activeProject" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
@@ -187,6 +190,7 @@ import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, entryTabs, forgetClosedT
 import { useTabLayouts } from '../Composables/useTabLayouts';
 import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, emptyFolderOwner, groupEntriesByProject, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
+import { workspaceTiled } from '../Composables/usePinnedPanels';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
 

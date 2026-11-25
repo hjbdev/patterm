@@ -18,7 +18,7 @@
         </DropdownMenuContent>
       </DropdownMenu>
       <Button v-if="pageUrl" as="a" variant="ghost" size="icon" :class="ACTION" :href="pageUrl" target="_blank" rel="noopener noreferrer" aria-label="Open in your browser" title="Open in your browser"><ExternalLink class="h-3.5 w-3.5" /></Button>
-      <Button variant="ghost" size="icon" :class="ACTION" aria-label="Close peek" @click="emit('close')"><X class="h-4 w-4" /></Button>
+      <Button v-if="!embedded" variant="ghost" size="icon" :class="ACTION" aria-label="Close peek" @click="emit('close')"><X class="h-4 w-4" /></Button>
     </header>
     <div v-if="state?.help" role="status" class="mx-3 mb-2 flex items-center gap-3 rounded-md bg-white/[0.06] py-1.5 pl-3 pr-1.5 text-[12.5px]">
       <span class="min-w-0 flex-1"><span class="text-muted-foreground">Needs you: </span>{{ state.help.reason }}</span>
@@ -42,10 +42,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ChevronDown, ExternalLink, X } from 'lucide-vue-next';
 import { Button } from '../ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { browserControl, keyEvents, modifierBits, nextFrame, useBrowserState } from '../../lib/browser';
+import { browserControl, frameBytes, keyEvents, modifierBits, nextFrame, useBrowserState } from '../../lib/browser';
 
 // `url` opens in the browser when the peek opens, such as a server's page.
-const props = defineProps<{ processId: string; url?: string | undefined }>();
+// `embedded` leaves closing to what holds it, such as a pinned tile.
+const props = defineProps<{ processId: string; url?: string | undefined; embedded?: boolean | undefined }>();
 const emit = defineEmits<{ close: [] }>();
 const ACTION = 'h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground';
 
@@ -137,12 +138,12 @@ async function stream(): Promise<void> {
   }
 }
 async function draw(data: string): Promise<void> {
-  const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-  const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+  const bitmap = await createImageBitmap(new Blob([frameBytes(data)], { type: 'image/jpeg' }));
   const target = canvas.value;
   if (target) {
     if (target.width !== bitmap.width || target.height !== bitmap.height) { target.width = bitmap.width; target.height = bitmap.height; }
-    target.getContext('2d')?.drawImage(bitmap, 0, 0);
+    // The canvas takes the decoded frame as it is, without copying it.
+    target.getContext('bitmaprenderer')?.transferFromImageBitmap(bitmap);
   }
   bitmap.close();
 }

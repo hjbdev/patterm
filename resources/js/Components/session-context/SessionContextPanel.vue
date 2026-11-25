@@ -1,9 +1,10 @@
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <header class="flex h-11 shrink-0 items-center gap-2 pl-4 pr-2.5">
-      <h2 class="min-w-0 flex-1 truncate text-[13px] font-medium">Session context</h2>
-      <AutoSummaryControls v-if="canSummarize && !sessionId.includes(':')" :key="sessionId" :project-id="projectId" :session-id="sessionId" />
-      <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:text-foreground" aria-label="Close session context" @click="emit('close')"><X class="h-4 w-4" /></Button>
+    <header v-if="!embedded || summarizable" class="flex h-11 shrink-0 items-center gap-2 pl-4 pr-2.5">
+      <h2 v-if="!embedded" class="min-w-0 flex-1 truncate text-[13px] font-medium">Session context</h2>
+      <span v-else class="flex-1" />
+      <AutoSummaryControls v-if="summarizable" :key="sessionId" :project-id="projectId" :session-id="sessionId" />
+      <Button v-if="!embedded" variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:text-foreground" aria-label="Close session context" @click="emit('close')"><X class="h-4 w-4" /></Button>
     </header>
     <div ref="scroller" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">
       <section v-if="summary" class="pb-6 pt-0.5">
@@ -80,7 +81,7 @@
 
 <script setup lang="ts">
 import AutoSummaryControls from '../AutoSummaryControls.vue';
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Plus, X } from 'lucide-vue-next';
 import CreateContextItemDialog from '../CreateContextItemDialog.vue';
 import { Button } from '../ui/button';
@@ -101,10 +102,12 @@ import type { AutoSummaryRecord } from '../../types';
 
 // Flat sections with counts, one add picker per section, and row
 // actions that appear on hover.
-const props = defineProps<{ projectId: string; sessionId: string; processId?: string | null | undefined; canSummarize?: boolean; summary?: AutoSummaryRecord | null | undefined; activeWorktreeId?: string | null | undefined }>();
+// `embedded` leaves the title and closing to what holds it, such as a pinned tile.
+const props = defineProps<{ projectId: string; sessionId: string; processId?: string | null | undefined; canSummarize?: boolean; summary?: AutoSummaryRecord | null | undefined; activeWorktreeId?: string | null | undefined; embedded?: boolean | undefined }>();
 const emit = defineEmits<{ openWorktree: [worktree: SessionWorktree]; close: [] }>();
 const { now, todos, scratchpads, links, worktrees, linkedWorktrees, worktreeOptions, todoOptions, noteOptions, todoQuery, noteQuery, todoPickerOpen, notePickerOpen, todoPickerLoaded, notePickerLoaded, diffTotals, truncated, error, busy, refresh,
   linkWorktree, unlinkWorktree, assignTodo, unassignTodo, setTodoStatus, attachScratchpad, detachScratchpad, attachLink, updateLink, detachLink } = useSessionContext(props);
+const summarizable = computed(() => Boolean(props.canSummarize) && !props.sessionId.includes(':'));
 const todoDialogOpen = ref(false), noteDialogOpen = ref(false), draftTitle = ref('');
 const scroller = ref<HTMLElement>();
 // The panel stays mounted across agents, so each one starts at the top.

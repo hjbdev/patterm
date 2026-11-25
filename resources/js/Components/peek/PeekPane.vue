@@ -1,8 +1,8 @@
 <template>
   <!-- One thing beside the agent: its browser, an image, or the whole
        session context. Opening another replaces it; Esc or × closes it. -->
-  <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" @close="emit('close')" />
-  <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :process-id="processId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
+  <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" :embedded="embedded" @close="emit('close')" />
+  <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :process-id="processId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" :embedded="embedded" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
   <div v-else class="flex min-h-0 flex-1 flex-col">
     <header class="flex h-11 shrink-0 items-center gap-1 pl-4 pr-2">
       <template v-if="peek.kind === 'image'">
@@ -15,7 +15,7 @@
         </template>
         <Button v-if="image" as-child variant="ghost" size="icon" :class="ACTION"><RouterLink :to="image.to" aria-label="Show in conversation" title="Show in conversation"><MessageSquare class="h-3.5 w-3.5" /></RouterLink></Button>
       </template>
-      <Button variant="ghost" size="icon" :class="ACTION" aria-label="Close peek" @click="emit('close')"><X class="h-4 w-4" /></Button>
+      <Button v-if="!embedded" variant="ghost" size="icon" :class="ACTION" aria-label="Close peek" @click="emit('close')"><X class="h-4 w-4" /></Button>
     </header>
     <template v-if="peek.kind === 'image'">
       <!-- Swipe or arrow keys step through the images. -->
@@ -45,8 +45,9 @@ import type { Peek } from '../../lib/peek';
 import { transcriptImageUrl } from '../../lib/transcriptImages';
 import type { AutoSummaryRecord } from '../../types';
 
-// `processId` is the agent's, whose browser the peek shows.
-const props = defineProps<{ peek: Peek; projectId: string; sessionId: string; processId?: string | null | undefined; summary?: AutoSummaryRecord | null | undefined; canSummarize?: boolean | undefined; activeWorktreeId?: string | null | undefined }>();
+// `processId` is the agent's, whose browser the peek shows. `embedded` leaves
+// closing to what holds it, such as a pinned tile.
+const props = defineProps<{ peek: Peek; projectId: string; sessionId: string; processId?: string | null | undefined; summary?: AutoSummaryRecord | null | undefined; canSummarize?: boolean | undefined; activeWorktreeId?: string | null | undefined; embedded?: boolean | undefined }>();
 const emit = defineEmits<{ close: []; 'update:peek': [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
 const ACTION = 'h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground';
 
