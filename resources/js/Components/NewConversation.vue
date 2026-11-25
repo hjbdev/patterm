@@ -234,10 +234,16 @@ function configure(id: string, value: string): void {
 // chosen project's live agents and processes, this host's bots that work in
 // it, and presets and CLIs for spawning helpers.
 const targetWorkbench = computed(() => target.value ? projects.value.find((item) => item.project.id === target.value!.projectId) ?? null : null);
-const mentionAgents = computed(() => targetWorkbench.value ? mentionableAgents(targetWorkbench.value.projectSessions, '') : []);
-// A paired host's agent cannot message this host's bots.
+// An agent on a paired host addresses that host's agents and processes by
+// their own IDs, without the host prefix, and can't reach this host's.
+const onTargetHost = <T extends { processId: string }>(items: T[], host: string | null | undefined): T[] => {
+  if (!host) return items;
+  const prefix = `${host}:`;
+  return items.flatMap((item) => item.processId.startsWith(prefix) ? [{ ...item, processId: item.processId.slice(prefix.length) }] : []);
+};
+const mentionAgents = computed(() => targetWorkbench.value ? onTargetHost(mentionableAgents(targetWorkbench.value.projectSessions, ''), target.value?.host) : []);
 const mentionBots = computed(() => targetWorkbench.value && !target.value?.host ? mentionableBots(botRows.value, targetWorkbench.value.project.id, '') : []);
-const mentionProcesses = computed(() => targetWorkbench.value ? mentionableProcesses(targetWorkbench.value.processes, targetWorkbench.value.projectSessions) : []);
+const mentionProcesses = computed(() => targetWorkbench.value ? onTargetHost(mentionableProcesses(targetWorkbench.value.processes, targetWorkbench.value.projectSessions), target.value?.host) : []);
 const mentionLaunchers = computed(() => buildMentionLaunchers(installedRecords.value, activePresets.value?.presets ?? []));
 
 const worktrees = computed<WorktreeRecord[]>(() => target.value

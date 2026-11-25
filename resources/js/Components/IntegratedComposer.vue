@@ -13,13 +13,15 @@
       @drop.prevent="onDrop"
     >
       <ComposerWorkingBorder v-if="working" />
+      <!-- A centred composer has more room below it than above. -->
       <div
         v-if="menuOpen"
         :id="listboxId"
         ref="menu"
         role="listbox"
         :aria-label="mode === 'mention' ? 'Agents, bots, and processes' : 'Slash commands'"
-        class="absolute inset-x-2 bottom-full z-40 mb-2 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
+        class="absolute inset-x-2 z-40 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
+        :class="hero ? 'top-full mt-2' : 'bottom-full mb-2'"
       >
         <template v-if="mode === 'mention'">
           <div v-if="agentMatches.length" role="group" aria-label="Agents">
