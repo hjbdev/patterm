@@ -156,7 +156,7 @@
             <template v-if="status.invite_url" #description>Add the bot to a server you manage, then mention it there.</template>
             <div class="flex items-center gap-3">
               <span :class="cn('text-xs', status.state === 'error' ? 'text-destructive' : status.state === 'connected' ? 'text-foreground' : 'text-muted-foreground')">{{ statusText }}</span>
-              <Button v-if="status.invite_url" as="a" :href="status.invite_url" target="_blank" rel="noopener noreferrer" size="sm" variant="outline" class="h-8 shrink-0 gap-1.5 text-xs">Add to server<ExternalLink class="h-3.5 w-3.5" /></Button>
+              <a v-if="status.invite_url" :href="status.invite_url" target="_blank" rel="noopener noreferrer" :class="cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 shrink-0 gap-1.5 text-xs')">Add to server<ExternalLink class="h-3.5 w-3.5" /></a>
             </div>
           </SettingsRow>
         </template>
@@ -185,7 +185,7 @@ import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';

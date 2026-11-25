@@ -265,13 +265,14 @@ export class DiscordService {
     let original = message.referenced_message;
     const reference = message.message_reference!;
     const fetch = () => connection.gateway.message(reference.channel_id ?? message.channel_id, reference.message_id!).catch(() => undefined);
-    if (original === undefined) {
+    const fetched = original === undefined;
+    if (fetched) {
       original = await fetch();
       if (original === undefined) return { state: 'unavailable' };
     }
     if (!original) return { state: 'deleted' };
     const mine = original.author?.id === self.id;
-    if (!mine && !hasContent(original)) original = await fetch() ?? original;
+    if (!mine && !fetched && !hasContent(original)) original = await fetch() ?? original;
     const files = (original.attachments ?? []).slice(0, ATTACHMENT_LIMIT);
     const text = original.content ?? '';
     if (!text.trim() && !files.length) return { state: mine ? 'empty' : 'hidden' };
