@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readClaudeTaskOutput } from '../app/Services/ClaudeTaskOutput';
 
+import { removeTree } from './fixtures/TempTree';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-task-output-'));
 try {
   const cwd = '/home/example/Dev/project';
@@ -78,6 +79,6 @@ try {
   assert.equal(readClaudeTaskOutput(location, 'unknown').format, 'missing');
   assert.throws(() => readClaudeTaskOutput(location, '../agent-a1b2c3'), /Invalid background task id/);
 } finally {
-  fs.rmSync(root, { recursive: true, force: true });
+  removeTree(root);
 }
 console.log('claude task output smoke passed');

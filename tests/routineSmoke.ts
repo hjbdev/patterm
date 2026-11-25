@@ -16,6 +16,7 @@ import { MAX_PENDING_ONCE, ROUTINE_IDLE_STOP_MS, RoutineService, type RoutineRec
 import type { Bot } from '../app/Bots/BotSettings';
 import type { TimelineService } from '../app/Services/TimelineService';
 
+import { removeTree } from './fixtures/TempTree';
 const weekdays = [1, 2, 3, 4, 5];
 
 test('schedules keep local wall-clock time across a daylight-saving change', () => {
@@ -517,7 +518,7 @@ function setup(
   t.after(() => {
     routines.dispose();
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   });
   return {
     routines, launches, notifications, stopped, database,

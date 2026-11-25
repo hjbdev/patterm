@@ -271,6 +271,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Claude or Codex agent started on a busy machine no longer fails at once
+  with "host is no longer running". Patterm now waits until the new host
+  accepts connections, not just until its socket file appears.
+- Restarting Patterm straight after quitting no longer fails with "database is
+  locked" when the previous run is still closing its databases, which happened
+  mostly on Windows.
 - HTML pages in replies grow to their full height instead of stopping at
   2000 px and scrolling inside the conversation. Agents are told not to size
   pages to the viewport, and a page that does still stops at 20,000 px.

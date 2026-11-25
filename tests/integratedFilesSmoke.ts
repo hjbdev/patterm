@@ -9,6 +9,7 @@ import type { ResolvedIntegratedPrompt } from '../app/Services/IntegratedInput';
 import { WorktreeFileService } from '../app/Services/WorktreeFileService';
 import { trySymlink } from './fixtures/SymlinkFixture';
 
+import { removeTree } from './fixtures/TempTree';
 async function main(): Promise<void> {
   // The service resolves real paths natively, which expands a Windows 8.3
   // temp path such as C:\Users\RUNNER~1; compare against the same long form.
@@ -240,7 +241,7 @@ async function main(): Promise<void> {
     await assert.rejects(textOnly.prompt('process_test', { text: 'x', references: [{ path: 'src/app.ts' }] }), /unavailable/);
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

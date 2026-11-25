@@ -9,6 +9,7 @@ import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
 import { ipcPath } from '../app/Platform/Ipc';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 
+import { removeTree } from './fixtures/TempTree';
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface Fixture {
@@ -96,7 +97,7 @@ async function fixture(): Promise<Fixture> {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       database.dispose();
-      fs.rmSync(directory, { recursive: true, force: true });
+      removeTree(directory);
     }
   };
 }
@@ -159,7 +160,7 @@ async function verifyPromptDelivery(): Promise<void> {
     for (const socket of sockets) socket.destroy();
     if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

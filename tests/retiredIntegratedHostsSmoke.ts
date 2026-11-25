@@ -10,6 +10,7 @@ import { IntegratedAgentService, type IntegratedProviderService } from '../app/S
 import { supervisedHostLauncher, supervisorGeneration, systemdHostLauncher, type IntegratedHostLauncher } from '../app/Services/IntegratedHostLauncher';
 import type { TerminalService } from '../app/Services/TerminalService';
 
+import { removeTree } from './fixtures/TempTree';
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-retired-hosts-'));
   const database = new DatabaseService(directory);
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
     for (const socket of connections) socket.destroy();
     for (const server of servers) if (server.listening) server.close();
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
   await versionedSupervisorSmoke();
   if (process.platform === 'linux') await systemdLauncherSmoke();
@@ -422,7 +423,7 @@ async function systemdLauncherSmoke(): Promise<void> {
       const stubPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
       if (Number.isInteger(stubPid) && stubPid > 0) process.kill(stubPid, 'SIGTERM');
     } catch {}
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

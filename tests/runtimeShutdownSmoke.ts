@@ -15,9 +15,10 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { TimerService } from '../app/Services/TimerService';
 
+import { removeTree } from './fixtures/TempTree';
 test('resource cleanup logs its underlying failure and still releases application ownership', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-cleanup-'));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  t.after(() => removeTree(directory));
   const application = await createApplication({
     appDataPath: directory, historyHomeDir: directory, runtime: 'node', sidecarPath: path.join(directory, 'missing-sidecar'), mcpShimPath: ''
   });
@@ -139,7 +140,7 @@ function setup(t: TestContext) {
     values ('session_fixture', 'project', 'process_fixture', 'opencode', 'integrated', 'identity_fixture', 'ses_fixture', ?, 'orchestrator', 'found', 'user')`).run(now);
   t.after(() => {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   });
   return {
     database,

@@ -13,6 +13,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 
+import { removeTree } from './fixtures/TempTree';
 type SessionWorktrees = { items: SessionWorktreeItem[]; total: number };
 type AgentWorktreeResult = { worktree: { id: string; worktreePath: string }; attached?: boolean; warning?: string };
 
@@ -146,7 +147,7 @@ async function main(): Promise<void> {
     console.log('session worktrees smoke passed');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

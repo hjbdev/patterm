@@ -17,6 +17,7 @@ import { AntigravityQuotaService } from '../app/Services/AntigravityQuotaService
 import { GetUsageSummaryAction } from '../app/Actions/UsageActions';
 import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 
+import { removeTree } from './fixtures/TempTree';
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-usage-'));
 const now = new Date();
 const at = (minutesAgo: number) => new Date(now.getTime() - minutesAgo * 60_000).toISOString();
@@ -452,7 +453,7 @@ async function main(): Promise<void> {
   } finally {
     historyDatabase.dispose();
     appDatabase.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

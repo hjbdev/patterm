@@ -10,6 +10,7 @@ import { HistorySearchIndexService } from '../app/Services/AgentHistory/HistoryS
 import { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { WorkbenchSeeder } from './fixtures/WorkbenchSeeder';
 
+import { removeTree } from './fixtures/TempTree';
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-search-'));
 const database = new DatabaseService(directory);
 const history = new HistoryDatabaseService(directory);
@@ -48,5 +49,5 @@ try {
 } finally {
   history.dispose();
   database.dispose();
-  fs.rmSync(directory, { recursive: true, force: true });
+  removeTree(directory);
 }

@@ -8,6 +8,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimerService } from '../app/Services/TimerService';
 
+import { removeTree } from './fixtures/TempTree';
 test('overdue timers retain their deadline and wait for runtime reconciliation', (t) => {
   const fixture = setup(t);
   let timers = fixture.create();
@@ -359,7 +360,7 @@ function setup(t: TestContext) {
   t.after(() => {
     for (const timers of services) timers.dispose();
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   });
   return {
     database,

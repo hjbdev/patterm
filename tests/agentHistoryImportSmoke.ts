@@ -32,6 +32,7 @@ import { integratedHistoryCheckpoints } from '../app/Listeners/IntegratedHistory
 import { recordQuietReply } from '../app/Services/ClaudeQuietReplies';
 import { WorkbenchSeeder } from './fixtures/WorkbenchSeeder';
 
+import { removeTree } from './fixtures/TempTree';
 // The /resume picker searches whole conversations: one ranked row each,
 // prefix matching as the user types, scoped to the project and provider.
 function verifyConversationSearch(): void {
@@ -151,7 +152,7 @@ function verifyConversationSearch(): void {
   } finally {
     historyDatabase.dispose();
     appDatabase.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 
@@ -192,7 +193,7 @@ function verifyNativeThreadIdentity(): void {
     assert.equal(codex.providerConversationId, 'child_thread', 'a child rollout keeps its own thread ID instead of replacing its parent');
     assert.equal(codex.metadata.parentThreadId, 'parent_thread', 'the parent thread is recorded');
   } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 
@@ -257,7 +258,7 @@ function verifyScopedScanLinking(): void {
     assert.equal((database.connection.prepare(`select project_id from conversations where provider_conversation_id = 'scope_explicit'`).get() as { project_id: string }).project_id, 'scope_asking', 'an explicit file import assigns the requested project');
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 
@@ -287,7 +288,7 @@ function verifyDefaultSourcesAlwaysOn(): void {
     assert.ok(watched.includes(path.join(claudeConfig, 'projects')) && watched.includes(path.join(directory, 'codex-home', 'sessions')), 'CLAUDE_CONFIG_DIR and CODEX_HOME move where history imports from');
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 
@@ -573,13 +574,13 @@ async function main(): Promise<void> {
     historyDatabase = null;
     database?.dispose();
     database = null;
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
     console.log('agent history import smoke ok');
     process.exit(0);
   } finally {
     historyDatabase?.dispose();
     database?.dispose();
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 
