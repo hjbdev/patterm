@@ -806,7 +806,7 @@ function receive(frame: Row): void {
 }
 
 async function start(): Promise<void> {
-  const init = await rpc('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'Patterm', version: '0.5.0' } });
+  const init = await rpc('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'Patterm', version: '0.6.0' } });
   if (init.protocolVersion !== 1) throw new Error('Unsupported ACP protocol version');
   const capabilities = init.agentCapabilities ?? {};
   nativeClose = Boolean(capabilities.sessionCapabilities?.close ?? capabilities.session_capabilities?.close);
