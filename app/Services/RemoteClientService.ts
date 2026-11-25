@@ -1033,16 +1033,18 @@ export class RemoteClientService {
     const task = (async () => {
       try {
         const response = await this.peers.request(hostId, 'notifications.state').catch(() => null) as { unread?: unknown } | null;
-        if (this.disposed || !this.peers.connected(hostId) || (this.notificationsGeneration.get(hostId) ?? 0) !== generation) return;
-        if (!response || !Array.isArray(response.unread)) return;
-        const next = response.unread as NotificationUnread[];
-        const previous = this.peerUnreads.get(hostId) ?? [];
-        if (next.length) this.peerUnreads.set(hostId, next);
-        else this.peerUnreads.delete(hostId);
-        const peer = this.hosts.peer(hostId);
-        if (peer?.show_agents) {
-          if (shouldReset) this.options.notifications?.onChange({ type: 'reset' });
-          else if (JSON.stringify(previous) !== JSON.stringify(next)) this.options.notifications?.onChange({ type: 'counts' });
+        if (!this.disposed && this.peers.connected(hostId)
+          && (this.notificationsGeneration.get(hostId) ?? 0) === generation
+          && response && Array.isArray(response.unread)) {
+          const next = response.unread as NotificationUnread[];
+          const previous = this.peerUnreads.get(hostId) ?? [];
+          if (next.length) this.peerUnreads.set(hostId, next);
+          else this.peerUnreads.delete(hostId);
+          const peer = this.hosts.peer(hostId);
+          if (peer?.show_agents) {
+            if (shouldReset) this.options.notifications?.onChange({ type: 'reset' });
+            else if (JSON.stringify(previous) !== JSON.stringify(next)) this.options.notifications?.onChange({ type: 'counts' });
+          }
         }
       } finally {
         this.fetchingNotifications.delete(hostId);

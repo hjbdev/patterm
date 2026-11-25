@@ -409,6 +409,45 @@ async function sharedNotifications(): Promise<void> {
     'notification_0', 'workstation:notification_w0'
   ], 'multi-host cursor pagination traverses every tied and older notification in strict order');
   tieService.dispose();
+
+  // Rapid disconnect + reconnect while an earlier notifications.state call is in flight still drains the queued refresh.
+  let resolveFirstState: ((value: unknown) => void) | null = null;
+  let stateCalls = 0;
+  let quickOnConnected: (hostId: string) => void = () => {};
+  let quickOnDisconnected: (hostId: string) => void = () => {};
+  let quickConnected = true;
+  const quickChanges: NotificationChange[] = [];
+  const quickService = new RemoteClientService(hosts, {
+    handle() {},
+    onConnected: (listener: typeof quickOnConnected) => { quickOnConnected = listener; },
+    onDisconnected: (listener: typeof quickOnDisconnected) => { quickOnDisconnected = listener; },
+    onEvent() {}, emit() {}, connected: () => quickConnected,
+    request: async (_host: string, method: string) => {
+      if (method === 'workbench.read' || method === 'bots.read') return [];
+      if (method === 'notifications.state') {
+        stateCalls += 1;
+        if (stateCalls === 1) return new Promise((resolve) => { resolveFirstState = resolve; });
+        return { unread: [{ process_id: 'process_fresh', project_id: null, count: 1, urgency: 'high', snoozed: false, preview: 'Fresh' }] };
+      }
+      return null;
+    }
+  } as unknown as PeerLinkService, { localProjectFor: () => null, links: () => [] } as unknown as ProjectLinkService, {
+    localWorkbench: () => ({ projects: [] }), terminal: { onFrame() {} }, terminalSubscriptions: { release: async () => {} },
+    invalidate() {}, notifyRemoteTopics() {},
+    notifications: { state: () => ({ unread: [] }), list: () => ({ items: [], total: 0, next_cursor: null }), read: () => ({ updated: 0 }), resolve: () => ({ updated: 0 }), onChange: (c: NotificationChange) => quickChanges.push(c) }
+  } as unknown as ConstructorParameters<typeof RemoteClientService>[3]);
+  quickOnConnected(peer.host_id);
+  quickConnected = false;
+  quickOnDisconnected(peer.host_id);
+  quickConnected = true;
+  quickOnConnected(peer.host_id);
+  resolveFirstState!({ unread: [{ process_id: 'process_stale', project_id: null, count: 9, urgency: 'low', snoozed: false, preview: 'Stale' }] });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(stateCalls, 2, 'queued reconnect refresh runs after stale in-flight request settles');
+  assert.deepEqual(quickService.mergeUnread([]).map((row) => row.process_id), ['workstation:process_fresh'], 'stale response is discarded and reconnect state wins');
+  assert.equal(quickChanges.at(-1)?.type, 'reset', 'reconnect emits reset after fresh unread state loads');
+  quickService.dispose();
+
   service.dispose();
 }
 

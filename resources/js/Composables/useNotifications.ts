@@ -155,9 +155,13 @@ export function startNotifications(router: Router): void {
     if (notification.session_id && params.sessionId === notification.session_id) return true;
     if (params.processId === notification.process_id) return true;
     // Qualified remote URLs encode `:` as `%3A`, while vue-router keeps `:` unencoded in `route.path`.
-    const target = typeof router.resolve === 'function'
-      ? router.resolve(notification.url).path
-      : decodeURIComponent(notification.url);
+    // Query-targeted URLs (such as `/routines?run=...`) must match `fullPath`, never the bare page path.
+    const resolved = typeof router.resolve === 'function' ? router.resolve(notification.url) : null;
+    if (resolved ? resolved.fullPath !== resolved.path : notification.url.includes('?')) {
+      const targetFullPath = resolved ? resolved.fullPath : decodeURIComponent(notification.url);
+      return router.currentRoute.value.fullPath === targetFullPath;
+    }
+    const target = resolved ? resolved.path : decodeURIComponent(notification.url);
     return route() === target || route().startsWith(`${target}/`);
   };
 

@@ -102,4 +102,14 @@ test('swiping a toast away leaves it unread; the close button marks it read', as
   } });
   assert.equal(globalThis.toasts.has('workstation:notif_1'), false, 'remote notification for the focused agent tab does not pop a toast');
   assert.deepEqual(reads.at(-1), { ids: ['workstation:notif_1'] }, 'remote notification for the focused agent tab is auto-marked read');
+
+  // Browsing `/routines` without `?run=...` must not suppress workspace routine run notifications.
+  route.value = { path: '/routines', fullPath: '/routines', params: {} };
+  changed({ type: 'raised', notification: {
+    id: 'workstation:notif_routine', project_id: null, process_id: 'workstation:process_12', session_id: null,
+    kind: 'permission', urgency: 'high', delivery: 'all', audience: 'user', title: 'Routine waiting', body: '', occurrences: 1,
+    created_at: '', updated_at: '', read_at: null, resolved_at: null,
+    url: '/routines?host=workstation&run=workstation%3Aprocess_12', project_name: null, process_name: 'Roundup', host: 'workstation'
+  } });
+  assert.equal(globalThis.toasts.has('workstation:notif_routine'), true, 'query-targeted routine run notification still toasts on bare /routines');
 });
