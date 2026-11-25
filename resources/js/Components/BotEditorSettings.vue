@@ -156,10 +156,11 @@
             <Switch id="bot-discord-replies" :model-value="Boolean(bot.discord?.readReplies)" @update:model-value="saveDiscord('replies', { readReplies: Boolean($event) })" />
           </SettingsRow>
           <SettingsRow v-if="status" label="Status" inset>
-            <span :class="cn('text-xs', status.state === 'error' ? 'text-destructive' : status.state === 'connected' ? 'text-foreground' : 'text-muted-foreground')">{{ statusText }}</span>
-          </SettingsRow>
-          <SettingsRow v-if="status?.invite_url" label="Invite to a server" description="Opens Discord to add the bot to a server you manage. Mention it there to talk to it." inset>
-            <Button as="a" :href="status.invite_url" target="_blank" rel="noopener noreferrer" size="sm" variant="outline" class="h-8 text-xs">Invite<ExternalLink class="h-3.5 w-3.5" /></Button>
+            <template v-if="status.invite_url" #description>Add the bot to a server you manage, then mention it there.</template>
+            <div class="flex items-center gap-3">
+              <span :class="cn('text-xs', status.state === 'error' ? 'text-destructive' : status.state === 'connected' ? 'text-foreground' : 'text-muted-foreground')">{{ statusText }}</span>
+              <Button v-if="status.invite_url" as="a" :href="status.invite_url" target="_blank" rel="noopener noreferrer" size="sm" variant="outline" class="h-8 shrink-0 gap-1.5 text-xs">Add to server<ExternalLink class="h-3.5 w-3.5" /></Button>
+            </div>
           </SettingsRow>
         </template>
       </SettingsSection>
