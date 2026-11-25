@@ -894,13 +894,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const input = assistantFocusItemsInput.parse(args ?? {});
     return focusOwner(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
   });
-  const botStayQuietInput = z.object({
+  const stayQuietInput = z.object({
     reason: z.string().trim().min(1).max(200).optional()
   }).strict();
   registry.register({
-    name: 'bot_stay_quiet',
-    namespace: 'assistant',
-    description: 'Bots and assistant only: end this turn without a reply of your own. It only stops your own turn from raising a "turn finished" notice. It never hides, dismisses or delays anything else: other agents\' notifications, permission prompts, questions and failures stay open and reach the user as before. Call this when an incoming notification digest, helper report, agent message, timer callback, or routine report needs no extra update from you.',
+    name: 'stay_quiet',
+    namespace: 'cli.coordination',
+    description: 'End this turn without a reply of your own. It only stops your own turn from raising a "turn finished" notice. It never hides, dismisses or delays anything else: other agents\' notifications, permission prompts, questions and failures stay open and reach the user as before. Call this when an incoming notification digest, helper report, agent message, timer callback, or routine report needs no extra update from you.',
     inputSchema: { type: 'object', properties: { reason: { type: 'string', maxLength: 200, description: 'Optional brief note on why no user update is needed.' } } },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     changes: [],
@@ -908,21 +908,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       'Call this only on unsolicited wakeups (digests, reports, agent messages, timer callbacks, routine reports) that need no user-facing update, then end your turn without prose.',
       'Never use this to ignore a direct message from the user or to suppress important failures or decisions.'
     ],
-    unavailable: (context) => {
-      if (context.remote) return 'Only local bots and the assistant can call bot_stay_quiet';
-      // Shared bridges (such as OpenCode) list tools without a per-session identity
-      // and attach session metadata on tool calls; enforce role at dispatch there.
-      if (!context.identity) return null;
-      const role = sessionRole(context);
-      return role === 'bot' || role === 'assistant' ? null : 'Only bots and the assistant can call bot_stay_quiet';
-    }
+    unavailable: (context) => context.remote ? 'Only local agents can call stay_quiet' : null
   }, (args, context) => {
     const current = caller(context);
-    if (!current?.process_id || context.remote || (current.session_role !== 'bot' && current.session_role !== 'assistant')) {
-      throw new Error('bot_stay_quiet: only local bots and the assistant can call this');
-    }
-    const input = botStayQuietInput.parse(args ?? {});
+    if (!current?.process_id || context.remote) throw new Error('stay_quiet: only local agents can call this');
+    const input = stayQuietInput.parse(args ?? {});
     services.timeline.append({
+      // The stored event name predates the tool's rename; turn tracking reads it.
       event_type: 'bot.stayed_quiet',
       project_id: current.project_id,
       session_id: current.session_id,

@@ -261,7 +261,7 @@ async function main(): Promise<void> {
     database.connection.prepare(`update timeline_events set created_at = ? where id = 'report-root'`).run(new Date(now - 60_000).toISOString());
     service.turnActivity('root', 'idle', 'working');
     database.connection.prepare(`insert into timeline_events (id, event_type, project_id, process_id, actor_type, metadata, created_at) values ('quiet-root', 'bot.stayed_quiet', 'project_a', 'root', 'agent', '{}', ?)`).run(new Date(now + 1500).toISOString());
-    assert.equal(service.turnActivity('root', 'working', 'idle'), true, 'a turn marked quiet with bot_stay_quiet is not announced');
+    assert.equal(service.turnActivity('root', 'working', 'idle'), true, 'a turn marked quiet with stay_quiet is not announced');
     // A native turn boundary inside the same working stretch (such as a queued
     // user turn starting after a quiet digest) supersedes the quiet marker
     // without altering turn_started_at or agent.reported.
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
     assert.equal((database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at, startedBefore, 'noteTurnBoundary preserves turn_started_at');
     // A fresh NotificationService instance (simulating app restart) still sees the cleared quiet mark.
     const restarted = new NotificationService(database, settings, { append: () => '' }, async () => undefined, () => undefined, () => now);
-    assert.equal(restarted.turnActivity('root', 'working', 'idle'), false, 'a subsequent native turn after bot_stay_quiet is not silenced even after restart');
+    assert.equal(restarted.turnActivity('root', 'working', 'idle'), false, 'a subsequent native turn after stay_quiet is not silenced even after restart');
     database.connection.prepare(`delete from timeline_events where id = 'quiet-root' or event_type = 'bot.quiet_cleared'`).run();
     service.turnActivity('root', 'idle', 'working');
     service.turnActivity('root', 'working', 'error');

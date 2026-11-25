@@ -74,7 +74,7 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       const closeRequests = context.closeRequests();
       if (closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
       // A turn that reported or woke a snoozed agent is not announced, and
-      // nor is a bot's turn that called bot_stay_quiet.
+      // nor is a turn that called stay_quiet.
       // A bot's turn that said nothing, such as a digest it answered silently,
       // is not news either, and leaves its earlier reply unread.
       else if (!woke && !reportedThisTurn && !(context.isBot?.(processId) && context.botSilent?.(processId))) {

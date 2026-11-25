@@ -361,7 +361,7 @@ export class NotificationService {
     return latestQuiet?.event_type === 'bot.stayed_quiet';
   }
 
-  // Clears any stale turn_finished notice when a bot marks its turn quiet.
+  // Clears any stale turn_finished notice when an agent marks its turn quiet.
   // Mid-turn, only this turn's: a reply from an earlier turn stays unread.
   quiet(processId: string): number {
     const db = this.database.connection;
@@ -375,7 +375,7 @@ export class NotificationService {
   // A native turn boundary inside a continuous working stretch (such as a
   // queued user prompt starting right after a quiet digest turn's result, or a
   // successor OpenCode execution inside the settle window) durably clears any
-  // active bot_stay_quiet mark without touching turn_started_at.
+  // active stay_quiet mark without touching turn_started_at.
   noteTurnBoundary(processId: string, at?: string): void {
     const db = this.database.connection;
     const row = db.prepare(`select project_id, turn_started_at from processes where id = ?`).get(processId) as { project_id: string | null; turn_started_at: string | null } | undefined;
