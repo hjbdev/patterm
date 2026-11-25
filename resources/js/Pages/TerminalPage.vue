@@ -1,16 +1,38 @@
 <template>
-  <div ref="workspace" class="relative flex h-full min-h-0 flex-col bg-background" :class="activeTerminalId && !phoneLayout ? 'py-6' : ''">
+  <div ref="workspace" class="relative flex h-full min-h-0 flex-col" :class="!tiled && 'bg-background'">
     <PhoneAgentHeader v-if="phoneLayout && activeProject && (route.name === 'agent' || route.name === 'process')" :project-id="activeProject.project.id" :session="selectedAgent" :process="selectedProcess" :active-worktree-id="diffWorktree?.id ?? null" :folded="keyboardOpen && Boolean(activeTerminalId)" @peek="openPeek" @open-worktree="openWorktree" />
     <PhoneServerCard v-if="phoneLayout && activeProject && route.name === 'process' && selectedProcess" v-show="!keyboardOpen" :project-id="activeProject.project.id" :process="selectedProcess" />
-    <!-- The row spans the page, so an open peek meets its edge at full height;
-         a terminal keeps its own width, centred beside it. -->
-    <div v-if="activeTerminalId || integratedAgent" class="relative flex min-h-0 w-full flex-1 bg-background">
+    <!-- The row spans the page. Panels pinned beside the agent tile at its
+         right, as cards of their own, and the conversation becomes one too;
+         a terminal keeps its own width, centred in it. -->
+    <div v-if="activeTerminalId || integratedAgent" class="relative flex min-h-0 w-full flex-1">
+      <div
+        class="relative flex min-h-0 min-w-0 flex-1 flex-col"
+        :class="tiled && ['overflow-hidden rounded-xl border bg-background transition-colors duration-150', panels.focus.value === 'chat' ? 'border-white/30' : 'border-white/[0.06]']"
+        @pointerenter="panels.hover('chat')"
+      >
       <div
         class="relative mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col"
+        :class="activeTerminalId && !phoneLayout && 'py-6'"
         :style="activeTerminalId ? { maxWidth: 'var(--patterm-terminal-max-width, 960px)' } : undefined"
       >
         <!-- The agent's context, above its conversation and lined up with it. -->
-        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" inner="max-w-[var(--patterm-conversation-max-width,50rem)]" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" @open-worktree="openWorktree" />
+        <ContextHeader
+          v-if="!phoneLayout && selectedAgent && activeProject"
+          :project-id="activeProject.project.id"
+          :session="selectedAgent"
+          inner="max-w-[var(--patterm-conversation-max-width,50rem)]"
+          :active-worktree-id="diffWorktree?.id ?? null"
+          :can-pin="panels.available.value"
+          :pinned="panels.pinned.value"
+          :tab-into="panels.anchor.value ? PIN_META[panels.anchor.value.active].title : null"
+          @peek="openPeek"
+          @open-worktree="openWorktree"
+          @pin="panels.pin"
+          @tab="panels.pinAsTab"
+          @locate="panels.locate"
+          @grab="(kind, event) => zone?.grabChip(kind, event)"
+        />
         <div class="relative min-h-0 flex-1">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
@@ -20,16 +42,18 @@
         </div>
         <TerminalKeyRow v-if="keyboardOpen && activeTerminalId && !integratedAgent" :ctrl-held="terminalPane?.ctrlHeld ?? false" @key="terminalPane?.pressKey($event)" />
       </div>
-      <aside v-if="docked && peek && selectedAgent" ref="panel" tabindex="-1" role="complementary" :aria-label="peekLabel" class="relative z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :style="{ width: `${paneWidth}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close">
-        <div role="separator" tabindex="0" aria-label="Resize peek" aria-orientation="vertical" :aria-valuenow="paneWidth" :aria-valuemin="PEEK_WIDTH.min" :aria-valuemax="PEEK_WIDTH.max" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(paneWidth + 20)" @keydown.right.prevent="setWidth(paneWidth - 20)" />
-        <PeekPane v-model:peek="peek" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :process-id="selectedAgent.processId" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
-      </aside>
+      </div>
+      <PinnedZone v-if="panels.available.value && selectedAgent && activeProject" ref="zone" :panels="panels">
+        <template #panel="{ kind }">
+          <PinnedPanel :kind="kind" :project-id="activeProject.project.id" :session="selectedAgent" :active-worktree-id="diffWorktree?.id ?? null" :browser="panels.browserPeek.value" :image="panels.imagePeek.value" @peek="openPeek" @image="panels.imagePeek.value = $event" @browser-opened="browserOpened" @open-worktree="openWorktree" />
+        </template>
+      </PinnedZone>
     </div>
     <div v-else-if="route.name !== 'project' && route.name !== 'newConversation'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
     <div v-else-if="activeProject" class="flex min-h-0 flex-1">
       <NewConversation :project-id="activeProject.project.id" :choose-project="allAgents.active" />
     </div>
-    <!-- Over a narrow workspace the peek is a sheet, and on a phone it fills the screen. -->
+    <!-- Without room to pin beside the agent the peek is a sheet, and on a phone it fills the screen. -->
     <Sheet :open="sheetOpen" @update:open="open => { if (!open) close() }">
       <SheetContent side="right" hide-close aria-describedby="" class="flex w-[85vw] flex-col gap-0 border-border/30 p-0 pt-[env(safe-area-inset-top)] max-sm:w-full max-sm:max-w-none" :class="peek?.kind === 'context' ? 'max-w-sm' : peek?.kind === 'browser' ? 'max-w-4xl' : 'max-w-2xl'" @open-auto-focus="focusSheet" @close-auto-focus="returnFocus">
         <SheetTitle class="sr-only">{{ peekLabel }}</SheetTitle>
@@ -62,6 +86,10 @@ import PhoneAgentHeader from '../Components/Phone/PhoneAgentHeader.vue';
 import PhoneServerCard from '../Components/Phone/PhoneServerCard.vue';
 import ContextHeader from '../Components/session-context/ContextHeader.vue';
 import PeekPane from '../Components/peek/PeekPane.vue';
+import PinnedPanel from '../Components/tiling/PinnedPanel.vue';
+import PinnedZone from '../Components/tiling/PinnedZone.vue';
+import { PIN_META } from '../Components/tiling/pinMeta';
+import { usePinnedPanels, workspaceTiled } from '../Composables/usePinnedPanels';
 const WorktreeDiffDeck = defineAsyncComponent(() => import('../Components/WorktreeDiffDeck.vue'));
 const WorktreeDiffDrawer = defineAsyncComponent(() => import('../Components/WorktreeDiffDrawer.vue'));
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
@@ -129,7 +157,7 @@ watch(() => integratedAgent.value?.processId, (processId) => {
     .then((settings) => { presets.value = settings?.presets ?? []; })
     .catch(() => { /* Harnesses are still offered. */ });
 }, { immediate: true });
-const workspace = ref<HTMLElement>(), panel = ref<HTMLElement>(), narrow = ref(false);
+const workspace = ref<HTMLElement>();
 // The worktree under review. The viewer covers the workspace below the top bar,
 // in the layout chosen in Settings → Appearance.
 const diffWorktree = ref<SessionWorktree | null>(null);
@@ -138,31 +166,16 @@ const returnLabel = computed(() => (integratedAgent.value ? 'Conversation' : 'Te
 let worktreeOpener: HTMLElement | null = null;
 // Palette requests for the agent shown here.
 let stopWorkspaceRequests: (() => void) | undefined;
-function preference(key: string) {
-  try {
-    return localStorage.getItem(key);
-  }
-  catch {
-    return null;
-  }
-}
-function storePreference(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  }
-  catch { /* Layout preferences remain available for this page. */
-  }
-}
-// The peek pane opens on demand beside the agent, with one thing in it, and
-// keeps the width it was last given. The browser keeps its own, wider one, so
-// its pages stay readable.
-const PEEK_WIDTH = { min: 260, max: 900 } as const;
-function storedWidth(key: string, fallback: number): number {
-  const stored = Number(preference(key));
-  return Number.isFinite(stored) && stored >= PEEK_WIDTH.min ? Math.min(PEEK_WIDTH.max, stored) : fallback;
-}
-const width = ref(storedWidth('patterm.context.width', 420));
-const browserWidth = ref(storedWidth('patterm.peek.browser.width', 720));
+
+// Panels pinned beside the agent, tiled while there's room for them and the
+// conversation. Without room, or on a phone, a peek opens as a sheet instead.
+const zone = ref<InstanceType<typeof PinnedZone> | null>(null);
+const panels = usePinnedPanels({
+  sessionId: () => selectedAgent.value?.id ?? null,
+  enabled: () => !phoneLayout.value && Boolean(selectedAgent.value),
+  focusElement
+});
+const tiled = computed(() => panels.tiled.value && Boolean(activeTerminalId.value || integratedAgent.value));
 const peek = ref<Peek | null>(null), captureError = ref('');
 const peekLabel = computed(() => {
   switch (peek.value?.kind) {
@@ -171,52 +184,50 @@ const peekLabel = computed(() => {
     default: return 'Session context';
   }
 });
-// The peek docks beside the conversation or terminal while there's room, and is a sheet otherwise.
-const docked = computed(() => Boolean(selectedAgent.value && peek.value && !narrow.value && !phoneLayout.value));
 // The sheet steps aside while a worktree diff it opened is showing, and comes back when the diff closes.
-const sheetOpen = computed(() => Boolean((activeTerminalId.value || integratedAgent.value) && selectedAgent.value && peek.value && (narrow.value || phoneLayout.value) && !diffWorktree.value));
-let observer: ResizeObserver | undefined, drag: {
-  x: number;
-  width: number;
-} | null = null;
-const paneWidth = computed(() => peek.value?.kind === 'browser' ? browserWidth.value : width.value);
-function setWidth(value: number) {
-  const next = Math.max(PEEK_WIDTH.min, Math.min(PEEK_WIDTH.max, value));
-  if (peek.value?.kind === 'browser') {
-    browserWidth.value = next;
-    storePreference('patterm.peek.browser.width', String(next));
-  } else {
-    width.value = next;
-    storePreference('patterm.context.width', String(next));
-  }
-  updateNarrow();
+const sheetOpen = computed(() => Boolean((activeTerminalId.value || integratedAgent.value) && selectedAgent.value && peek.value && !panels.available.value && !diffWorktree.value));
+let observer: ResizeObserver | undefined;
+function measure() {
+  panels.room.value = workspace.value?.clientWidth ?? 0;
 }
-// The peek docks while the conversation keeps 560 px beside it, or 440 on a
-// tablet, which would rather see both than either full width.
-function updateNarrow() {
-  narrow.value = (workspace.value?.clientWidth ?? 1200) < paneWidth.value + (touchScreen() ? 440 : 560);
-}
-function startResize(event: PointerEvent) {
-  drag = { x: event.clientX, width: paneWidth.value };
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  event.preventDefault();
-}
-function resize(event: PointerEvent) {
-  if (drag)
-    setWidth(drag.width + drag.x - event.clientX);
-}
-function endResize() {
-  drag = null;
-}
+// Where there's room, a peek pins its panel, or points at it once pinned.
 async function openPeek(next: Peek) {
-  peek.value = next;
-  await nextTick();
-  panel.value?.focus();
+  if (!panels.available.value) {
+    // The sheet opens pages in the same browser, so the tile forgets its own.
+    if (next.kind === 'browser' && next.url) panels.browserPeek.value = { ...panels.browserPeek.value, opened: undefined };
+    peek.value = next;
+    return;
+  }
+  peek.value = null;
+  if (next.kind === 'browser') {
+    // The pinned browser opens a page once, so showing its tile again leaves
+    // the agent where it is. Choosing the page it opened just shows it too,
+    // as the side peek did; another page opens.
+    const current = panels.browserPeek.value;
+    const shown = panels.pinned.value.includes('browser') && next.url === current.opened;
+    panels.browserPeek.value = { url: shown ? undefined : next.url, opened: current.opened, serverProcessId: next.serverProcessId ?? null };
+    panels.pin('browser');
+  } else if (next.kind === 'image') {
+    panels.imagePeek.value = { images: next.images, index: next.index };
+    panels.pin('image');
+  } else panels.pin('context');
 }
+function browserOpened() {
+  panels.browserPeek.value = { ...panels.browserPeek.value, opened: panels.browserPeek.value.url, url: undefined };
+}
+// A peek still open as the workspace widens moves beside the agent.
+watch(() => panels.available.value, (available) => {
+  if (available && peek.value) void openPeek(peek.value);
+});
 function close() {
   peek.value = null;
-  if (!narrow.value && !phoneLayout.value)
-    focusEditor();
+}
+// Moves the keyboard where a key moved focus: the conversation's editor, or
+// into a pinned tile, such as its browser's page.
+function focusElement(id: string) {
+  if (id === 'chat') { focusEditor(); return; }
+  const tile = workspace.value?.querySelector<HTMLElement>(`[data-tile-id="${CSS.escape(id)}"]`);
+  (tile?.querySelector<HTMLElement>('canvas[tabindex]') ?? tile)?.focus({ preventScroll: true });
 }
 // Return focus to whichever editor the panel was opened from, except on touch screens, where that opens the keyboard.
 function focusEditor() {
@@ -244,14 +255,21 @@ function closeWorktree() {
   void nextTick(() => (worktreeOpener?.isConnected ? worktreeOpener : workspace.value?.querySelector<HTMLElement>('[data-patterm-terminal-input], [data-patterm-integrated-input]'))?.focus());
 }
 // Another agent closes the peek, unless it was asked for on the way there.
+// Its pinned panels come with it.
 watch(() => selectedAgent.value?.id, (id) => {
   diffWorktree.value = null;
-  peek.value = id ? takePeek(id) : null;
+  peek.value = null;
+  const queued = id ? takePeek(id) : null;
+  if (queued) void openPeek(queued);
 }, { immediate: true });
-watch(peek, (next) => {
-  peekedProcessId.value = next?.kind === 'browser' ? next.serverProcessId ?? null : null;
-  updateNarrow();
-}, { immediate: true });
+// The server whose page the agent's browser shows, for its sidebar row.
+const shownServer = computed(() => {
+  if (peek.value) return peek.value.kind === 'browser' ? peek.value.serverProcessId ?? null : null;
+  return panels.available.value && panels.pinned.value.includes('browser') ? panels.browserPeek.value.serverProcessId ?? null : null;
+});
+watch(shownServer, (processId) => { if (pageActive.value) peekedProcessId.value = processId; });
+// The main card gives way to the conversation's and the pinned panels' own.
+watch(tiled, (value) => { if (pageActive.value) workspaceTiled.value = value; });
 // An agent that asks for the user in its browser opens it beside its
 // conversation, once per request, so closing it sticks.
 const browser = useBrowserState(() => selectedAgent.value?.processId);
@@ -260,7 +278,9 @@ watch(() => browser.value?.help?.requestedAt, (requestedAt) => {
   const processId = selectedAgent.value?.processId;
   if (!requestedAt || !processId || shownHelp.has(`${processId}:${requestedAt}`)) return;
   shownHelp.add(`${processId}:${requestedAt}`);
-  if (peek.value?.kind !== 'browser') void openPeek({ kind: 'browser' });
+  if (peek.value?.kind === 'browser') return;
+  if (panels.available.value && panels.pinned.value.includes('browser')) panels.locate('browser');
+  else void openPeek({ kind: 'browser' });
 });
 function appearanceChanged(event: Event) {
   diffLayout.value = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail).diffViewer;
@@ -279,10 +299,12 @@ function registerWorkspaceRequests(): void {
 }
 
 onMounted(async () => {
-  observer = new ResizeObserver(updateNarrow);
+  observer = new ResizeObserver(measure);
   if (workspace.value)
     observer.observe(workspace.value);
-  updateNarrow();
+  measure();
+  workspaceTiled.value = tiled.value;
+  peekedProcessId.value = shownServer.value;
   window.addEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, appearanceChanged);
   registerWorkspaceRequests();
   if (!lastKnownAppearanceSettings())
@@ -290,18 +312,21 @@ onMounted(async () => {
 });
 onActivated(() => {
   pageActive.value = true;
-  updateNarrow();
+  measure();
   registerWorkspaceRequests();
-  peekedProcessId.value = peek.value?.kind === 'browser' ? peek.value.serverProcessId ?? null : null;
+  peekedProcessId.value = shownServer.value;
+  workspaceTiled.value = tiled.value;
 });
 onDeactivated(() => {
   pageActive.value = false;
   stopWorkspaceRequests?.();
   stopWorkspaceRequests = undefined;
   peekedProcessId.value = null;
+  workspaceTiled.value = false;
 });
 onBeforeUnmount(() => {
   pageActive.value = false;
+  workspaceTiled.value = false;
   observer?.disconnect();
   window.removeEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, appearanceChanged);
   stopWorkspaceRequests?.();

@@ -52,6 +52,18 @@ export function browserControl(tool: 'browser_input' | 'browser_navigate' | 'bro
   return window.patterm.integratedCall ? window.patterm.integratedCall(tool, args) : window.patterm.call(tool, args);
 }
 
+// A frame's JPEG bytes. Decoding runs once per streamed frame on the main
+// thread, so it uses the native decoder where there is one: it is about a
+// hundred times faster than mapping atob's string a character at a time.
+const nativeBase64 = (Uint8Array as { fromBase64?: (data: string) => Uint8Array<ArrayBuffer> }).fromBase64;
+export function frameBytes(data: string): Uint8Array<ArrayBuffer> {
+  if (nativeBase64) return nativeBase64(data);
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 export function nextFrame(processId: string, after: number): Promise<BrowserFrame> {
   return window.patterm.call('browser_frame', { process_id: processId, after }) as Promise<BrowserFrame>;
 }
