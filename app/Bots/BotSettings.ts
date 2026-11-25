@@ -46,6 +46,20 @@ export const botVoiceInput = z.object({
 
 export type BotVoice = z.infer<typeof botVoiceInput>;
 
+// A Discord user or channel ID: a snowflake.
+export const DISCORD_SNOWFLAKE = /^\d{15,22}$/;
+
+// The bot answers Discord mentions and DMs from the users listed, through
+// the Discord application whose token the owner saves separately. The token
+// is never part of these settings, so they can be read back safely.
+export const botDiscordInput = z.object({
+  enabled: z.boolean().default(false),
+  allowedUserIds: z.array(z.string().trim().regex(DISCORD_SNOWFLAKE, 'use a Discord user ID')).max(20).default([])
+    .transform((ids) => [...new Set(ids)])
+});
+
+export type BotDiscord = z.infer<typeof botDiscordInput>;
+
 export const botInput = z.object({
   id: z.string().trim().min(1).max(80),
   name: z.string().trim().min(1).max(40),
@@ -75,7 +89,8 @@ export const botInput = z.object({
   // The bot may answer agents' permission requests and questions that are
   // waiting for the user, in its purview, within the limits a parent agent
   // has. The user is still notified and can answer first.
-  requests: z.boolean().default(false)
+  requests: z.boolean().default(false),
+  discord: botDiscordInput.default({})
 }).superRefine((value, context) => {
   if (value.model === null && value.reasoning !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoning'], message: 'reasoning requires a model' });
   if (!harnessSupportsServiceTier(value.harness) && value.serviceTier !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['serviceTier'], message: 'only Codex bots select a service tier' });

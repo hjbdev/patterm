@@ -29,7 +29,9 @@ export function registerBotTools(
   settings: Pick<SettingsService, 'bots' | 'updateBots'>,
   log: (event: string, data: Record<string, unknown>) => void,
   // Paired hosts' bots, listed beside this host's but saved only there.
-  remoteBots: () => unknown[] = () => []
+  remoteBots: () => unknown[] = () => [],
+  // After bots are saved, such as to reconnect them to Discord.
+  afterSave: () => void = () => {}
 ) {
   registry.register(
     { name: 'settings_bots_get', namespace: 'settings', description: 'Read the bots, which of them are running, and the available voices.', hidden: true, changes: [], inputSchema: { type: 'object' } },
@@ -40,6 +42,7 @@ export function registerBotTools(
     async (args) => {
       const saved = settings.updateBots(args);
       await relay.settingsChanged();
+      try { afterSave(); } catch (error) { log('saved.failed', { message: error instanceof Error ? error.message : String(error) }); }
       // Starting a bot can take a while; the workbench shows it when it's up.
       void bots.reconcile().catch((error: unknown) => log('reconcile.failed', { message: error instanceof Error ? error.message : String(error) }));
       return saved;

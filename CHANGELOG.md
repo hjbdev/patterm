@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree, and write the first message. Sending starts the agent with that
   message and the composer slides down into place. Its paperclip button attaches
   files to the first message, as do dropping and pasting them.
+- Bots on Discord. Turn on Discord in a bot's settings, paste your Discord
+  application's bot token and your Discord user ID, and the bot answers your
+  @mentions and DMs. It reacts 👀 when it gets a message, replies briefly (300
+  characters, 350 at most) and pings you there when work you started from
+  Discord finishes. It ignores everyone else, and only replies through its
+  `discord_reply` tool, so the rest of its conversation stays in Patterm. The
+  token is kept in a file only you can read and is never shown again.
 
 ### Changed
 

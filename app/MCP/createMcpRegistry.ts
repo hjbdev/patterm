@@ -67,6 +67,8 @@ import type { BotService } from '../Services/BotService';
 import type { BotRelay } from '../Services/BotRelay';
 import { ASSISTANT_BOT_ID } from '../Bots/BotIdentity';
 import type { BotInbox } from '../Services/BotInbox';
+import type { DiscordService } from '../Services/Discord/DiscordService';
+import { registerDiscordTools } from './registerDiscordTools';
 import { queuedDetail, SendMessageAction } from '../Actions/SendMessageAction';
 import { REMOTE_READ_TOOLS, type CrossHostService } from '../Services/CrossHostService';
 import { isUserProjectKind } from '../Services/PersonalProject';
@@ -140,6 +142,8 @@ interface RegistryServices {
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'role'>;
   routines?: RoutineService;
   crossHost?: CrossHostService;
+  // Bots' Discord connections, for discord_reply and Settings › Bots.
+  discord?: Pick<DiscordService, 'reply' | 'status' | 'list' | 'setToken' | 'enabledFor' | 'anyEnabled'>;
 }
 
 const processRestartInput = z.object({ process_id: z.string().min(1) });
@@ -894,6 +898,28 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const input = assistantFocusItemsInput.parse(args ?? {});
     return focusOwner(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
   });
+  if (services.discord) {
+    const discord = services.discord;
+    registerDiscordTools(registry, discord, {
+      botId: (context) => {
+        const current = caller(context);
+        return isAssistant(current) ? current?.bot_id ?? ASSISTANT_BOT_ID : isBot(current) ? current?.bot_id ?? null : null;
+      },
+      enabled: (botId) => discord.enabledFor(botId),
+      listed: (context) => {
+        if (!context.identity) return false;
+        const session = services.database.connection.prepare('select session_role, bot_id from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { session_role: string; bot_id: string | null } | undefined;
+        if (session) {
+          if (session.session_role === 'assistant') return discord.enabledFor(session.bot_id ?? ASSISTANT_BOT_ID);
+          return session.session_role === 'bot' && Boolean(session.bot_id) && discord.enabledFor(session.bot_id!);
+        }
+        // A bot still launching isn't registered yet: list the tool if any
+        // bot has Discord on, and let the call check which bot it is.
+        const role = services.launchingIdentities?.role(context.identity) ?? null;
+        return (role === 'assistant' || role === 'bot') && discord.anyEnabled();
+      }
+    });
+  }
   const stayQuietInput = z.object({
     reason: z.string().trim().min(1).max(200).optional()
   }).strict();

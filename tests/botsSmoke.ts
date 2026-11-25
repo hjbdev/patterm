@@ -13,6 +13,9 @@ import { BotService, botProjectId } from '../app/Services/BotService';
 import { BROWSER_TOOLS, INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { DatabaseService } from '../app/Services/DatabaseService';
+import type { DiscordGatewayEvents } from '../app/Services/Discord/DiscordGateway';
+import { DiscordService } from '../app/Services/Discord/DiscordService';
+import { DiscordTokenStore } from '../app/Services/Discord/DiscordTokenStore';
 import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessLauncher';
 import { OPENCODE_CAPABILITIES } from '../app/Services/OpenCodeServerService';
 import { SettingsService } from '../app/Services/SettingsService';
@@ -463,6 +466,54 @@ async function main(): Promise<void> {
     assert.deepEqual(await registry.callPublic('stay_quiet', { reason: 'Routine digest needed no user ping' }, fable), { ok: true, quiet: true });
     assert.ok(db.prepare(`select 1 from timeline_events where event_type = 'bot.stayed_quiet' and process_id = ?`).get(bots.state('fable').process_id));
     await assert.rejects(registry.callPublic('stay_quiet', {}, { remote: { host_id: 'h', host_name: 'peer', project_id: 'p' } }), /Only local agents/);
+
+    // Discord: a bot with it on hears mentions from its allowed users only,
+    // and answers through discord_reply, which only it can see.
+    const discordSelf = { id: '900000000000000001', username: 'fable' };
+    const discordSent: Array<{ channel: string; body: Record<string, unknown> }> = [];
+    const discordPrompts: Array<{ processId: string; text: string }> = [];
+    let discordEvents: DiscordGatewayEvents | null = null;
+    const discord = new DiscordService(database, settings, new DiscordTokenStore(dir), bots,
+      { prompt: async (processId: string, input: unknown) => { discordPrompts.push({ processId, text: String(input) }); } } as never,
+      { gateway: (_token, events) => {
+        discordEvents = events;
+        return {
+          start: () => events.status({ state: 'connected', user: discordSelf }),
+          stop: () => undefined,
+          user: () => discordSelf,
+          react: async () => undefined,
+          send: async (channel: string, body: Record<string, unknown>) => { discordSent.push({ channel, body }); return { id: '1' }; }
+        };
+      } });
+    const discordRegistry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench, bots, discord });
+    const listsReply = (context: { identity: string | null }) => discordRegistry.publicTools(context).some((tool) => tool.name === 'discord_reply');
+    assert.equal(listsReply(fable), false, 'hidden until Discord is on');
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, discord: { enabled: true, allowedUserIds: ['100000000000000001'] } }] });
+    assert.equal(listsReply(fable), true);
+    assert.equal(listsReply({ identity: 'mcp-q' }), false, 'other agents never see it');
+    assert.match(bots.context('fable'), /discord_reply/);
+    assert.equal(discord.status('fable').state, 'off');
+    discord.setToken('fable', `${'A'.repeat(24)}.${'b'.repeat(6)}.${'c'.repeat(38)}`);
+    assert.equal(discord.status('fable').state, 'connected');
+    const mention = (id: string, author: string, content: string) => discordEvents!.message({ id, channel_id: '300000000000000001', guild_id: '1', author: { id: author, username: 'u' }, content, mentions: [discordSelf] }, discordSelf);
+    mention('200000000000000002', '100000000000000002', '<@900000000000000001> do something else');
+    mention('200000000000000001', '100000000000000001', '<@900000000000000001> what needs me?');
+    for (let turn = 0; turn < 100 && !discordPrompts.length; turn++) await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(discordPrompts.map((prompt) => prompt.processId), [bots.state('fable').process_id], 'only the allowed user reaches the bot');
+    assert.match(discordPrompts[0]!.text, /^\[Discord message 200000000000000001 from the user, in a server channel\]\nwhat needs me\?\n/);
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'x'.repeat(351), message_id: '200000000000000001' }, fable), /at most 350/);
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi', message_id: '200000000000000002' }, fable), /isn't a Discord message the user sent/);
+    await discordRegistry.callPublic('discord_reply', { text: 'Nothing right now.', message_id: '200000000000000001' }, fable);
+    assert.deepEqual(discordSent.at(-1), { channel: '300000000000000001', body: {
+      content: 'Nothing right now.',
+      message_reference: { message_id: '200000000000000001', channel_id: '300000000000000001', fail_if_not_exists: false },
+      allowed_mentions: { parse: [], replied_user: true }
+    } });
+    await assert.rejects(discordRegistry.callPublic('discord_reply', { text: 'Hi' }, { identity: 'mcp-q' }));
+    assert.equal(JSON.stringify(discord.list()).includes('cccc'), false, 'the token is never read back');
+    discord.dispose();
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, discord: { enabled: false, allowedUserIds: [] } }] });
 
     // The assistant does not start at boot until its first conversation.
     const launchesBefore = launches.length;

@@ -7,6 +7,7 @@ import { TAB_LAYOUT_TOOLS } from '../Actions/TabLayoutActions';
 import { TELEMETRY_TOOLS } from '../MCP/registerTelemetryTools';
 import { BROWSER_CONTROL_TOOLS, BROWSER_VIEW_TOOLS } from '../Actions/BrowserActions';
 import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS } from '../Actions/SecretActions';
+import { DISCORD_TOOLS } from '../MCP/registerDiscordTools';
 
 // Tools the UI may call through patterm:mcp:call from a browser or a paired
 // host. Agent-only tools and owner tools that act on the machine itself are
@@ -33,6 +34,7 @@ export const BROWSER_TOOLS = new Set([
   ...TELEMETRY_TOOLS,
   ...BROWSER_VIEW_TOOLS,
   ...SECRET_VIEW_TOOLS,
+  ...DISCORD_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
   'agent_snooze', 'agent_unsnooze', 'agent_snooze_reminder_dismiss',
   'history_import',
