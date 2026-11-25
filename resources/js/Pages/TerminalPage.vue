@@ -193,6 +193,8 @@ function measure() {
 // Where there's room, a peek pins its panel, or points at it once pinned.
 async function openPeek(next: Peek) {
   if (!panels.available.value) {
+    // The sheet opens pages in the same browser, so the tile forgets its own.
+    if (next.kind === 'browser' && next.url) panels.browserPeek.value = { ...panels.browserPeek.value, opened: undefined };
     peek.value = next;
     return;
   }
