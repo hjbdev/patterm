@@ -1,4 +1,4 @@
-import { onMounted, shallowRef } from 'vue';
+import { computed, onMounted, onScopeDispose, shallowRef, watch } from 'vue';
 import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
 
 // Mirrors UpdateState in app/Services/UpdateService.ts.
@@ -12,6 +12,7 @@ export interface UpdateState {
   latest: { version: string; prerelease: boolean; publishedAt: string; notesUrl: string } | null;
   canApply: boolean;
   applyUnavailable: string | null;
+  requiresQuit?: boolean;
   restartDetail: string;
 }
 
@@ -47,15 +48,47 @@ export function useUpdates(host?: string | null) {
   }
   const remoteState = shallowRef<UpdateState | null>(null);
   let remoteReads = 0;
+  let pendingReads = 0;
+  let disposed = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const clearPoll = (): void => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
   const loadRemote = async (): Promise<void> => {
+    if (disposed) return;
     const read = ++remoteReads;
+    pendingReads++;
     try {
       const next = await window.patterm.call('settings_updates_get', {}, host) as UpdateState;
-      if (read === remoteReads) remoteState.value = next;
+      if (!disposed && read === remoteReads) remoteState.value = next;
     } catch { /* Handled by the panel's actions if offline. */ }
+    finally { pendingReads--; }
   };
+  const syncPoll = (value: UpdateState | null): void => {
+    const active = !disposed && (value?.status === 'checking' || value?.status === 'installing');
+    if (active && !timer) {
+      timer = setInterval(() => { if (pendingReads === 0) void loadRemote(); }, 2000);
+    } else if (!active) {
+      clearPoll();
+    }
+  };
+  watch(remoteState, syncPoll);
+  onScopeDispose(() => {
+    disposed = true;
+    clearPoll();
+  });
   onMounted(() => { void loadRemote(); });
-  return remoteState;
+  return computed({
+    get: () => remoteState.value,
+    set: (next: UpdateState | null) => {
+      remoteReads++;
+      remoteState.value = next;
+    }
+  });
 }
 
 export async function saveUpdateSettings(settings: UpdateState['settings'], host?: string | null): Promise<UpdateState> {

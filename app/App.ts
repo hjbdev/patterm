@@ -841,10 +841,10 @@ async function createApplicationResources(
     isIntegrated: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? limit 1`).get(processId)),
     subscribeConversation: (processId, listener) => integrated.subscribeConversation(processId, listener),
     // A paired host's UI runs the same tools as a browser, except ones that
-    // change this host's pairing topology. Write-only session secrets and
-    // per-host settings are allowed for the paired owner.
+    // change this host's pairing topology. Desktop installs also keep update
+    // apply local because their installer waits for the Electron app to quit.
     allowedTools: new Set([
-      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_')),
+      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && (options.runtime === 'node' || tool !== 'settings_updates_apply')),
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume',
       // Socket-only for browsers; the peer route checks control itself.
@@ -979,6 +979,7 @@ async function createApplicationResources(
     install: releaseInstall,
     settings,
     applier: releaseInstall ? new UpdateInstaller({ install: releaseInstall, mode: updateMode, logPath: path.join(options.appDataPath, 'update.log') }) : null,
+    requiresQuit: updateMode === 'desktop',
     // A service restart reconnects to its terminal and Integrated hosts.
     restartDetail: (): string => updateMode === 'desktop'
       ? `Patterm quits, installs the update, and opens again. ${quitConfirmation(application) ?? 'Nothing is running.'}`

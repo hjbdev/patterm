@@ -2359,6 +2359,18 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
+      name: 'settings_harness_presets_get',
+      namespace: 'settings',
+      hidden: true,
+      changes: [],
+      description: 'Read configured harness model presets for this host, including profile faces.',
+      inputSchema: { type: 'object' }
+    },
+    () => requireHarnessPresets().list()
+  );
+
+  registry.register(
+    {
       name: 'settings_harness_presets_update',
       namespace: 'settings',
       hidden: true,
@@ -2366,10 +2378,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       description: 'Replace configured harness model presets for this host.',
       inputSchema: { type: 'object' }
     },
-    (args) => {
-      if (!services.settings) throw new Error('settings_harness_presets_update: settings are unavailable');
-      return services.settings.updateHarnessPresets(args);
-    }
+    (args) => requireHarnessPresets().replace(args)
   );
 
   registry.register(

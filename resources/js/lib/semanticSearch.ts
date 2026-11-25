@@ -1,4 +1,4 @@
-import { onMounted, shallowRef } from 'vue';
+import { computed, onMounted, onScopeDispose, shallowRef, watch } from 'vue';
 import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
 
 // Mirrors SemanticSearchState in app/Services/SemanticSearch/SemanticSearchService.ts.
@@ -47,6 +47,16 @@ async function act(tool: string, args: Record<string, unknown> = {}, host?: stri
   return next;
 }
 
+function needsRemotePoll(value: SemanticSearchState | null): boolean {
+  if (!value) return false;
+  if (value.model.install.status === 'downloading' || value.model.install.status === 'verifying') return true;
+  return value.index.state === 'starting'
+    || value.index.state === 'loading'
+    || value.index.state === 'indexing'
+    || value.index.state === 'waiting'
+    || value.index.state === 'schema_missing';
+}
+
 export function useSemanticSearch(host?: string | null) {
   if (!host) {
     useTopicRefresh(['semantic-search'], () => void load());
@@ -55,15 +65,50 @@ export function useSemanticSearch(host?: string | null) {
   }
   const remoteState = shallowRef<SemanticSearchState | null>(null);
   let remoteReads = 0;
+  let pendingReads = 0;
+  let disposed = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const clearPoll = (): void => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
   const refresh = async (): Promise<void> => {
+    if (disposed) return;
     const read = ++remoteReads;
+    pendingReads++;
     try {
       const next = await window.patterm.call('settings_semantic_search_get', {}, host) as SemanticSearchState;
-      if (read === remoteReads) remoteState.value = next;
+      if (!disposed && read === remoteReads) remoteState.value = next;
     } catch { /* The user can retry from the panel. */ }
+    finally { pendingReads--; }
   };
+  const syncPoll = (value: SemanticSearchState | null): void => {
+    const active = !disposed && needsRemotePoll(value);
+    if (active && !timer) {
+      timer = setInterval(() => { if (pendingReads === 0) void refresh(); }, 1500);
+    } else if (!active) {
+      clearPoll();
+    }
+  };
+  watch(remoteState, syncPoll);
+  onScopeDispose(() => {
+    disposed = true;
+    clearPoll();
+  });
   onMounted(() => { void refresh(); });
-  return { state: remoteState, refresh };
+  return {
+    state: computed({
+      get: () => remoteState.value,
+      set: (next: SemanticSearchState | null) => {
+        remoteReads++;
+        remoteState.value = next;
+      }
+    }),
+    refresh
+  };
 }
 
 export const setSemanticSearchEnabled = (enabled: boolean, host?: string | null) => act('settings_semantic_search_update', { enabled }, host);

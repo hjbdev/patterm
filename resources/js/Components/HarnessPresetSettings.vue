@@ -150,7 +150,7 @@ async function load(): Promise<void> {
     if (host) {
       const [harnessResult, presetResponse, modelResponse] = await Promise.all([
         window.patterm.call('harness_list', {}, host) as Promise<{ harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[]>,
-        window.patterm.call('harness_presets', {}, host) as Promise<PresetSettings>,
+        window.patterm.call('settings_harness_presets_get', {}, host) as Promise<PresetSettings>,
         window.patterm.call('harness_models', {}, host) as Promise<ModelCatalog>
       ]);
       remoteHarnesses.value = Array.isArray(harnessResult) ? harnessResult : harnessResult?.harnesses ?? [];

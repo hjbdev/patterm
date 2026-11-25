@@ -114,6 +114,8 @@ export interface UpdateState {
   // Whether this install can apply the update itself, and why not.
   canApply: boolean;
   applyUnavailable: string | null;
+  // True for desktop installs where the local app must quit before updating.
+  requiresQuit: boolean;
   // What restarting to update stops, for the confirmation.
   restartDetail: string;
 }
@@ -131,6 +133,7 @@ export interface UpdateServiceOptions {
   install: ReleaseInstall | null;
   settings: Pick<SettingsService, 'updateSettings' | 'saveUpdateSettings' | 'updateRecord' | 'saveUpdateRecord'>;
   applier: UpdateApplier | null;
+  requiresQuit?: boolean;
   restartDetail: () => string;
   notify: (release: { version: string; canApply: boolean }) => void;
   changed: () => void;
@@ -203,6 +206,7 @@ export class UpdateService {
       latest,
       canApply: Boolean(latest) && this.status === 'available' && !applyUnavailable,
       applyUnavailable,
+      requiresQuit: Boolean(this.options.requiresQuit),
       restartDetail: this.options.restartDetail()
     };
   }

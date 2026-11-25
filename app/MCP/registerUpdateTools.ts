@@ -7,8 +7,9 @@ export const UPDATE_TOOLS = ['settings_updates_get', 'settings_updates_update', 
 // The version the owner confirmed, which the update must still be.
 const applyInput = z.object({ confirmed: z.literal(true), version: z.string().min(1) }).strict();
 
-// Owner-only update controls for Settings › About. Paired hosts cannot call
-// settings tools, so a peer never updates this machine.
+// Owner-only update controls for Settings › About. Paired hosts can inspect
+// settings and check for updates, and can apply updates only on self-restarting
+// servers; desktop installs still require quitting locally.
 export function registerUpdateTools(registry: McpToolRegistry, updates: Pick<UpdateService, 'state' | 'updateSettings' | 'check' | 'apply'>) {
   registry.register(
     { name: 'settings_updates_get', namespace: 'settings', description: 'Read the update status and update settings.', hidden: true, changes: [], inputSchema: { type: 'object' } },

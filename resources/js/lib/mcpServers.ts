@@ -1,4 +1,4 @@
-import { computed, readonly, ref, shallowRef } from 'vue';
+import { computed, onScopeDispose, readonly, ref, shallowRef, watch } from 'vue';
 import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
 
 export type McpHarness = 'claude' | 'codex' | 'opencode' | 'agy';
@@ -127,19 +127,46 @@ export function useMcpServers(host?: string | null) {
   const remoteError = ref('');
   const remoteTests = shallowRef<Record<string, McpTestState>>({});
   let remoteReads = 0;
+  let pendingReads = 0;
+  let disposed = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
 
+  const clearPoll = (): void => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
   const loadRemote = (): Promise<void> => {
+    if (disposed) return Promise.resolve();
     const read = ++remoteReads;
+    pendingReads++;
     return call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list', {}, host)
       .then((value) => {
-        if (read !== remoteReads) return;
+        if (disposed || read !== remoteReads) return;
         remoteServers.value = value.servers;
         remoteRedirect.value = value.redirect;
         remoteError.value = '';
       })
-      .catch((caught) => { if (read === remoteReads) remoteError.value = errorMessage(caught); })
-      .finally(() => { remoteLoaded.value = true; });
+      .catch((caught) => { if (!disposed && read === remoteReads) remoteError.value = errorMessage(caught); })
+      .finally(() => {
+        pendingReads--;
+        remoteLoaded.value = true;
+      });
   };
+  const syncPoll = (list: McpServerView[]): void => {
+    const active = !disposed && list.some((server) => Boolean(server.sign_in?.pending));
+    if (active && !timer) {
+      timer = setInterval(() => { if (pendingReads === 0) void loadRemote(); }, 2000);
+    } else if (!active) {
+      clearPoll();
+    }
+  };
+  watch(remoteServers, syncPoll);
+  onScopeDispose(() => {
+    disposed = true;
+    clearPoll();
+  });
   void loadRemote();
 
   return {

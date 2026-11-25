@@ -233,9 +233,23 @@ async function main(): Promise<void> {
       harnessPresets: new HarnessPresetService(settings),
       modelCatalog: new HarnessModelCatalogService({ database, settings, env: process.env, openCodeServer: { listModels: async () => ({ data: [] }), listProviders: async () => ({ data: [] }) } })
     });
-    interface PresetList { presets: Array<{ id: string; harness: string; name: string; default: boolean }> }
+    interface PresetList { presets: Array<{ id: string; harness: string; name: string; default: boolean; look?: unknown }> }
     const listed = await registry.call('harness_presets', {}) as PresetList;
     assert.ok(listed.presets.some((preset) => preset.name === 'smartypants' && preset.harness === 'claude' && preset.default), 'MCP lists preset names with default flags');
+
+    // Settings reads preserve profile faces while agent-facing harness_presets strips them.
+    const existing = await registry.call('settings_harness_presets_get', {}) as { presets: Array<{ id: string; harness: string; name: string; model: string | null; reasoning: string | null; serviceTier?: string | null; look?: { hat?: string } | null }>; defaultPresetIdByHarness: Record<string, string | null> };
+    const look = { color: 'pink', shape: 'egg', finish: 'soft', marking: 'none', eyes: 'dots', mouth: 'smile', cheeks: false, hat: 'crown', accent: 'pink', idle: 'still' };
+    const updated = await registry.call('settings_harness_presets_update', {
+      presets: existing.presets.map((preset) => preset.name === 'smartypants' ? { ...preset, look } : preset),
+      defaultPresetIdByHarness: existing.defaultPresetIdByHarness
+    }) as { presets: Array<{ name: string; look?: { hat?: string } | null }> };
+    assert.equal(updated.presets.find((preset) => preset.name === 'smartypants')?.look?.hat, 'crown');
+    const reloaded = await registry.call('settings_harness_presets_get', {}) as { presets: Array<{ name: string; look?: { hat?: string } | null }> };
+    assert.equal(reloaded.presets.find((preset) => preset.name === 'smartypants')?.look?.hat, 'crown', 'settings_harness_presets_get preserves profile faces');
+    const agentListed = await registry.call('harness_presets', {}) as PresetList;
+    assert.equal(agentListed.presets.find((preset) => preset.name === 'smartypants')?.look, undefined, 'agent-facing harness_presets keeps faces out of agent context');
+
     await registry.call('harness_preset_create', { harness: 'codex', name: 'quick', model: 'gpt-5.5', reasoning: 'low' });
     const switched = await registry.call('harness_preset_update', { ref: 'quick', default: true }) as PresetList;
     assert.equal(switched.presets.find((preset) => preset.name === 'quick')?.default, true, 'MCP preset updates can set the harness default');
