@@ -98,7 +98,7 @@ function onMessage(event: MessageEvent): void {
     post({ type: 'render', html: props.html, ...(props.media?.size ? { media: Object.fromEntries(props.media) } : {}) });
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
-    const next = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
+    const next = Math.min(FIGURE_HEIGHT.limit, Math.max(16, Math.ceil(data.height)));
     height.value = next;
     if (props.measureKey) remember(props.measureKey, height.value);
   } else if (data.type === 'answer') {

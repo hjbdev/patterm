@@ -11,7 +11,11 @@ import { FIGURE_ID, type TranscriptTool } from './TranscriptProjection';
 export const HTML_RENDER_TOOL = 'html_render';
 export const HTML_PREVIEW_TOOL = 'html_preview';
 export const MAX_FIGURE_HTML_CHARS = 512_000;
-export const FIGURE_HEIGHT = { min: 80, max: 2000, initial: 240 } as const;
+// min to max bounds the height a call asks for before its page reports one.
+// The frame then follows the page up to limit, so it never scrolls inside the
+// reply. A page sized by its viewport grows each time the frame does, so
+// agents are told not to; limit only stops one that does.
+export const FIGURE_HEIGHT = { min: 80, max: 2000, initial: 240, limit: 20_000 } as const;
 export const PREVIEW_WIDTH = { min: 240, max: 1600, initial: 728 } as const;
 // The transcript column; previews default to it.
 export const FIGURE_FRAME_SCHEME = 'patterm-frame';
@@ -85,7 +89,7 @@ export const FIGURE_THEME: Readonly<Record<string, string>> = {
   '--font-mono': 'ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace'
 };
 
-export const FIGURE_LAYOUT_GUIDE = 'The page sits inside the reply, on the transcript background: no page background, no outer padding, no card or title banner (the title is shown for you), and fluid width (the column is 320 to 900 px). Give charts a fixed pixel height; never use 100vh. Never set preserveAspectRatio="none": it stretches text. Size SVG to its width (redraw on resize) and keep labels inside it. Boxes that need their own surface use var(--muted) or a 1px var(--border) with border-radius var(--radius) and 16px padding. Keep text 13 to 14 px; use muted text, not colour, for secondary detail.';
+export const FIGURE_LAYOUT_GUIDE = 'The page sits inside the reply, on the transcript background: no page background, no outer padding, no card or title banner (the title is shown for you), and fluid width (the column is 320 to 900 px). The frame grows to fit the page, so give charts a fixed pixel height and never size anything to the viewport: no vh units, window.innerHeight, or height:100% on html or body. Never set preserveAspectRatio="none": it stretches text. Size SVG to its width (redraw on resize) and keep labels inside it. Boxes that need their own surface use var(--muted) or a 1px var(--border) with border-radius var(--radius) and 16px padding. Keep text 13 to 14 px; use muted text, not colour, for secondary detail.';
 export const FIGURE_THEME_GUIDE = `Theme variables are set on :root: ${Object.keys(FIGURE_THEME).join(', ')}. Use --chart-1..6 for series in order, --success/--warning/--destructive only for good/warn/bad meaning, --accent for one highlight. Tables, links and code already follow the theme.`;
 export const FIGURE_BRIDGE_GUIDE = 'To ask the user, call patterm.answer(id, { label, value }) (or an array of { item, label, value }) in the handler of their click; it sends at once, and only during a click or key press in the page. The pick reaches you as "Answer to <id>: <label> (<value>)", so end your turn to wait. The promise rejects if it was not sent. patterm.answered(id) gives the earlier answer text or null and patterm.canAnswer says whether this window may answer; patterm.onChange(fn) runs when either changes. Clicked http(s) links open in the browser once the user confirms.';
 
