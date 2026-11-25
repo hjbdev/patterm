@@ -190,16 +190,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Conversation display settings under Settings › Appearance: a 12–22 px font size
+- Conversation display settings under Settings › Conversations: a 12–22 px font size
   slider with live preview (scaling prose, headings, code blocks, and user
   messages proportionally), conversation column width presets (Narrow, Default,
   Wide, Full), and a Wide tables & media breakout setting (Off, Wider, Full)
   that lets HTML figures, Markdown tables, and images extend symmetrically past
   narrower prose columns.
-
-- Bots and the assistant can call `bot_stay_quiet` to handle unsolicited wakeups
-  (digests, helper reports, agent messages, timer callbacks, routine reports)
-  silently without raising a `turn_finished` notification across any harness.
 
 - Routine launches now include a bounded summary of up to two prior finished
   runs from the same project scope for continuity, and routines can deliver
@@ -245,10 +241,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streamed replies and tools, permissions, cancellation, session loading,
   model and thinking controls, presets, bots and routines. Sign in with
   `agy acp --login` first. MCP servers are supplied per launch, without changing
-  agy's configuration. Native terminal mode is not supported yet.
-- Antigravity's native JSONL transcripts can be enabled in history settings.
-  Patterm imports user requests, model replies, tool steps and token counts;
-  generated system metadata is excluded.
+  agy's configuration.
+- Antigravity's native JSONL transcripts import automatically. Patterm imports
+  user requests, model replies, tool steps and token counts; generated system
+  metadata is excluded.
 - Append-only MCP decision logging (`store_decision` and `list_decisions`)
   scoped to sessions and projects, with concrete evidence validation,
   supersession links, chronological listing, and `host_read` support across
@@ -305,9 +301,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A failed Codex MCP tool call shows its error instead of `""`, and a
   successful one shows its result text rather than the raw `{ "content": … }`
   wrapper.
-- `bot_stay_quiet` now says plainly that it only ends the bot's own turn and
-  never hides other agents' notifications or permission prompts. Codex's
-  automatic reviewer had been rejecting it as suppressing notifications.
 - The usage page opens straight away instead of after several seconds. Its
   token figures come from a cache that is filled after startup and refreshed
   in the background, the usage query no longer rebuilds part of itself for
@@ -376,12 +369,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back, as with Codex and OpenCode. File edits are kept as changed hunks with
   context rather than whole-file copies, which shrank one 460-edit session
   from 29 MB to 7 MB, and the diff view shows only the lines that changed.
-- Antigravity agents can call every Patterm tool, including
-  `spawn_agent` and `html_render`. agy 1.5.9 declares MCP tools only up to a
-  size budget and silently drops the largest, so Antigravity now gets tool
-  descriptions without usage notes (`help` still has them). Every harness gets
-  slimmer tool schemas, without `$schema` or empty lists, and shorter routine
-  field descriptions.
 - Usage shows Antigravity's remaining five-hour and weekly quotas for each model
   group, with reset times, fetched through the native CLI without a model call.
 - Antigravity's local file references render as readable labels with the full

@@ -1,6 +1,6 @@
 # Terminal engine performance follow-up
 
-Measured on 8 September 2026 against the first optimisation pass, a pre-release baseline that is not in the public history. This investigation covers submission delays, timer scheduling, session cleanup, output extraction, renderer geometry, and glyph atlas uploads. The host is Linux x86-64, AMD Ryzen 7 7800X3D, Node 26.8.1, Rust 1.96.0, and `alacritty_terminal` 0.26.0.
+This is a historical investigation, not a description of the current agent runtime: agents now use Integrated conversations rather than terminal TUIs. Measured on 8 September 2026 against the first optimisation pass, a pre-release baseline that is not in the public history. This investigation covers submission delays, timer scheduling, session cleanup, output extraction, renderer geometry, and glyph atlas uploads. The host is Linux x86-64, AMD Ryzen 7 7800X3D, Node 26.8.1, Rust 1.96.0, and `alacritty_terminal` 0.26.0.
 
 [Raw samples](../benchmarks/engine-performance/) retain the successful and failed experiments. Every reported distribution has ten samples per case. P95 uses nearest rank. Batch p95 describes batch means, not individual-operation tail latency. The synthetic workloads run without CPU pinning. Timing suites run separately from builds and other project benchmarks.
 
