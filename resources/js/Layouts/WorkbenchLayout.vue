@@ -105,9 +105,11 @@
         ]"
       >
         <div v-if="!loaded" class="p-5 text-sm text-muted-foreground">Loading project…</div>
-        <div v-else-if="!activeProject" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
+        <!-- A bot isn't part of the project beside it, so it stays mounted, and
+             a voice call stays up, while it moves off one that stops listing. -->
+        <div v-else-if="!activeProject && route.name !== 'bot'" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
         <template v-else>
-          <PhonePageHeader v-if="mobile && phonePage" :project-id="activeProject.project.id" :title="phonePage.title" :up="phonePage.up" />
+          <PhonePageHeader v-if="mobile && phonePage && activeProject" :project-id="activeProject.project.id" :title="phonePage.title" :up="phonePage.up" />
           <div class="relative min-h-0 flex-1">
             <RouterView v-slot="{ Component }">
               <KeepAlive :include="['TerminalPage', 'BotPage', 'ProjectPage']" :max="4">
