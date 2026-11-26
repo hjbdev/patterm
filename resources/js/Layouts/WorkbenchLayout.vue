@@ -210,11 +210,14 @@ watch([() => route.params.projectId, () => route.params.sessionId, botProjects, 
   else if (target !== 'wait') void router.replace({ name: 'bot', params: { projectId: target.projectId, botId: target.botId } });
 });
 // Links to a bot that name no project, such as the assistant's notifications,
-// open it beside its home project once the bots and projects are known.
-watch([() => route.name, () => route.params.botId, projects, botsLoaded], () => {
-  if (route.name !== 'botLink' || !botsLoaded.value) return;
+// open it beside its home project once the bots and projects are known. So
+// does a bot whose project stops listing, as Personal does once you add one.
+watch([() => route.name, () => route.params.projectId, () => route.params.botId, projects, botsLoaded, loaded], () => {
+  if (!botsLoaded.value || !loaded.value) return;
+  const projectIds = listedProjects(projects.value).map((project) => project.project.id);
+  if (route.name !== 'botLink' && !(route.name === 'bot' && !projectIds.includes(String(route.params.projectId)))) return;
   const botId = String(route.params.botId);
-  const projectId = botHomeProjectId(allBots.value.find((bot) => bot.id === botId), listedProjects(projects.value).map((project) => project.project.id));
+  const projectId = botHomeProjectId(allBots.value.find((bot) => bot.id === botId), projectIds);
   if (projectId) void router.replace({ name: 'bot', params: { projectId, botId } });
 }, { immediate: true });
 useHarnessLaunchCleanup();
