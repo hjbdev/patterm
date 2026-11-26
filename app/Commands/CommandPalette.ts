@@ -155,8 +155,6 @@ export async function listCommandPaletteCommands(application: PattermApplication
 
 export async function runCommandPaletteCommand(application: PattermApplication, payload: CommandRunPayload): Promise<CommandRunResult> {
   if (application.isShuttingDown?.() && payload.id !== 'renderer:quit') throw new Error('Patterm is shutting down');
-  const snapshot = application.currentWorkbench();
-  const activeProject = projectForContext(snapshot.projects.filter(listedProject), payload.context);
   const id = payload.id;
   const input = payload.input ?? {};
 
@@ -167,8 +165,13 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   if (id === 'renderer:workspace-search') return { rendererAction: 'workspaceSearch' };
   if (id === 'renderer:terminal-search') return { rendererAction: 'terminalSearch' };
   if (id === 'renderer:project-create') return { rendererAction: 'pickProjectDirectory' };
+
+  let cachedSnapshot: ReturnType<PattermApplication['currentWorkbench']> | null = null;
+  const workbench = () => (cachedSnapshot ??= application.currentWorkbench());
+  const resolveActiveProject = () => projectForContext(workbench().projects.filter(listedProject), payload.context);
+
   if (id === 'renderer:quit') {
-    if (input.confirmed !== true && quitConfirmation(application, snapshot.projects)) throw new Error('Confirm Quit and stop all before shutting down');
+    if (input.confirmed !== true && quitConfirmation(application, workbench().projects)) throw new Error('Confirm Quit and stop all before shutting down');
     await application.shutdown();
     return { rendererAction: 'quit' };
   }
@@ -179,6 +182,29 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     return { refresh: true, message: restartAllMessage(result) };
   }
 
+  if (id.startsWith('timer:')) {
+    const [, action, ...rest] = id.split(':');
+    const timerId = rest.join(':');
+    const tool = action === 'cancel' ? 'timer_cancel' : action === 'pause' ? 'timer_pause' : action === 'resume' ? 'timer_resume' : null;
+    if (!tool || !timerId) throw new Error(`unknown timer command ${id}`);
+    await callTool(application, tool, { timer_id: timerId });
+    return { refresh: true };
+  }
+  if (id === 'project:create') {
+    const path = stringInput(input.path);
+    if (!path) throw new Error('Project path is required');
+    const result = (await callTool(application, 'project_create', { path })) as { project_id?: string };
+    return { navigate: { projectId: result.project_id }, refresh: true };
+  }
+  if (id.startsWith('process:')) {
+    return runProcessCommand(application, id, input);
+  }
+  if (id.startsWith('worktree:abandon:')) {
+    await callTool(application, 'worktree_abandon', { worktree_id: id.slice('worktree:abandon:'.length) });
+    return { refresh: true };
+  }
+
+  const activeProject = resolveActiveProject();
   const projectId = activeProject?.project.id;
   if (id.startsWith('spawn:agent:')) {
     if (!projectId) throw new Error('No active project');
@@ -206,14 +232,6 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     })) as { session_id?: string };
     return { navigate: { projectId, sessionId: result.session_id }, refresh: true };
   }
-  if (id.startsWith('timer:')) {
-    const [, action, ...rest] = id.split(':');
-    const timerId = rest.join(':');
-    const tool = action === 'cancel' ? 'timer_cancel' : action === 'pause' ? 'timer_pause' : action === 'resume' ? 'timer_resume' : null;
-    if (!tool || !timerId) throw new Error(`unknown timer command ${id}`);
-    await callTool(application, tool, { timer_id: timerId });
-    return { refresh: true };
-  }
   if (id === 'spawn:terminal') {
     if (!projectId) throw new Error('No active project');
     const result = (await callTool(application, 'process_create', { project_id: projectId })) as { pty_process_id?: string };
@@ -230,15 +248,6 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
       auto_restart: Boolean(input.auto_restart)
     })) as { pty_process_id?: string };
     return { navigate: { projectId, terminalProcessId: result.pty_process_id }, refresh: true };
-  }
-  if (id === 'project:create') {
-    const path = stringInput(input.path);
-    if (!path) throw new Error('Project path is required');
-    const result = (await callTool(application, 'project_create', { path })) as { project_id?: string };
-    return { navigate: { projectId: result.project_id }, refresh: true };
-  }
-  if (id.startsWith('process:')) {
-    return runProcessCommand(application, id, input);
   }
   if (id === 'worktree:create') {
     if (!projectId) throw new Error('No active project');
@@ -257,10 +266,6 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     const worktreeId = id.slice('worktree:shell:'.length);
     const result = (await callTool(application, 'process_create', { project_id: projectId, worktree_id: worktreeId })) as { pty_process_id?: string };
     return { navigate: { projectId, terminalProcessId: result.pty_process_id }, refresh: true };
-  }
-  if (id.startsWith('worktree:abandon:')) {
-    await callTool(application, 'worktree_abandon', { worktree_id: id.slice('worktree:abandon:'.length) });
-    return { refresh: true };
   }
 
   throw new Error(`unknown command ${id}`);
@@ -351,7 +356,7 @@ function agentActions(
   const commands: CommandDescriptor[] = [];
 
   if (!extra.current) {
-    commands.push({ id: `navigate:agent:${enc(projectId)}:${enc(session.id)}`, label: 'Switch to agent', hint: name, group, kind: 'navigate' });
+    commands.push({ id: `navigate:agent:${enc(projectId)}:${enc(session.id)}`, label: 'Switch to agent', hint: name, group, kind: 'navigate', result: { navigate: { projectId, sessionId: session.id } } });
   }
   // Integrated actions run in the open conversation, which owns its controls.
   if (extra.current && live && RESPONDING.has(session.activity)) {
@@ -416,7 +421,7 @@ function processActions(projectId: string, process: ProcessDto, current: boolean
   const group: CommandGroup = current ? 'current' : 'process';
   const running = process.status === 'running';
   return [
-    ...(!current && running ? [{ id: `navigate:process:${enc(projectId)}:${enc(process.id)}`, label: 'Switch to process', hint: process.name, group, kind: 'navigate' } satisfies CommandDescriptor] : []),
+    ...(!current && running ? [{ id: `navigate:process:${enc(projectId)}:${enc(process.id)}`, label: 'Switch to process', hint: process.name, group, kind: 'navigate', result: { navigate: { projectId, processId: process.id } } } satisfies CommandDescriptor] : []),
     { id: `process:restart:${process.id}`, label: 'Restart process', hint: process.name, group, kind: 'backend', inline: true },
     ...(running ? [{ id: `process:stop:${process.id}`, label: 'Stop process', hint: process.name, group, kind: 'backend', inline: true } satisfies CommandDescriptor] : []),
     { id: `process:rename:${process.id}`, label: 'Rename process…', hint: process.name, group, kind: 'backend', inline: true, input: { type: 'text', title: 'Rename process', placeholder: 'Process name', value: process.name } },
@@ -475,6 +480,7 @@ function agentRows(project: ProjectWorkbenchDto, activeProject: ProjectWorkbench
         group: 'agent',
         kind: 'navigate',
         primary: 'Switch',
+        result: { navigate: { projectId, sessionId: session.id } },
         target: { kind: 'agent', projectId, sessionId: session.id, processId: session.processId! },
         actions: agentActions(project, session, session.processId!)
       } satisfies CommandDescriptor;
@@ -503,6 +509,7 @@ function processRows(project: ProjectWorkbenchDto, activeProject: ProjectWorkben
       group: 'process',
       kind: running ? 'navigate' : 'backend',
       primary: running ? 'Switch' : 'Restart',
+      ...(running ? { result: { navigate: { projectId, processId: process.id } } } : {}),
       target: { kind: 'process', projectId, processId: process.id },
       actions: processActions(projectId, process, false)
     } satisfies CommandDescriptor];
@@ -577,11 +584,11 @@ function worktreeRows(project: ProjectWorkbenchDto): CommandDescriptor[] {
 function projectRows(projects: ProjectWorkbenchDto[], activeProject: ProjectWorkbenchDto | null): CommandDescriptor[] {
   return projects
     .filter((project) => project !== activeProject)
-    .map((project) => ({ id: `navigate:project:${enc(project.project.id)}`, label: project.project.name, hint: project.project.path, group: 'project', kind: 'navigate', primary: 'Open', target: { kind: 'project', projectId: project.project.id } } satisfies CommandDescriptor));
+    .map((project) => ({ id: `navigate:project:${enc(project.project.id)}`, label: project.project.name, hint: project.project.path, group: 'project', kind: 'navigate', primary: 'Open', result: { navigate: { projectId: project.project.id } }, target: { kind: 'project', projectId: project.project.id } } satisfies CommandDescriptor));
 }
 
 function projectCreateCommand(): CommandDescriptor {
-  return { id: 'renderer:project-create', label: 'New project', hint: 'Register a local project directory', group: 'create', kind: 'renderer' };
+  return { id: 'renderer:project-create', label: 'New project', hint: 'Register a local project directory', group: 'create', kind: 'renderer', result: { rendererAction: 'pickProjectDirectory' } };
 }
 
 async function runProcessCommand(application: PattermApplication, id: string, input: Record<string, unknown>): Promise<CommandRunResult> {

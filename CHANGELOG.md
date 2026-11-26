@@ -52,6 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grow and shrink it up and down, `Alt+F` maximises, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
   and `Alt+Q` unpins. `Alt`+drag moves a panel from anywhere on it. Each
   agent keeps its own layout.
+- `Ctrl+N` (`Cmd+N` on macOS) opens the New conversation composer from anywhere
+  in the workbench and focuses its input.
+- Command palette responsiveness and transitions:
+  - Fixed the top-anchored opening and closing transition on the Command palette
+    and Resume conversation dialog so they glide cleanly in place instead of
+    dropping from the centred dialog's `-48%` slide offset.
+  - Built workbench commands synchronously from live client state and resolved
+    navigation commands directly in the renderer, eliminating backend round
+    trips when opening the palette or switching agents, processes, and projects.
+  - Closed the palette immediately on confirmed actions, routed agent launches
+    through the optimistic launch tab flow, and surfaced a delayed progress
+    toast (plus error toasts) only when a background command takes noticeable
+    time.
 
 ### Changed
 

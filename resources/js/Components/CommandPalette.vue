@@ -1,6 +1,6 @@
 <template>
   <Dialog v-model:open="open">
-    <DialogContent hide-close :aria-describedby="undefined" class="top-[15vh] flex max-h-[calc(85dvh-1.5rem)] -translate-y-0 w-[calc(100%-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-xl p-0" @open-auto-focus.prevent="focusQueryInput" @close-auto-focus="handleCloseAutoFocus" @escape-key-down="handleEscape">
+    <DialogContent placement="top" hide-close :aria-describedby="undefined" class="flex max-h-[calc(85dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-xl p-0" @open-auto-focus.prevent="focusQueryInput" @close-auto-focus="handleCloseAutoFocus" @escape-key-down="handleEscape">
       <DialogTitle class="sr-only">Search or jump to</DialogTitle>
       <!-- Escape goes back a level here, before the dialog's own listener could close it. -->
       <div class="contents" @keydown.esc="handleEscapeKey">
@@ -76,11 +76,13 @@ import { setShowSnoozed, showSnoozed } from '../Composables/useSnooze';
 import { setShowBotAgents, showBotAgents } from '../Composables/useBots';
 import { canSnoozeProject, openProjectSnooze, wakeProject } from '../Composables/useProjectSnooze';
 import { projectSnoozed } from '../lib/projectSnooze';
-import { actionCluster, createPaletteDocument, rankedCommands, readRecentIds, recordsRecent, rememberRecent, rendererCommands, SECTION_TITLES, withIntegratedSelectors, type CommandDescriptor, type CommandRunResult, type PaletteRow, type PaletteSection } from '../lib/commandPalette';
+import { actionCluster, actionProgressLabel, createPaletteDocument, mergePaletteCommands, rankedCommands, readRecentIds, recordsRecent, rememberRecent, rendererCommands, resolveNavigateCommand, SECTION_TITLES, withIntegratedSelectors, workbenchPaletteCommands, type CommandDescriptor, type CommandRunResult, type PaletteRow, type PaletteSection } from '../lib/commandPalette';
 import { agentLabel } from '../lib/agentTabs';
 import { restartBot } from '../lib/bots';
 import { harnessLabel } from '../lib/harnesses';
+import type { HarnessLaunchInput } from '../lib/harnessLaunches';
 import { publishedIntegratedControls } from '../lib/integratedControlsRegistry';
+import { lastContextRead, type SessionContext } from '../lib/projectContext';
 import { topicGeneration } from '../lib/serverQuery';
 import { launchParams, launchSummary, presetLabel, resumeInPlace, worktreeLabel } from '../lib/paletteSources';
 import { displayPath } from '../lib/projectOverview';
@@ -123,10 +125,11 @@ const TIMER_PRESETS = [['30s', '30 seconds'], ['1m', '1 minute'], ['5m', '5 minu
 // The open conversation's settings, by selector.
 const SELECTOR_ICONS: Record<string, Component> = { model: Sparkles, effort: Brain, mode: ShieldCheck, speed: Zap };
 
-const props = defineProps<{ context: CommandContext }>();
+const props = defineProps<{ context: CommandContext; onLaunch?: (input: HarnessLaunchInput) => void }>();
 const emit = defineEmits<{
   navigate: [target: NonNullable<CommandRunResult['navigate']>];
   workspaceSearch: [query: string];
+  newConversation: [];
   settings: [];
   usage: [];
   routines: [];
@@ -143,9 +146,12 @@ let commandGeneration = 0;
 // Workbench updates replace records, so the context is compared by value: only
 // a different target resets the palette.
 const contextKey = computed(() => JSON.stringify(props.context));
-// Server commands are loaded when the palette opens, then follow workbench
-// changes while it stays open. Reopening with nothing changed reuses them.
-const { revision: workbenchRevision, projects } = useWorkbench();
+// Workbench commands render synchronously from the live workbench snapshot.
+// Server commands refresh quietly in the background for backend-only items
+// (finished subagents, unowned timers in Quit confirmation, and fresh worktrees).
+const workbench = useWorkbench();
+const projects = workbench.projects;
+const workbenchRevision = workbench.revision;
 let loadedFor = '';
 let revisionTimer: ReturnType<typeof setTimeout> | null = null;
 // Preset rows also follow settings.
@@ -184,13 +190,14 @@ const currentControls = computed(() => {
   const session = currentSession.value;
   return session && !session.exitedAt ? publishedIntegratedControls(session.processId) : null;
 });
-const sessionsById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))) : new Map<string, SessionRecord>());
-const processesById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))) : new Map<string, ProcessRecord>());
+const sessionsById = computed<Map<string, SessionRecord>>((previous) => open.value ? new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))) : (previous ?? new Map<string, SessionRecord>()));
+const processesById = computed<Map<string, ProcessRecord>>((previous) => open.value ? new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))) : (previous ?? new Map<string, ProcessRecord>()));
 
+const showNewChatShortcut = computed(() => window.patterm?.runtime !== 'browser' || Boolean(window.matchMedia?.('(display-mode: standalone)').matches));
 const localCommands = computed(() => {
   if (!open.value) return [];
   const project = activeProject.value?.project;
-  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null, showBotAgents.value);
+  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null, showBotAgents.value, showNewChatShortcut.value);
 });
 // Launching, resuming, and timers each open a page of their own.
 const sourceCommands = computed<CommandDescriptor[]>(() => {
@@ -203,17 +210,36 @@ const sourceCommands = computed<CommandDescriptor[]>(() => {
     ...(timers.length ? [{ id: 'page:timers', label: 'Timers', hint: timersHint(), group: 'navigation', kind: 'page' }] : [])
   ];
 });
+const cachedSessionWorktrees = computed(() => {
+  if (!open.value || !props.context.active_project_id || !props.context.active_session_id) return [];
+  return lastContextRead<SessionContext>('session_context', props.context.active_project_id, { session_id: props.context.active_session_id, limit: 100 })?.worktrees?.items ?? [];
+});
+const workbenchCommands = computed<CommandDescriptor[]>(() => {
+  if (!open.value) return [];
+  return workbenchPaletteCommands({
+    projects: projects.value,
+    harnesses: workbench.harnesses?.value ?? [],
+    context: props.context,
+    presets: sources.presetSettings?.value ?? null,
+    sessionWorktrees: cachedSessionWorktrees.value,
+    assistantProject: workbench.assistantProject?.value ?? null,
+    botProjects: workbench.botProjects?.value ?? []
+  });
+});
 const catalogue = computed(() => {
   if (!open.value) return [];
   const localIds = new Set(localCommands.value.map(local => local.id));
+  const merged = mergePaletteCommands(workbenchCommands.value, commands.value);
   return [
     ...localCommands.value,
-    ...withIntegratedSelectors(commands.value.filter(command => !localIds.has(command.id)), currentSession.value?.processId ?? null, currentControls.value),
+    ...withIntegratedSelectors(merged.filter(command => !localIds.has(command.id)), currentSession.value?.processId ?? null, currentControls.value),
     ...sourceCommands.value
   ];
 });
-const visibleRows = computed<PaletteRow[]>(() => {
-  if (!open.value) return [];
+// Keep the last rendered rows during the closing animation so the dialog does
+// not collapse to an empty list before unmounting.
+const visibleRows = computed<PaletteRow[]>((previous) => {
+  if (!open.value) return previous ?? [];
   return page.value
     ? rankedCommands(page.value.source?.() ?? page.value.commands, page.value.entry ? '' : query.value, [], { flat: true })
     : rankedCommands(catalogue.value, query.value, recentIds.value, { page: props.context.active_tab, appended: sources.searchCommands.value });
@@ -288,6 +314,7 @@ watch(visibleRows, (rows, previous) => {
 });
 watch(contextKey, () => {
   pages.value = [];
+  commands.value = [];
   loadedFor = '';
   if (open.value) void reloadCommands();
 });
@@ -485,7 +512,7 @@ function needsConfirmation(command: CommandDescriptor): boolean {
 }
 
 async function runCommand(command: CommandDescriptor): Promise<void> {
-  if (command.disabled || busy.value) return;
+  if (!open.value || command.disabled || busy.value) return;
   if (command.kind === 'page') {
     openPage(command);
     return;
@@ -510,17 +537,19 @@ async function runCommand(command: CommandDescriptor): Promise<void> {
     error.value = required;
     return;
   }
+  // Browsers cannot pick server directories, so the path is typed.
+  if (command.id === 'renderer:project-create' && window.patterm.runtime === 'browser') {
+    openEntryPage({ ...command, id: 'project:create', input: { type: 'text', title: 'New project', placeholder: 'Project path on the server, like /srv/app' } });
+    return;
+  }
+  if (tryOptimisticLaunch(command)) return;
   if (command.params) {
     await execute(command, { ...command.params });
     return;
   }
-  if (command.result || localCommands.value.some(item => item.id === command.id)) {
+  if (command.result || localCommands.value.some(item => item.id === command.id) || command.id.startsWith('navigate:')) {
     await execute(command, {});
     return;
-  }
-  // Browsers cannot pick server directories, so the path is typed.
-  if (command.id === 'renderer:project-create' && window.patterm.runtime === 'browser') {
-    command = { ...command, id: 'project:create', input: { type: 'text', title: 'New project', placeholder: 'Project path on the server, like /srv/app' } };
   }
   if (command.input) {
     openEntryPage(command);
@@ -529,11 +558,59 @@ async function runCommand(command: CommandDescriptor): Promise<void> {
   await execute(command, needsConfirmation(command) ? { confirmed: true } : {});
 }
 
+// Opens an optimistic launch tab immediately instead of holding the palette
+// open while the agent CLI boots.
+function tryOptimisticLaunch(command: CommandDescriptor): boolean {
+  if (!props.onLaunch || !activeProject.value) return false;
+  const project = activeProject.value.project;
+  if (command.id.startsWith('spawn:agent:')) {
+    const harness = command.id.slice('spawn:agent:'.length);
+    dispatchOptimisticLaunch(command, {
+      projectId: project.id,
+      targetProjectId: project.id,
+      harness,
+      ...(project.host ? { host: project.host } : {})
+    });
+    return true;
+  }
+  if (command.id.startsWith('spawn:preset:') && !project.host) {
+    const presetId = command.id.slice('spawn:preset:'.length);
+    const harness = command.harness ?? sources.presetSettings?.value.presets.find(candidate => candidate.id === presetId)?.harness;
+    if (!harness) return false;
+    dispatchOptimisticLaunch(command, { projectId: project.id, targetProjectId: project.id, harness, preset: presetId });
+    return true;
+  }
+  return false;
+}
+
+function dispatchOptimisticLaunch(command: CommandDescriptor, input: HarnessLaunchInput): void {
+  countCommand(command.id);
+  if (recordsRecent(command)) recentIds.value = rememberRecent(recentIds.value, command.id, storage());
+  sources.rememberHarness(input.harness);
+  open.value = false;
+  props.onLaunch?.(input);
+}
+
 // Launches with the launch page's choices and its input as the first message.
 async function launch(): Promise<void> {
   const harness = sources.launch.harness;
   if (!harness) return;
-  await execute({ id: `spawn:agent:${harness}`, label: `Launch ${harnessLabel(harness)}`, group: 'create', kind: 'backend' }, launchParams({ ...sources.launch, prompt: query.value }));
+  const command: CommandDescriptor = { id: `spawn:agent:${harness}`, label: `Launch ${harnessLabel(harness)}`, group: 'create', kind: 'backend' };
+  if (props.onLaunch && activeProject.value) {
+    const project = activeProject.value.project;
+    const prompt = query.value.trim();
+    dispatchOptimisticLaunch(command, {
+      projectId: project.id,
+      targetProjectId: project.id,
+      harness,
+      ...(project.host ? { host: project.host } : {}),
+      ...(sources.launch.presetId ? { preset: sources.launch.presetId } : {}),
+      ...(sources.launch.worktreeId ? { worktreeId: sources.launch.worktreeId } : {}),
+      ...(prompt ? { initialPrompt: prompt } : {})
+    });
+    return;
+  }
+  await execute(command, launchParams({ ...sources.launch, prompt: query.value }));
 }
 
 function applyLaunchChoice(result: CommandRunResult): void {
@@ -635,54 +712,152 @@ function entryRequired(command: CommandDescriptor): string {
   return 'Type the path of the project.';
 }
 
-async function execute(command: CommandDescriptor, input: Record<string, unknown>): Promise<void> {
-  busy.value = true;
-  error.value = '';
-  try {
-    const result = command.result
-      ?? localCommands.value.find(item => item.id === command.id)?.result
-      ?? (command.id.startsWith('timer:set:') ? await setTimer(command.id.slice('timer:set:'.length), input) : null)
-      ?? await window.patterm.commandsRun({ id: command.id, context: props.context, input }) as CommandRunResult;
-    countCommand(command.id);
-    if (recordsRecent(command)) recentIds.value = rememberRecent(recentIds.value, command.id, storage());
-    if (command.id.startsWith('spawn:agent:')) sources.rememberHarness(command.id.slice('spawn:agent:'.length));
-    else if (command.id.startsWith('spawn:preset:') && command.harness) sources.rememberHarness(command.harness);
-    await handleResult(result);
-    open.value = false;
-  } catch (caught) {
-    afterClose = null;
-    error.value = caught instanceof Error ? caught.message : String(caught);
-  } finally {
-    busy.value = false;
-  }
+const SLOW_ACTION_TOAST_MS = 250;
+
+function recordRun(command: CommandDescriptor): void {
+  countCommand(command.id);
+  if (recordsRecent(command)) recentIds.value = rememberRecent(recentIds.value, command.id, storage());
+  if (command.id.startsWith('spawn:agent:')) sources.rememberHarness(command.id.slice('spawn:agent:'.length));
+  else if (command.id.startsWith('spawn:preset:') && command.harness) sources.rememberHarness(command.harness);
 }
 
-// Timers use the same request as the timer dialog in the tab menu.
-async function setTimer(ownerProcessId: string, input: Record<string, unknown>): Promise<CommandRunResult> {
-  const seconds = parseDurationSeconds(typeof input.duration === 'string' ? input.duration : '');
-  if (seconds === null || seconds <= 0) throw new Error('Enter a duration like 30s, 5m, or 1h.');
-  const label = typeof input.label === 'string' ? input.label.trim() : '';
-  const body = typeof input.body === 'string' ? input.body.trim() : '';
-  await window.patterm.timerSet({ owner_process_id: ownerProcessId, seconds, ...(label ? { label } : {}), ...(body ? { body } : {}) });
-  toast.success('Timer set');
-  return {};
+// Runs a backend action after the palette has already closed. Fast calls finish
+// silently; slow ones (such as when tests peg the backend) surface a loading
+// toast after a short delay and report any failure.
+function runInBackground(command: CommandDescriptor, task: (from: string | undefined) => Promise<CommandRunResult | void>, options: { successMessage?: string } = {}): void {
+  const from = window.location?.href;
+  let toastId: string | number | undefined;
+  const timer = setTimeout(() => {
+    toastId = toast.loading?.(actionProgressLabel(command));
+  }, SLOW_ACTION_TOAST_MS);
+  void Promise.resolve().then(() => task(from)).then(async (result) => {
+    clearTimeout(timer);
+    const message = result?.message ?? options.successMessage;
+    if (message) toast.success(message, toastId !== undefined ? { id: toastId } : undefined);
+    else if (toastId !== undefined) toast.dismiss?.(toastId);
+    if (result) await applyBackgroundResult(result, from);
+  }).catch((caught: unknown) => {
+    clearTimeout(timer);
+    const message = caught instanceof Error ? caught.message : String(caught);
+    toast.error(message, toastId !== undefined ? { id: toastId } : undefined);
+  });
+}
+
+async function applyBackgroundResult(result: CommandRunResult, from: string | undefined): Promise<void> {
+  if (result.refresh) emit('refresh');
+  if (result.rendererAction === 'openTarget' && result.target) emit('openTarget', result.target);
+  if (result.navigate && window.location?.href === from) emit('navigate', result.navigate);
+}
+
+async function execute(command: CommandDescriptor, input: Record<string, unknown>): Promise<void> {
+  error.value = '';
+  const localResult: CommandRunResult | null = command.result
+    ?? localCommands.value.find(item => item.id === command.id)?.result
+    ?? resolveNavigateCommand(command.id);
+
+  if (localResult) {
+    try {
+      if (localResult.rendererAction === 'integrated' || localResult.rendererAction === 'sessionContext' || localResult.rendererAction === 'reviewChanges') {
+        const request = workspaceRequest(localResult);
+        // The agent's own view runs these, so it has to be the one open.
+        if (!request || !showsTarget(request)) throw new Error('Open this agent to use this action.');
+        const send = () => { if (!sendWorkspaceRequest(request)) toast.error('Open this agent to use this action.'); };
+        if (request.kind === 'integrated') send();
+        else afterClose = send;
+        recordRun(command);
+        open.value = false;
+        return;
+      }
+      if (localResult.rendererAction === 'createTodo' || localResult.rendererAction === 'createScratchpad') {
+        const projectId = props.context.active_project_id;
+        if (!projectId) throw new Error('Select a project first.');
+        const kind = localResult.rendererAction === 'createTodo' ? 'todo' : 'scratchpad';
+        recordRun(command);
+        open.value = false;
+        runInBackground(command, async () => {
+          const target = await createPaletteDocument(kind, projectId, window.patterm.call);
+          return { navigate: target };
+        });
+        return;
+      }
+      if (localResult.rendererAction === 'restartAssistant' && localResult.processId) {
+        const processId = localResult.processId;
+        recordRun(command);
+        open.value = false;
+        runInBackground(command, async () => { await restartBot(processId); });
+        return;
+      }
+      if (localResult.rendererAction === 'pickProjectDirectory') {
+        const context = { ...props.context };
+        recordRun(command);
+        open.value = false;
+        void Promise.resolve(window.patterm.pickDirectory()).then((path) => {
+          if (!path) return;
+          runInBackground({ ...command, id: 'project:create' }, async () => {
+            return await window.patterm.commandsRun({ id: 'project:create', context, input: { path } }) as CommandRunResult;
+          });
+        }).catch((caught: unknown) => {
+          toast.error(caught instanceof Error ? caught.message : String(caught));
+        });
+        return;
+      }
+      recordRun(command);
+      await handleResult(localResult);
+      open.value = false;
+    } catch (caught) {
+      afterClose = null;
+      error.value = caught instanceof Error ? caught.message : String(caught);
+    }
+    return;
+  }
+
+  // Validate timer durations before closing so typos can be fixed inline.
+  if (command.id.startsWith('timer:set:')) {
+    const ownerProcessId = command.id.slice('timer:set:'.length);
+    const seconds = parseDurationSeconds(typeof input.duration === 'string' ? input.duration : '');
+    if (seconds === null || seconds <= 0) {
+      error.value = 'Enter a duration like 30s, 5m, or 1h.';
+      return;
+    }
+    const label = typeof input.label === 'string' ? input.label.trim() : '';
+    const body = typeof input.body === 'string' ? input.body.trim() : '';
+    recordRun(command);
+    open.value = false;
+    runInBackground(command, async () => {
+      await window.patterm.timerSet({ owner_process_id: ownerProcessId, seconds, ...(label ? { label } : {}), ...(body ? { body } : {}) });
+    }, { successMessage: 'Timer set' });
+    return;
+  }
+
+  // Quitting shuts down the whole app, so wait for it before closing the window.
+  if (command.id === 'renderer:quit') {
+    busy.value = true;
+    try {
+      const result = await window.patterm.commandsRun({ id: command.id, context: props.context, input }) as CommandRunResult;
+      recordRun(command);
+      await handleResult(result);
+      open.value = false;
+    } catch (caught) {
+      afterClose = null;
+      error.value = caught instanceof Error ? caught.message : String(caught);
+    } finally {
+      busy.value = false;
+    }
+    return;
+  }
+
+  // Close immediately for all other backend actions so the palette never feels
+  // frozen while the server is busy.
+  const context = { ...props.context };
+  const payloadInput = { ...input };
+  recordRun(command);
+  open.value = false;
+  runInBackground(command, async () => {
+    return await window.patterm.commandsRun({ id: command.id, context, input: payloadInput }) as CommandRunResult;
+  });
 }
 
 async function handleResult(result: CommandRunResult): Promise<void> {
-  if (result.rendererAction === 'createTodo' || result.rendererAction === 'createScratchpad') {
-    const target = await createPaletteDocument(result.rendererAction === 'createTodo' ? 'todo' : 'scratchpad', props.context.active_project_id, window.patterm.call);
-    emit('navigate', target);
-  }
-  if (result.rendererAction === 'integrated' || result.rendererAction === 'sessionContext' || result.rendererAction === 'reviewChanges') {
-    const request = workspaceRequest(result);
-    // The agent's own view runs these, so it has to be the one open.
-    if (!request || !showsTarget(request)) throw new Error('Open this agent to use this action.');
-    const send = () => { if (!sendWorkspaceRequest(request)) toast.error('Open this agent to use this action.'); };
-    // Requests that open a panel wait for the palette to close.
-    if (request.kind === 'integrated') send();
-    else afterClose = send;
-  }
-  if (result.rendererAction === 'restartAssistant' && result.processId) await restartBot(result.processId);
   if (result.message) toast.success(result.message);
   if (result.rendererAction === 'copy' && result.text) {
     await window.patterm.writeClipboardText(result.text);
@@ -691,6 +866,7 @@ async function handleResult(result: CommandRunResult): Promise<void> {
   if (result.rendererAction === 'openTarget' && result.target) emit('openTarget', result.target);
   if (result.refresh) emit('refresh');
   if (result.navigate) emit('navigate', result.navigate);
+  if (result.rendererAction === 'newConversation') emit('newConversation');
   if (result.rendererAction === 'settings') emit('settings');
   if (result.rendererAction === 'toggleSnoozed') setShowSnoozed(!showSnoozed.value);
   if (result.rendererAction === 'toggleBotAgents') setShowBotAgents(!showBotAgents.value);
@@ -702,13 +878,6 @@ async function handleResult(result: CommandRunResult): Promise<void> {
   if (result.rendererAction === 'usage') emit('usage');
   if (result.rendererAction === 'routines') emit('routines');
   if (result.rendererAction === 'workspaceSearch') emit('workspaceSearch', query.value);
-  if (result.rendererAction === 'pickProjectDirectory') {
-    const path = await window.patterm.pickDirectory();
-    if (path) {
-      const created = await window.patterm.commandsRun({ id: 'project:create', context: props.context, input: { path } }) as CommandRunResult;
-      await handleResult(created);
-    }
-  }
   if (result.rendererAction === 'quit' && window.patterm.runtime !== 'browser') window.close();
 }
 
@@ -856,7 +1025,7 @@ function commandIcon(command: CommandDescriptor): Component | null {
   if (id === 'page:timers' || id.startsWith('timer:')) return Clock;
   if (id.startsWith('search:')) return Search;
   if (id.startsWith('integrated:interrupt:')) return CircleStop;
-  if (id.startsWith('integrated:new:')) return MessageSquarePlus;
+  if (id.startsWith('integrated:new:') || id === 'renderer:new-conversation') return MessageSquarePlus;
   if (id.startsWith('integrated:selector:')) return SELECTOR_ICONS[id.split(':').at(-1) ?? ''] ?? SlidersHorizontal;
   if (id.startsWith('renderer:review:')) return GitCompare;
   if (id.startsWith('renderer:session-context:')) return PanelRight;

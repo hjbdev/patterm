@@ -1,6 +1,6 @@
 <template>
   <Dialog v-model:open="open">
-    <DialogContent hide-close :aria-describedby="undefined" class="top-[15vh] flex max-h-[calc(85dvh-1.5rem)] -translate-y-0 w-[calc(100%-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-xl p-0" @open-auto-focus.prevent="queryInput?.focus()">
+    <DialogContent placement="top" hide-close :aria-describedby="undefined" class="flex max-h-[calc(85dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-xl p-0" @open-auto-focus.prevent="queryInput?.focus()">
       <DialogTitle class="sr-only">Resume a conversation</DialogTitle>
       <div class="flex h-[62px] shrink-0 items-center gap-3 border-b border-border/70 px-5 text-muted-foreground">
         <History class="h-4 w-4 shrink-0" />

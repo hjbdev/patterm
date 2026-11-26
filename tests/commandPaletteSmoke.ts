@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { actionCluster, createPaletteDocument, recordsRecent, rendererCommands, rankedCommands, withIntegratedSelectors, type CommandDescriptor } from '../resources/js/lib/commandPalette';
+import { actionCluster, createPaletteDocument, mergePaletteCommands, recordsRecent, rendererCommands, rankedCommands, resolveNavigateCommand, withIntegratedSelectors, workbenchPaletteCommands, type CommandDescriptor } from '../resources/js/lib/commandPalette';
 import { baseName } from '../resources/js/lib/serverPath';
 import { worktreeName } from '../resources/js/lib/worktreeDiff';
 import { describeDuration } from '../resources/js/lib/timers';
@@ -320,6 +320,50 @@ async function main() {
   const hiddenIds = (await listCommandPaletteCommands(withHidden, context)).commands.map((entry) => entry.id).filter((id) => /project_bot_fable|project_assistant/.test(id));
   assert.deepEqual(hiddenIds, []);
   assert.equal((await listCommandPaletteCommands(withHidden, { ...context, active_project_id: 'project_bot_fable' })).commands.some((entry) => entry.id.startsWith('spawn:')), false, 'a bot project is never the active project');
+
+  // Navigation rows carry direct client-side results and resolveNavigateCommand decodes every target shape.
+  assert.deepEqual(listed.find(item => item.id === 'navigate:agent:p:child')?.result, { navigate: { projectId: 'p', sessionId: 'child' } });
+  assert.deepEqual(listed.find(item => item.id === 'navigate:process:p:server')?.result, { navigate: { projectId: 'p', processId: 'server' } });
+  assert.deepEqual(listed.find(item => item.id === 'navigate:project:q')?.result, { navigate: { projectId: 'q' } });
+  assert.deepEqual(resolveNavigateCommand('navigate:agent:workstation%3Ap:workstation%3As1'), { navigate: { projectId: 'workstation:p', sessionId: 'workstation:s1' } });
+  assert.deepEqual(resolveNavigateCommand('navigate:process:p:server'), { navigate: { projectId: 'p', processId: 'server' } });
+  assert.deepEqual(resolveNavigateCommand('navigate:project:q'), { navigate: { projectId: 'q' } });
+  assert.equal(resolveNavigateCommand('spawn:terminal'), null);
+
+  // Client-side workbench commands mirror server rows immediately and merge server-only additions.
+  const localWorkbench = workbenchPaletteCommands({
+    projects: [integratedProject, otherProject] as unknown as Parameters<typeof workbenchPaletteCommands>[0]['projects'],
+    harnesses: [{ harness: 'claude', status: 'available' }] as unknown as Parameters<typeof workbenchPaletteCommands>[0]['harnesses'],
+    context: integratedContext
+  });
+  assert.ok(localWorkbench.some(item => item.id === 'navigate:agent:p:child' && item.result?.navigate?.sessionId === 'child'));
+  assert.ok(localWorkbench.some(item => item.id === 'spawn:agent:claude'));
+  assert.ok(localWorkbench.some(item => item.id === 'integrated:interrupt:root_process'));
+  const merged = mergePaletteCommands(localWorkbench, [
+    { id: 'process:close-finished:root_process', label: 'Close finished subagents', group: 'current', kind: 'backend' },
+    { id: 'renderer:quit', label: 'Quit Patterm', group: 'app', kind: 'renderer', confirmation: 'Server quit count' }
+  ]);
+  assert.ok(merged.some(item => item.id === 'process:close-finished:root_process'), 'Server-only commands merge in');
+  assert.equal(merged.find(item => item.id === 'renderer:quit')?.confirmation, 'Server quit count', 'Server quit confirmation stays authoritative');
+
+  // A stale idle server assistant:restart row must not overwrite a live working client row's confirmation.
+  const workingAssistant = { project: { id: 'project_assistant', name: 'Assistant', path: '/tmp/assistant', kind: 'assistant' }, projectSessions: [session('assistant', { processId: 'assistant_1', sessionRole: 'assistant', activity: 'working' })], processes: [], worktrees: [], timers: [] };
+  const withWorkingAssistant = workbenchPaletteCommands({
+    projects: [integratedProject] as unknown as Parameters<typeof workbenchPaletteCommands>[0]['projects'],
+    harnesses: [],
+    context: integratedContext,
+    assistantProject: workingAssistant as unknown as NonNullable<Parameters<typeof workbenchPaletteCommands>[0]['assistantProject']>
+  });
+  const mergedAssistant = mergePaletteCommands(withWorkingAssistant, [
+    { id: 'assistant:restart', label: 'Restart assistant', group: 'app', kind: 'renderer', result: { rendererAction: 'restartAssistant', processId: 'assistant_1' } }
+  ]);
+  assert.match(mergedAssistant.find(item => item.id === 'assistant:restart')?.confirmation ?? '', /restarting stops it/, 'Live working assistant keeps restart confirmation even when cached server row was idle');
+
+  // New conversation command is searchable as "new chat" or "new conversation", and omits Ctrl+N hint in ordinary browser tabs.
+  assert.equal(rankedCommands(available, 'new chat')[0]?.command.id, 'renderer:new-conversation');
+  assert.equal(rankedCommands(available, 'new conversation')[0]?.command.id, 'renderer:new-conversation');
+  assert.equal((rendererCommands('p', true, false, null, true, false) as CommandDescriptor[]).find(item => item.id === 'renderer:new-conversation')?.hint, undefined);
+
   console.log('Command palette smoke checks passed');
 }
 void main().catch((error: unknown) => {
