@@ -47,8 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to make tabs, and drag the gaps to resize. A dragged panel floats free and
   the rest hold still until it drops. While panels are pinned,
   `Alt+H/J/K/L` or `Alt+arrows` move focus, `Alt+Shift` moves the
-  panel, `Alt+=`/`Alt+-` resize it across, `Alt+Shift+=`/`Alt+Shift+-` resize it
-  up and down, `Alt+F` maximises, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
+  panel, `Alt+-`/`Alt+=` grow and shrink it across, `Alt+Shift+-`/`Alt+Shift+=`
+  grow and shrink it up and down, `Alt+F` maximises, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
   and `Alt+Q` unpins. `Alt`+drag moves a panel from anywhere on it. Each
   agent keeps its own layout.
 

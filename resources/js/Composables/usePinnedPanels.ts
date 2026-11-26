@@ -294,7 +294,8 @@ export function usePinnedPanels(options: { sessionId: () => string | null; enabl
   function action(code: string, shiftKey: boolean): boolean {
     const tile = focus.value === 'chat' ? null : find(state.value, focus.value)?.tile ?? null;
     const growth = GROW[code];
-    if (growth) { grow(shiftKey ? 'y' : 'x', growth * STEP); return true; }
+    // On a panel, Alt+- grows it and Alt+= shrinks it.
+    if (growth) { grow(shiftKey ? 'y' : 'x', (tile ? -growth : growth) * STEP); return true; }
     switch (code) {
       case 'KeyF': if (tile) toggleMaximise(tile.id); return true;
       case 'KeyQ': if (tile) close(tile.id, tile.active); return true;
