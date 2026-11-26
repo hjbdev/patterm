@@ -71,7 +71,7 @@
                 <SquarePen class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span class="truncate">New conversation</span>
               </Button>
-              <Button variant="ghost" size="icon" :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')" title="New conversation (Ctrl+N)" aria-label="New conversation" @click="openNewConversation">
+              <Button variant="ghost" size="icon" :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')" :title="newConversationTitle" aria-label="New conversation" @click="openNewConversation">
                 <Plus class="h-4 w-4" />
               </Button>
             </div>
@@ -256,6 +256,10 @@ const phonePage = computed(() => {
   return { title, up };
 });
 
+// Ordinary browser tabs reserve Ctrl+N for New Window; desktop and standalone PWAs deliver it.
+const showNewChatShortcut = window.patterm.runtime !== 'browser' || Boolean(window.matchMedia?.('(display-mode: standalone)').matches);
+const newConversationTitle = showNewChatShortcut ? 'New conversation (Ctrl+N)' : 'New conversation';
+
 function newConversationProjectId(): string | null {
   if (activeProjectId.value) return activeProjectId.value;
   const listed = listedSummaries.value;
@@ -325,7 +329,7 @@ function handleAgentTabShortcut(event: KeyboardEvent): void {
   if (event.isComposing) return;
   if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'n') {
     if (event.repeat) return;
-    if (!paletteOpen.value && !searchOpen.value && document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+    if (!paletteOpen.value && !searchOpen.value && document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return;
     const projectId = newConversationProjectId();
     if (!projectId) return;
     event.preventDefault();

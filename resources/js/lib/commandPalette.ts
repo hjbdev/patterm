@@ -86,7 +86,7 @@ export interface PaletteRow {
 // `projectSnoozed` is whether the open project is snoozed, or null when it
 // can't be, such as a paired host's. `botAgentsShown` is whether agents
 // started by bots list.
-export function rendererCommands(projectId: string | null, repository = true, snoozedShown = false, projectSnoozed: boolean | null = null, botAgentsShown = true) {
+export function rendererCommands(projectId: string | null, repository = true, snoozedShown = false, projectSnoozed: boolean | null = null, botAgentsShown = true, showNewShortcut = true) {
   return [
     ...(projectId ? ['Agents', 'Todos', 'Scratchpads', ...(repository ? ['Worktrees'] : []), 'History', 'Media'].map(label => ({
       id: `navigate:project-tab:${encodeURIComponent(projectId)}:${label.toLowerCase()}`,
@@ -95,7 +95,7 @@ export function rendererCommands(projectId: string | null, repository = true, sn
       result: { navigate: { projectId, tab: label.toLowerCase() } }
     })) : []),
     ...(projectId ? [
-      { id: 'renderer:new-conversation', label: 'New conversation', hint: 'Ctrl+N', aliases: ['new chat', 'start chat'], group: 'create', kind: 'renderer', result: { rendererAction: 'newConversation' as const } },
+      { id: 'renderer:new-conversation', label: 'New conversation', ...(showNewShortcut ? { hint: 'Ctrl+N' } : {}), aliases: ['new chat', 'start chat'], group: 'create', kind: 'renderer', result: { rendererAction: 'newConversation' as const } },
       { id: 'renderer:todo-create', label: 'New todo', aliases: ['new todos'], group: 'create', kind: 'renderer', pages: ['todos'], result: { rendererAction: 'createTodo' as const } },
       { id: 'renderer:scratchpad-create', label: 'New scratchpad', aliases: ['new scratchpads', 'new note', 'create note'], group: 'create', kind: 'renderer', pages: ['scratchpads'], result: { rendererAction: 'createScratchpad' as const } }
     ] : []),
@@ -478,8 +478,11 @@ export function mergePaletteCommands(workbench: readonly CommandDescriptor[], se
 
   const serverById = new Map(server.map((command) => [command.id, command]));
   const workbenchIds = new Set(workbench.map((command) => command.id));
+  // Keep live client workbench rows (including assistant:restart confirmation,
+  // which tracks activity patches immediately); only renderer:quit defers to
+  // the server for non-workbench DB processes and unowned timers.
   const merged = workbench.map((command) => {
-    if (command.id === 'renderer:quit' || command.id === 'assistant:restart') {
+    if (command.id === 'renderer:quit') {
       return serverById.get(command.id) ?? command;
     }
     return command;

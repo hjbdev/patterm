@@ -25,7 +25,7 @@
         variant="ghost"
         size="icon"
         :class="cn('h-8 w-8 rounded-lg text-muted-foreground hover:bg-white/[0.06]', launchPointed && 'launch-pulse')"
-        title="New conversation (Ctrl+N)"
+        :title="newConversationTitle"
         aria-label="New conversation"
         @click="openNewConversation()"
       >
@@ -203,6 +203,8 @@ import type { ProjectSummary } from '../../types';
 withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'phone' }>(), { placement: 'docked' });
 const router = useRouter();
 const sidebar = useSidebar();
+const newConversationTitle = window.patterm.runtime !== 'browser' || Boolean(window.matchMedia?.('(display-mode: standalone)').matches)
+  ? 'New conversation (Ctrl+N)' : 'New conversation';
 function openNewConversation(projectId = sidebar.projectId.value): void {
   if (!projectId) return;
   sidebarLayout.drawerOpen = false;

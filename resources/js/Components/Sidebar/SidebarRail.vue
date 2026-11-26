@@ -14,7 +14,7 @@
             <Plus class="h-4 w-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="right" class="bg-popover text-popover-foreground">New conversation <kbd class="ml-1 rounded border border-border/70 px-1 text-[10px]">Ctrl N</kbd></TooltipContent>
+        <TooltipContent side="right" class="bg-popover text-popover-foreground">New conversation<kbd v-if="showNewChatShortcut" class="ml-1 rounded border border-border/70 px-1 text-[10px]">Ctrl N</kbd></TooltipContent>
       </Tooltip>
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
@@ -179,6 +179,7 @@ import { useSidebarMention } from './sidebarMention';
 const emit = defineEmits<{ expand: [] }>();
 const router = useRouter();
 const sidebar = useSidebar();
+const showNewChatShortcut = window.patterm.runtime !== 'browser' || Boolean(window.matchMedia?.('(display-mode: standalone)').matches);
 function openNewConversation(): void {
   if (sidebar.projectId.value) void router.push({ name: 'newConversation', params: { projectId: sidebar.projectId.value } });
 }

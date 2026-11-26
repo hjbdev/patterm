@@ -152,11 +152,10 @@ const contextKey = computed(() => JSON.stringify(props.context));
 const workbench = useWorkbench();
 const projects = workbench.projects;
 const workbenchRevision = workbench.revision;
-const lifecycleRevision = workbench.lifecycleRevision ?? workbenchRevision;
 let loadedFor = '';
 let revisionTimer: ReturnType<typeof setTimeout> | null = null;
 // Preset rows also follow settings.
-const commandKey = () => `${contextKey.value}\0${lifecycleRevision.value}\0${topicGeneration('settings')}`;
+const commandKey = () => `${contextKey.value}\0${workbenchRevision.value}\0${topicGeneration('settings')}`;
 const query = ref('');
 const commands = ref<CommandDescriptor[]>([]);
 const highlighted = ref(0);
@@ -191,13 +190,14 @@ const currentControls = computed(() => {
   const session = currentSession.value;
   return session && !session.exitedAt ? publishedIntegratedControls(session.processId) : null;
 });
-const sessionsById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))) : new Map<string, SessionRecord>());
-const processesById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))) : new Map<string, ProcessRecord>());
+const sessionsById = computed<Map<string, SessionRecord>>((previous) => open.value ? new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))) : (previous ?? new Map<string, SessionRecord>()));
+const processesById = computed<Map<string, ProcessRecord>>((previous) => open.value ? new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))) : (previous ?? new Map<string, ProcessRecord>()));
 
+const showNewChatShortcut = computed(() => window.patterm?.runtime !== 'browser' || Boolean(window.matchMedia?.('(display-mode: standalone)').matches));
 const localCommands = computed(() => {
   if (!open.value) return [];
   const project = activeProject.value?.project;
-  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null, showBotAgents.value);
+  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null, showBotAgents.value, showNewChatShortcut.value);
 });
 // Launching, resuming, and timers each open a page of their own.
 const sourceCommands = computed<CommandDescriptor[]>(() => {
@@ -236,8 +236,10 @@ const catalogue = computed(() => {
     ...sourceCommands.value
   ];
 });
-const visibleRows = computed<PaletteRow[]>(() => {
-  if (!open.value) return [];
+// Keep the last rendered rows during the closing animation so the dialog does
+// not collapse to an empty list before unmounting.
+const visibleRows = computed<PaletteRow[]>((previous) => {
+  if (!open.value) return previous ?? [];
   return page.value
     ? rankedCommands(page.value.source?.() ?? page.value.commands, page.value.entry ? '' : query.value, [], { flat: true })
     : rankedCommands(catalogue.value, query.value, recentIds.value, { page: props.context.active_tab, appended: sources.searchCommands.value });
@@ -316,7 +318,7 @@ watch(contextKey, () => {
   loadedFor = '';
   if (open.value) void reloadCommands();
 });
-watch([lifecycleRevision, () => topicGeneration('settings')], () => {
+watch([workbenchRevision, () => topicGeneration('settings')], () => {
   if (!open.value || revisionTimer) return;
   revisionTimer = setTimeout(() => {
     revisionTimer = null;

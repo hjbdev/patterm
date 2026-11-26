@@ -346,9 +346,23 @@ async function main() {
   assert.ok(merged.some(item => item.id === 'process:close-finished:root_process'), 'Server-only commands merge in');
   assert.equal(merged.find(item => item.id === 'renderer:quit')?.confirmation, 'Server quit count', 'Server quit confirmation stays authoritative');
 
-  // New conversation command is searchable as "new chat" or "new conversation".
+  // A stale idle server assistant:restart row must not overwrite a live working client row's confirmation.
+  const workingAssistant = { project: { id: 'project_assistant', name: 'Assistant', path: '/tmp/assistant', kind: 'assistant' }, projectSessions: [session('assistant', { processId: 'assistant_1', sessionRole: 'assistant', activity: 'working' })], processes: [], worktrees: [], timers: [] };
+  const withWorkingAssistant = workbenchPaletteCommands({
+    projects: [integratedProject] as unknown as Parameters<typeof workbenchPaletteCommands>[0]['projects'],
+    harnesses: [],
+    context: integratedContext,
+    assistantProject: workingAssistant as unknown as NonNullable<Parameters<typeof workbenchPaletteCommands>[0]['assistantProject']>
+  });
+  const mergedAssistant = mergePaletteCommands(withWorkingAssistant, [
+    { id: 'assistant:restart', label: 'Restart assistant', group: 'app', kind: 'renderer', result: { rendererAction: 'restartAssistant', processId: 'assistant_1' } }
+  ]);
+  assert.match(mergedAssistant.find(item => item.id === 'assistant:restart')?.confirmation ?? '', /restarting stops it/, 'Live working assistant keeps restart confirmation even when cached server row was idle');
+
+  // New conversation command is searchable as "new chat" or "new conversation", and omits Ctrl+N hint in ordinary browser tabs.
   assert.equal(rankedCommands(available, 'new chat')[0]?.command.id, 'renderer:new-conversation');
   assert.equal(rankedCommands(available, 'new conversation')[0]?.command.id, 'renderer:new-conversation');
+  assert.equal((rendererCommands('p', true, false, null, true, false) as CommandDescriptor[]).find(item => item.id === 'renderer:new-conversation')?.hint, undefined);
 
   console.log('Command palette smoke checks passed');
 }

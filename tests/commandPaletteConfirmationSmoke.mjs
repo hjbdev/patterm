@@ -254,8 +254,10 @@ test('Agent launches from the palette use optimistic onLaunch and close immediat
   // Workbench commands are available synchronously even while commandsList is still pending.
   const spawn = palette.visibleRows.value.find(row => row.command.id === 'spawn:agent:claude');
   assert.ok(spawn, 'Workbench commands render immediately without waiting for commandsList');
+  const openRowCount = palette.visibleRows.value.length;
   await palette.runCommand(spawn.command);
   assert.equal(palette.open.value, false);
+  assert.equal(palette.visibleRows.value.length, openRowCount, 'Closing keeps rendered rows until exit animation unmounts');
   assert.deepEqual(runs, []);
   assert.deepEqual(launched, [{ projectId: 'p', targetProjectId: 'p', harness: 'claude' }]);
 });
