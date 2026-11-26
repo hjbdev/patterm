@@ -16,12 +16,12 @@ const page = fs.readFileSync(new URL('../resources/js/Components/CommandPalette.
 const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const parsed = ts.createSourceFile('palette.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter(statement => !ts.isImportDeclaration(statement)).map(statement => statement.getFullText(parsed)).join('\n');
-const dependencies = { computed, nextTick, reactive, ref, watch, ...library, useId: () => 'palette', useWorkbench: () => ({ revision: ref(0), projects: ref([]) }), topicGeneration: () => 0, countCommand: () => {}, onMounted: () => {}, onBeforeUnmount: () => {}, defineEmits: () => () => {}, agentLabel: session => session.displayName, publishedIntegratedControls: () => null, sendWorkspaceRequest: () => false, toast: { success: () => {}, error: () => {} },
+const dependencies = { computed, nextTick, reactive, ref, watch, ...library, useId: () => 'palette', useWorkbench: () => ({ revision: ref(0), lifecycleRevision: ref(0), projects: ref([]), harnesses: ref([]), assistantProject: ref(null), botProjects: ref([]) }), topicGeneration: () => 0, countCommand: () => {}, onMounted: () => {}, onBeforeUnmount: () => {}, defineEmits: () => () => {}, agentLabel: session => session.displayName, publishedIntegratedControls: () => null, lastContextRead: () => undefined, sendWorkspaceRequest: () => false, toast: { success: () => {}, error: () => {}, loading: () => 'toast-1', dismiss: () => {} },
   harnessLabel: id => id, showSnoozed: ref(false), setShowSnoozed: () => {}, showBotAgents: ref(true), setShowBotAgents: () => {}, canSnoozeProject: () => false, openProjectSnooze: () => {}, wakeProject: () => {}, projectSnoozed: () => false, launchParams: () => ({}), launchSummary: () => '', presetLabel: () => '', worktreeLabel: () => '', resumeInPlace: rows => rows,
   displayPath: path => path, sessionStatusIcon: () => ({ label: 'Idle' }), processStatusIcon: () => ({ label: 'Exited' }), Sparkles: {}, Brain: {}, ShieldCheck: {}, Zap: {}, ...timers,
   usePaletteSources: () => {
     const empty = computed(() => []);
-    return { launch: reactive({ harness: '', presetId: null, worktreeId: null, prompt: '' }), launchHarnesses: empty, launchPresets: empty, launchWorktrees: empty, chooseHarness: () => {}, rememberHarness: () => {}, conversationCommands: empty, timers: empty, timerCommands: empty, searchCommands: empty, searching: ref(false), now: ref(0) };
+    return { launch: reactive({ harness: '', presetId: null, worktreeId: null, prompt: '' }), launchHarnesses: empty, launchPresets: empty, launchWorktrees: empty, presetSettings: ref({ presets: [], defaultPresetIdByHarness: {} }), chooseHarness: () => {}, rememberHarness: () => {}, conversationCommands: empty, timers: empty, timerCommands: empty, searchCommands: empty, searching: ref(false), now: ref(0) };
   } };
 const setup = new Function(...Object.keys(dependencies), 'defineProps', 'defineModel', 'window', `${transpile(executable)}\nreturn { open, query, highlighted, visibleRows, runHighlighted, runCommand, handleEscape, handleEscapeKey, reloadCommands, page, error };`);
 const quit = { id: 'renderer:quit', label: 'Quit', hint: 'close Patterm Desktop', confirmation: 'This stops running agents, commands, and timers.', group: 'quit', kind: 'renderer' };
@@ -190,4 +190,72 @@ test('A list of choices opens on the current one', async t => {
     { id: 'pick:b', label: 'Sonnet', current: true, group: 'current', kind: 'renderer' }
   ] });
   assert.equal(palette.visibleRows.value[palette.highlighted.value]?.command.id, 'pick:b');
+});
+
+test('Navigation runs client-side without calling commandsRun, and slow backend actions close immediately', async t => {
+  let resolveSlow;
+  const slowDone = new Promise(resolve => { resolveSlow = resolve; });
+  const runs = [];
+  const navigated = [];
+  const scope = effectScope();
+  t.after(() => scope.stop());
+  const customDeps = { ...dependencies, defineEmits: () => (event, payload) => { if (event === 'navigate') navigated.push(payload); } };
+  const palette = scope.run(() => setup(...Object.values(customDeps),
+    () => ({ context: { active_project_id: 'p', active_terminal_id: null, active_tab: 'agents' } }), () => ref(false),
+    {
+      close: () => {},
+      patterm: {
+        commandsList: async () => ({ commands: [
+          { id: 'navigate:agent:p:child', label: 'Child', group: 'agent', kind: 'navigate' },
+          { id: 'spawn:terminal', label: 'New terminal', group: 'create', kind: 'backend' }
+        ] }),
+        commandsRun: async payload => { runs.push(payload); await slowDone; return { navigate: { projectId: 'p', terminalProcessId: 'pty_1' } }; },
+        timerSet: async () => {}
+      }
+    }));
+  palette.open.value = true;
+  await palette.reloadCommands();
+  await nextTick();
+
+  // Navigation resolves immediately on the client without hitting commandsRun.
+  await palette.runCommand({ id: 'navigate:agent:p:child', label: 'Child', group: 'agent', kind: 'navigate' });
+  assert.equal(palette.open.value, false);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(navigated, [{ projectId: 'p', sessionId: 'child' }]);
+
+  // Backend action closes the palette immediately while the RPC is still pending.
+  palette.open.value = true;
+  await nextTick();
+  await palette.runCommand({ id: 'spawn:terminal', label: 'New terminal', group: 'create', kind: 'backend' });
+  assert.equal(palette.open.value, false, 'Palette closes immediately without waiting for slow backend');
+  resolveSlow();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].id, 'spawn:terminal');
+  assert.deepEqual(navigated.at(-1), { projectId: 'p', terminalProcessId: 'pty_1' });
+});
+
+test('Agent launches from the palette use optimistic onLaunch and close immediately', async t => {
+  const launched = [];
+  const runs = [];
+  const scope = effectScope();
+  t.after(() => scope.stop());
+  const project = { project: { id: 'p', name: 'Project', path: '/tmp/project' }, projectSessions: [], processes: [], worktrees: [], timers: [] };
+  const customDeps = {
+    ...dependencies,
+    useWorkbench: () => ({ revision: ref(1), lifecycleRevision: ref(1), projects: ref([project]), harnesses: ref([{ harness: 'claude', status: 'available' }]), assistantProject: ref(null), botProjects: ref([]) })
+  };
+  const palette = scope.run(() => setup(...Object.values(customDeps),
+    () => ({ context: { active_project_id: 'p', active_terminal_id: null, active_tab: 'agents' }, onLaunch: input => launched.push(input) }), () => ref(false),
+    { close: () => {}, patterm: { commandsList: () => new Promise(() => {}), commandsRun: async payload => { runs.push(payload); return {}; } } }));
+  palette.open.value = true;
+  await nextTick();
+
+  // Workbench commands are available synchronously even while commandsList is still pending.
+  const spawn = palette.visibleRows.value.find(row => row.command.id === 'spawn:agent:claude');
+  assert.ok(spawn, 'Workbench commands render immediately without waiting for commandsList');
+  await palette.runCommand(spawn.command);
+  assert.equal(palette.open.value, false);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(launched, [{ projectId: 'p', targetProjectId: 'p', harness: 'claude' }]);
 });

@@ -2,8 +2,10 @@
   <TooltipProvider :delay-duration="300">
     <CommandPalette v-model:open="paletteOpen"
       :context="commandContext"
+      :on-launch="launchHarness"
       @navigate="navigateCommandResult"
       @workspace-search="searchQuery = $event; searchOpen = true"
+      @new-conversation="openNewConversation"
       @settings="openSettings"
       @usage="openUsage"
       @routines="openRoutines"
@@ -69,7 +71,7 @@
                 <SquarePen class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span class="truncate">New conversation</span>
               </Button>
-              <Button variant="ghost" size="icon" :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')" title="New conversation" aria-label="New conversation" @click="openNewConversation">
+              <Button variant="ghost" size="icon" :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')" title="New conversation (Ctrl+N)" aria-label="New conversation" @click="openNewConversation">
                 <Plus class="h-4 w-4" />
               </Button>
             </div>
@@ -175,8 +177,11 @@ import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSett
 import { useWorkbench } from '../Composables/useWorkbench';
 import { showBotAgents, useBots } from '../Composables/useBots';
 import { botHomeProjectId, botLinkTarget } from '../lib/bots';
-import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
+import { useHarnessLaunch, useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
+import { focusArrivalInput } from '../lib/arrivalFocus';
+import { readRecentProjectIds } from '../lib/recentProjects';
+import { sidebarLayout } from '../Components/Sidebar/sidebarLayout';
 import {
   agentOptionTargetByDelta,
   activeAgentSessions,
@@ -223,6 +228,7 @@ watch([() => route.name, () => route.params.projectId, () => route.params.botId,
   if (projectId) void router.replace({ name: 'bot', params: { projectId, botId } });
 }, { immediate: true });
 useHarnessLaunchCleanup();
+const { launchHarness } = useHarnessLaunch();
 // Reads ahead what the user is likely to open next, as the connection allows.
 startPrefetch(() => activeProjectId.value);
 const selectedAgentByRoot = ref<SelectedAgentByRoot>({});
@@ -250,8 +256,23 @@ const phonePage = computed(() => {
   return { title, up };
 });
 
+function newConversationProjectId(): string | null {
+  if (activeProjectId.value) return activeProjectId.value;
+  const listed = listedSummaries.value;
+  if (!listed.length) return null;
+  const recent = readRecentProjectIds(globalThis.localStorage).find((id) => listed.some((project) => project.id === id));
+  return recent ?? listed[0]?.id ?? null;
+}
+
 function openNewConversation(): void {
-  if (activeProjectId.value) void router.push({ name: 'newConversation', params: { projectId: activeProjectId.value } });
+  const projectId = newConversationProjectId();
+  if (!projectId) return;
+  sidebarLayout.drawerOpen = false;
+  if (route.name === 'newConversation' && route.params.projectId === projectId) {
+    focusArrivalInput();
+    return;
+  }
+  void router.push({ name: 'newConversation', params: { projectId } });
 }
 
 function openSettings(): void {
@@ -302,6 +323,19 @@ function handleAppearanceSettingsChanged(event: Event): void {
 
 function handleAgentTabShortcut(event: KeyboardEvent): void {
   if (event.isComposing) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'n') {
+    if (event.repeat) return;
+    if (!paletteOpen.value && !searchOpen.value && document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+    const projectId = newConversationProjectId();
+    if (!projectId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    paletteOpen.value = false;
+    searchOpen.value = false;
+    navigationMode.value = false;
+    openNewConversation();
+    return;
+  }
   if (!navigationMode.value && (!isNavigationModeToggle(event) || isEditableShortcutTarget(event.target))) return;
 
   const action = navigationModeAction(event, navigationMode.value);

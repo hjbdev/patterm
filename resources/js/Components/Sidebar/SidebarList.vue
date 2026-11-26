@@ -25,7 +25,7 @@
         variant="ghost"
         size="icon"
         :class="cn('h-8 w-8 rounded-lg text-muted-foreground hover:bg-white/[0.06]', launchPointed && 'launch-pulse')"
-        title="New conversation"
+        title="New conversation (Ctrl+N)"
         aria-label="New conversation"
         @click="openNewConversation()"
       >

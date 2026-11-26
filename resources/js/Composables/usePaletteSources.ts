@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue';
 import { useWorkbench } from './useWorkbench';
 import { launchableHarnesses } from '../lib/harnesses';
-import { harnessPresets, topicCall } from '../lib/serverQuery';
+import { harnessPresets, latestQueryData, topicCall } from '../lib/serverQuery';
 import {
   conversationRows,
   paletteTimers,
@@ -28,7 +28,7 @@ interface PresetSettings {
 // conversations, timers, and workspace search results.
 export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<string | null>; query: Ref<string>; searchEnabled: Ref<boolean> }) {
   const { projects, harnesses } = useWorkbench();
-  const presetSettings = ref<PresetSettings>({ presets: [], defaultPresetIdByHarness: {} });
+  const presetSettings = ref<PresetSettings>(latestQueryData<PresetSettings>(['harness_presets']) ?? { presets: [], defaultPresetIdByHarness: {} });
   const launch = reactive<LaunchChoice>({ harness: '', presetId: null, worktreeId: null, prompt: '' });
   const launchHarnesses = computed(() => launchableHarnesses(harnesses.value));
   const launchPresets = computed(() => presetsFor(launch.harness));
@@ -145,12 +145,14 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
       conversations.value = [];
       return;
     }
+    const cached = latestQueryData<{ conversations?: ConversationRecord[] }>(['history_list', { project_id: projectId, limit: RECENT_CONVERSATIONS }]);
+    if (cached?.conversations) conversations.value = cached.conversations;
     try {
       const result = await topicCall<{ conversations?: ConversationRecord[] }>('history', 'history_list', { project_id: projectId, limit: RECENT_CONVERSATIONS });
       if (token === conversationToken) conversations.value = result.conversations ?? [];
     } catch {
       // The palette still works without recent conversations.
-      if (token === conversationToken) conversations.value = [];
+      if (token === conversationToken && !cached?.conversations) conversations.value = [];
     }
   }
 
@@ -172,7 +174,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
   const liveSessionIds = computed(() => options.open.value ? new Set(projects.value.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt).map((session) => session.id))) : new Set<string>());
   const searchCommands = computed(() => options.open.value ? searchRows(searchResults.value.filter((result) => !(result.kind === 'session' && liveSessionIds.value.has(result.owner_id)))) : []);
 
-  return { launch, launchHarnesses, launchPresets, launchWorktrees, chooseHarness, rememberHarness, presetsFor, conversationCommands, timers, timerCommands, searchCommands, searching, now };
+  return { launch, launchHarnesses, launchPresets, launchWorktrees, presetSettings, chooseHarness, rememberHarness, presetsFor, conversationCommands, timers, timerCommands, searchCommands, searching, now };
 }
 
 export type PaletteSources = ReturnType<typeof usePaletteSources>;

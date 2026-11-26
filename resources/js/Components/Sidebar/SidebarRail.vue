@@ -2,16 +2,20 @@
   <!-- The collapsed sidebar: one button per tab. Hovering one shows what it's doing. -->
   <div class="flex h-full min-h-0 w-12 flex-col items-center">
     <div class="flex shrink-0 flex-col items-center gap-0.5 py-0.5">
-      <Button
-        variant="ghost"
-        size="icon"
-        :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')"
-        title="New conversation"
-        aria-label="New conversation"
-        @click="openNewConversation"
-      >
-        <Plus class="h-4 w-4" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')"
+            aria-label="New conversation"
+            @click="openNewConversation"
+          >
+            <Plus class="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right" class="bg-popover text-popover-foreground">New conversation <kbd class="ml-1 rounded border border-border/70 px-1 text-[10px]">Ctrl N</kbd></TooltipContent>
+      </Tooltip>
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
       <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical compact />
