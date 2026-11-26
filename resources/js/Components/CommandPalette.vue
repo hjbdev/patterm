@@ -512,7 +512,7 @@ function needsConfirmation(command: CommandDescriptor): boolean {
 }
 
 async function runCommand(command: CommandDescriptor): Promise<void> {
-  if (command.disabled || busy.value) return;
+  if (!open.value || command.disabled || busy.value) return;
   if (command.kind === 'page') {
     openPage(command);
     return;

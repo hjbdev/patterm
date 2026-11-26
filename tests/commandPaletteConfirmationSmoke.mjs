@@ -223,11 +223,13 @@ test('Navigation runs client-side without calling commandsRun, and slow backend 
   assert.deepEqual(runs, []);
   assert.deepEqual(navigated, [{ projectId: 'p', sessionId: 'child' }]);
 
-  // Backend action closes the palette immediately while the RPC is still pending.
+  // Backend action closes the palette immediately while the RPC is still pending,
+  // and a second click during the closing animation cannot run it twice.
   palette.open.value = true;
   await nextTick();
   await palette.runCommand({ id: 'spawn:terminal', label: 'New terminal', group: 'create', kind: 'backend' });
   assert.equal(palette.open.value, false, 'Palette closes immediately without waiting for slow backend');
+  await palette.runCommand({ id: 'spawn:terminal', label: 'New terminal', group: 'create', kind: 'backend' });
   resolveSlow();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(runs.length, 1);
