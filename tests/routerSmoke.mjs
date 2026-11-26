@@ -25,10 +25,10 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
   globalThis.window = { patterm: { workbench: () => snapshot }, addEventListener() {} };
   const fixture = createRequire(import.meta.url)(output);
   const router = fixture.createWorkbenchRouter(createMemoryHistory());
-  // With no projects, a bot opens on its own page, outside any project.
-  const standalone = router.resolve({ name: 'standaloneBot', params: { botId: 'assistant' } });
-  assert.equal(standalone.fullPath, '/bots/assistant');
-  assert.equal(standalone.params.projectId, undefined);
+  // A bot link that names no project, as its notifications use, still resolves.
+  const botLink = router.resolve('/bots/assistant');
+  assert.equal(botLink.name, 'botLink');
+  assert.equal(botLink.params.botId, 'assistant');
   await router.push('/projects/p1/agents/s1');
   const renderer = createRenderer({
     createComment: () => ({}), insert() {}, remove() {}, parentNode: () => null, nextSibling: () => null,

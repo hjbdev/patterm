@@ -54,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Personal project lists while you have no other projects, even with it
+  turned off in Settings › Appearance, so bots always open beside a project.
 - Each bot's settings are now a page of their own in Settings › Bots, laid
   out like the rest of Settings and saved as you change them, instead of one
   long dialog. Adding a bot asks for its name and harness, then opens its page.
@@ -208,6 +210,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The standalone bot page. `/bots/<bot>` links, such as notifications, now
+  open the bot beside its home project.
 - Removed remaining transitional TUI reaping and `interface_mode` query filters
   from runtime reconciliation, restart handling, and backend services.
 
@@ -304,6 +308,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Opening one of the assistant's notifications opens it beside your projects,
+  like other bots, instead of the old standalone assistant page.
 - An agent on a paired host can reach an agent or process that another host's
   composer mentioned, such as `workstation:process_7` sent to Workstation.
   It used to read its own name as a peer's and fail.

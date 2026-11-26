@@ -172,7 +172,7 @@ import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { showBotAgents, useBots } from '../Composables/useBots';
-import { botLinkTarget } from '../lib/bots';
+import { botHomeProjectId, botLinkTarget } from '../lib/bots';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -209,6 +209,14 @@ watch([() => route.params.projectId, () => route.params.sessionId, botProjects, 
   if (target === 'projects') void router.replace({ name: 'projects' });
   else if (target !== 'wait') void router.replace({ name: 'bot', params: { projectId: target.projectId, botId: target.botId } });
 });
+// Links to a bot that name no project, such as the assistant's notifications,
+// open it beside its home project once the bots and projects are known.
+watch([() => route.name, () => route.params.botId, projects, botsLoaded], () => {
+  if (route.name !== 'botLink' || !botsLoaded.value) return;
+  const botId = String(route.params.botId);
+  const projectId = botHomeProjectId(allBots.value.find((bot) => bot.id === botId), listedProjects(projects.value).map((project) => project.project.id));
+  if (projectId) void router.replace({ name: 'bot', params: { projectId, botId } });
+}, { immediate: true });
 useHarnessLaunchCleanup();
 // Reads ahead what the user is likely to open next, as the connection allows.
 startPrefetch(() => activeProjectId.value);
