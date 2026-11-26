@@ -7,7 +7,7 @@ import { phoneLayout } from './phoneLayout';
 // opened from its page sits one deeper.
 const DEPTH: Partial<Record<string, number>> = {
   projects: 0, project: 0,
-  agent: 1, process: 1, bot: 1, standaloneBot: 1, launch: 1, library: 1,
+  agent: 1, process: 1, bot: 1, launch: 1, library: 1,
   worktrees: 2, history: 2, todos: 2, scratchpads: 2, media: 2, routines: 2, usage: 2, settings: 2,
   routineLog: 3
 };

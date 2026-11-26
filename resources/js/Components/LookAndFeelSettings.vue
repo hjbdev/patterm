@@ -7,7 +7,7 @@
         <SettingsChoice id="navigation-layout" :model-value="draft.navigation" :options="NAVIGATION_OPTIONS" aria-label="Agent navigation" segmented @update:model-value="(value) => { draft.navigation = value; void save('appearance.navigation.layout'); }" />
       </SettingsRow>
       <NavigationPreview :layout="draft.navigation" />
-      <SettingsRow label="Personal project" description="List a project for agents outside any repository. Turned off, it still shows while something runs there." html-for="personal-project" save-key="appearance.navigation.personal" toggle>
+      <SettingsRow label="Personal project" description="List a project for agents outside any repository. Turned off, it still shows while something runs there or you have no other projects." html-for="personal-project" save-key="appearance.navigation.personal" toggle>
         <Switch id="personal-project" :model-value="draft.personalProject" @update:model-value="(value) => { draft.personalProject = value; void save('appearance.navigation.personal'); }" />
       </SettingsRow>
       <SettingsRow label="Recent projects" description="Show the last few projects you visited beside the project switcher." html-for="recent-projects" save-key="appearance.navigation.recent" toggle>

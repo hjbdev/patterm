@@ -105,9 +105,11 @@
         ]"
       >
         <div v-if="!loaded" class="p-5 text-sm text-muted-foreground">Loading project…</div>
-        <div v-else-if="!activeProject" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
+        <!-- A bot isn't part of the project beside it, so it stays mounted, and
+             a voice call stays up, while it moves off one that stops listing. -->
+        <div v-else-if="!activeProject && route.name !== 'bot'" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
         <template v-else>
-          <PhonePageHeader v-if="mobile && phonePage" :project-id="activeProject.project.id" :title="phonePage.title" :up="phonePage.up" />
+          <PhonePageHeader v-if="mobile && phonePage && activeProject" :project-id="activeProject.project.id" :title="phonePage.title" :up="phonePage.up" />
           <div class="relative min-h-0 flex-1">
             <RouterView v-slot="{ Component }">
               <KeepAlive :include="['TerminalPage', 'BotPage', 'ProjectPage']" :max="4">
@@ -172,7 +174,7 @@ import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { showBotAgents, useBots } from '../Composables/useBots';
-import { botLinkTarget } from '../lib/bots';
+import { botHomeProjectId, botLinkTarget } from '../lib/bots';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -209,6 +211,17 @@ watch([() => route.params.projectId, () => route.params.sessionId, botProjects, 
   if (target === 'projects') void router.replace({ name: 'projects' });
   else if (target !== 'wait') void router.replace({ name: 'bot', params: { projectId: target.projectId, botId: target.botId } });
 });
+// Links to a bot that name no project, such as the assistant's notifications,
+// open it beside its home project once the bots and projects are known. So
+// does a bot whose project stops listing, as Personal does once you add one.
+watch([() => route.name, () => route.params.projectId, () => route.params.botId, projects, botsLoaded, loaded], () => {
+  if (!botsLoaded.value || !loaded.value) return;
+  const projectIds = listedProjects(projects.value).map((project) => project.project.id);
+  if (route.name !== 'botLink' && !(route.name === 'bot' && !projectIds.includes(String(route.params.projectId)))) return;
+  const botId = String(route.params.botId);
+  const projectId = botHomeProjectId(allBots.value.find((bot) => bot.id === botId), projectIds);
+  if (projectId) void router.replace({ name: 'bot', params: { projectId, botId } });
+}, { immediate: true });
 useHarnessLaunchCleanup();
 // Reads ahead what the user is likely to open next, as the connection allows.
 startPrefetch(() => activeProjectId.value);
