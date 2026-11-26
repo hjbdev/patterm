@@ -173,7 +173,8 @@ const profileSelector = computed(() => {
     id: 'profile',
     label: 'Profile',
     value: profile.value?.id ?? DEFAULT,
-    options: harnessProfiles.value.map((candidate) => ({ value: candidate.id, label: profileName(candidate) }))
+    // The CLI is already chosen above, so its seeded Default reads as a profile, not the CLI's name.
+    options: harnessProfiles.value.map((candidate) => ({ value: candidate.id, label: candidate.name.toLowerCase() === 'default' ? 'Default Profile' : profileName(candidate) }))
   };
 });
 function chooseProfile(value: string): void {

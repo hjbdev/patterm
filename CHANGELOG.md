@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter every settings page at once. Matching settings keep their controls,
   so you can change them straight from the results.
 - New conversation page. The top bar's "+" opens a centred composer: pick the
-  agent CLI by hovering its logo, choose the model, thinking level, project and
-  worktree, and write the first message. Sending starts the agent with that
+  agent CLI from the row of logos, choose the profile, model, thinking level,
+  project and worktree, and write the first message. A CLI's built-in profile
+  is listed as Default Profile. Sending starts the agent with that
   message and the composer slides down into place. Its paperclip button attaches
   files to the first message, as do dropping and pasting them. It is the same
   composer as an agent's, so `@` mentions the project's agents, bots and
