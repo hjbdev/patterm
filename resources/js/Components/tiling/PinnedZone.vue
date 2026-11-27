@@ -337,19 +337,19 @@ function escapeFullScreen(event: KeyboardEvent): void {
   event.preventDefault();
   toggleMaximise(maximised.value);
 }
-// Like a dialog, it holds keyboard focus: focus that moves to the page under
-// it comes back. Popovers open from it sit outside the app root, so keep theirs.
-function holdFocus(event: FocusEvent): void {
-  const tile = maximised.value ? tileElement(maximised.value) : null;
-  const target = event.target instanceof Node ? event.target : null;
-  if (tile && target && !tile.contains(target) && document.getElementById('app')?.contains(target)) tile.focus();
-}
-watch(maximised, (tileId) => {
+// Like a dialog, it takes keyboard focus as it opens, so keys meant for it
+// don't reach what it covers, and hands focus back to where it was as it closes.
+let returnFocus: HTMLElement | null = null;
+watch(maximised, (tileId, before) => {
   window.removeEventListener('keydown', escapeFullScreen);
-  document.removeEventListener('focusin', holdFocus);
-  if (!tileId) return;
+  if (!tileId) {
+    const tile = before ? tileElement(before) : null;
+    if (returnFocus?.isConnected && (!tile || tile.contains(document.activeElement))) returnFocus.focus();
+    returnFocus = null;
+    return;
+  }
   window.addEventListener('keydown', escapeFullScreen);
-  document.addEventListener('focusin', holdFocus);
+  if (!before) returnFocus = document.activeElement instanceof HTMLElement && !document.activeElement.closest('[data-tile-id]') ? document.activeElement : null;
   void nextTick(() => {
     const tile = tileElement(tileId);
     if (tile && !tile.contains(document.activeElement)) tile.focus();
@@ -493,7 +493,6 @@ function endZoneResize(): void {
 onBeforeUnmount(() => {
   stopDrag();
   window.removeEventListener('keydown', escapeFullScreen);
-  document.removeEventListener('focusin', holdFocus);
   observer?.disconnect();
   clearTimeout(settleTimer);
   if (gutterFrame) cancelAnimationFrame(gutterFrame);

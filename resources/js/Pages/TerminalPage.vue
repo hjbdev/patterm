@@ -248,6 +248,8 @@ function returnFocus(event: Event) {
 }
 function openWorktree(worktree: SessionWorktree) {
   worktreeOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // A full-screen panel would cover the diff.
+  panels.maximised.value = null;
   diffWorktree.value = worktree;
 }
 function closeWorktree() {
