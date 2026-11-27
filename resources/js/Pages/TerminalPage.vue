@@ -31,6 +31,7 @@
           @pin="panels.pin"
           @tab="panels.pinAsTab"
           @locate="panels.locate"
+          @unpin="panels.unpin"
           @grab="(kind, event) => zone?.grabChip(kind, event)"
         />
         <div class="relative min-h-0 flex-1">

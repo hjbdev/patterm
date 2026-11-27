@@ -31,56 +31,56 @@
            a new secret request still opens its list. -->
       <div v-show="!folded || openChip" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
         <ResponsivePopover v-if="worktrees.length" v-bind="chip('worktrees')" title="Worktrees" content-class="w-[22rem]" :keep-focus="openingDiff">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('worktrees')"><FolderGit2 :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(worktrees.length, 'worktree', 'worktrees') }}</span><Pin v-if="isPinned('worktrees')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('worktrees')"><FolderGit2 :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(worktrees.length, 'worktree', 'worktrees') }}</span><ChipUnpin v-if="isPinned('worktrees')" :title="PIN_META.worktrees.title" @unpin="emit('unpin', 'worktrees')" /></button></template>
           <ContextPinBar v-if="canPin" title="Worktrees" :tab-into="tabInto" @pin="pin('worktrees')" @tab="tab('worktrees')" />
           <ContextList kind="worktrees" :project-id="projectId" :session="session" :active-worktree-id="activeWorktreeId" @open-worktree="openDiff" @done="openChip = null" />
         </ResponsivePopover>
 
         <ResponsivePopover v-if="pages.length" v-bind="chip('links')" title="Links">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('links')"><component :is="pages.length === 1 ? linkIcon(pages[0]!) : Link2" :class="CHIP_ICON" /><span :class="[CHIP_LABEL, 'max-w-48 truncate']">{{ pages.length === 1 ? linkLabel(pages[0]!) : `${pages.length} links` }}</span><Pin v-if="isPinned('links')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('links')"><component :is="pages.length === 1 ? linkIcon(pages[0]!) : Link2" :class="CHIP_ICON" /><span :class="[CHIP_LABEL, 'max-w-48 truncate']">{{ pages.length === 1 ? linkLabel(pages[0]!) : `${pages.length} links` }}</span><ChipUnpin v-if="isPinned('links')" :title="PIN_META.links.title" @unpin="emit('unpin', 'links')" /></button></template>
           <ContextPinBar v-if="canPin" title="Links" :tab-into="tabInto" @pin="pin('links')" @tab="tab('links')" />
           <ContextList kind="links" :project-id="projectId" :session="session" @done="openChip = null" />
         </ResponsivePopover>
 
         <!-- The agent's own browser, once it has one. It opens beside the
              conversation. -->
-        <button v-if="browser?.running" type="button" :class="CHIP" v-bind="trigger('browser')" @click="openBrowser"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /><Pin v-if="isPinned('browser')" :class="PIN_ICON" aria-label="pinned" /></button>
+        <button v-if="browser?.running" type="button" :class="CHIP" v-bind="trigger('browser')" @click="openBrowser"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /><ChipUnpin v-if="isPinned('browser')" :title="PIN_META.browser.title" @unpin="emit('unpin', 'browser')" /></button>
 
         <!-- Secrets the agent asked for or was given. A new request opens the
              list, where its form waits. They stay on the agent's own host. -->
-        <SecretsChip v-if="hasSecrets(session.processId)" v-bind="chip('secrets')" :process-id="session.processId" :trigger="trigger('secrets')" :pinned="isPinned('secrets')">
+        <SecretsChip v-if="hasSecrets(session.processId)" v-bind="chip('secrets')" :process-id="session.processId" :trigger="trigger('secrets')" :pinned="isPinned('secrets')" @unpin="emit('unpin', 'secrets')">
           <template #bar><ContextPinBar v-if="canPin" title="Secrets" :tab-into="tabInto" @pin="pin('secrets')" @tab="tab('secrets')" /></template>
         </SecretsChip>
 
         <!-- Servers the agent started, and preview links. One with a page opens
              it in the agent's browser beside the conversation. -->
         <ResponsivePopover v-if="servers.length" v-bind="chip('servers')" :title="serversLabel">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('servers')"><MonitorPlay :class="CHIP_ICON" /><span :class="[CHIP_LABEL, 'max-w-48 truncate']">{{ serversLabel }}</span><Pin v-if="isPinned('servers')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('servers')"><MonitorPlay :class="CHIP_ICON" /><span :class="[CHIP_LABEL, 'max-w-48 truncate']">{{ serversLabel }}</span><ChipUnpin v-if="isPinned('servers')" :title="PIN_META.servers.title" @unpin="emit('unpin', 'servers')" /></button></template>
           <ContextPinBar v-if="canPin" title="Servers" :tab-into="tabInto" @pin="pin('servers')" @tab="tab('servers')" />
           <ContextList kind="servers" :project-id="projectId" :session="session" @peek="emit('peek', $event)" @done="openChip = null" />
         </ResponsivePopover>
 
         <!-- The rest of the agent's family, whether or not the sidebar lists them. -->
         <ResponsivePopover v-if="agents.length" v-bind="chip('agents')" :title="agentsLabel">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('agents')"><Network :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ agentsLabel }}</span><Pin v-if="isPinned('agents')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('agents')"><Network :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ agentsLabel }}</span><ChipUnpin v-if="isPinned('agents')" :title="PIN_META.agents.title" @unpin="emit('unpin', 'agents')" /></button></template>
           <ContextPinBar v-if="canPin" title="Agents" :tab-into="tabInto" @pin="pin('agents')" @tab="tab('agents')" />
           <ContextList kind="agents" :project-id="projectId" :session="session" @done="openChip = null" />
         </ResponsivePopover>
 
         <ResponsivePopover v-if="openTodos" v-bind="chip('todos')" title="Todos" content-class="w-[22rem]">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('todos')"><ListTodo :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(openTodos, 'todo', 'todos') }}</span><Pin v-if="isPinned('todos')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('todos')"><ListTodo :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(openTodos, 'todo', 'todos') }}</span><ChipUnpin v-if="isPinned('todos')" :title="PIN_META.todos.title" @unpin="emit('unpin', 'todos')" /></button></template>
           <ContextPinBar v-if="canPin" title="Todos" :tab-into="tabInto" @pin="pin('todos')" @tab="tab('todos')" />
           <ContextList kind="todos" :project-id="projectId" :session="session" @done="openChip = null" />
         </ResponsivePopover>
 
         <ResponsivePopover v-if="scratchpads.length" v-bind="chip('scratchpads')" title="Scratchpads">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('scratchpads')"><NotebookPen :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(scratchpads.length, 'scratchpad', 'scratchpads') }}</span><Pin v-if="isPinned('scratchpads')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('scratchpads')"><NotebookPen :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(scratchpads.length, 'scratchpad', 'scratchpads') }}</span><ChipUnpin v-if="isPinned('scratchpads')" :title="PIN_META.scratchpads.title" @unpin="emit('unpin', 'scratchpads')" /></button></template>
           <ContextPinBar v-if="canPin" title="Scratchpads" :tab-into="tabInto" @pin="pin('scratchpads')" @tab="tab('scratchpads')" />
           <ContextList kind="scratchpads" :project-id="projectId" :session="session" @done="openChip = null" />
         </ResponsivePopover>
 
         <ResponsivePopover v-if="mediaTotal" v-bind="chip('media')" title="Media" content-class="w-72">
-          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('media')" :aria-label="counted(mediaTotal, 'image', 'images')"><Images :class="CHIP_ICON" />{{ mediaTotal }}<Pin v-if="isPinned('media')" :class="PIN_ICON" aria-label="pinned" /></button></template>
+          <template #trigger><button type="button" :class="CHIP" v-bind="trigger('media')" :aria-label="counted(mediaTotal, 'image', 'images')"><Images :class="CHIP_ICON" />{{ mediaTotal }}<ChipUnpin v-if="isPinned('media')" :title="PIN_META.media.title" @unpin="emit('unpin', 'media')" /></button></template>
           <ContextPinBar v-if="canPin" title="Media" :tab-into="tabInto" @pin="pin('media')" @tab="tab('media')" />
           <ContextList kind="media" :project-id="projectId" :session="session" @peek="emit('peek', $event)" @done="openChip = null" />
         </ResponsivePopover>
@@ -113,13 +113,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { cn } from '@/lib/utils';
-import { ChevronDown, FolderGit2, Globe, Images, Link2, ListTodo, MonitorPlay, Network, NotebookPen, Pin, Plus } from 'lucide-vue-next';
+import { ChevronDown, FolderGit2, Globe, Images, Link2, ListTodo, MonitorPlay, Network, NotebookPen, Plus } from 'lucide-vue-next';
 import AutoSummaryControls from '../AutoSummaryControls.vue';
 import CreateContextItemDialog from '../CreateContextItemDialog.vue';
 import HostBadge from '../HostBadge.vue';
 import ResponsivePopover from '../ResponsivePopover.vue';
 import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';
 import StatusLabelPill from '../StatusLabelPill.vue';
+import ChipUnpin from './ChipUnpin.vue';
 import ContextList from './ContextList.vue';
 import ContextPicker from './ContextPicker.vue';
 import ContextPinBar from './ContextPinBar.vue';
@@ -137,6 +138,7 @@ import { phoneLayout } from '../../lib/phoneLayout';
 import type { SessionWorktree } from '../../lib/projectContext';
 import { hasSecrets } from '../../lib/secrets';
 import type { PinKind } from '../../lib/tiling';
+import { PIN_META } from '../tiling/pinMeta';
 import type { SessionRecord } from '../../types';
 
 // `inner` lines the header up with what's below it, such as the conversation
@@ -148,12 +150,11 @@ const props = defineProps<{
   projectId: string; session: SessionRecord; inner?: string | undefined; activeWorktreeId?: string | null | undefined; folded?: boolean | undefined;
   canPin?: boolean | undefined; pinned?: readonly PinKind[] | undefined; tabInto?: string | null | undefined;
 }>();
-const emit = defineEmits<{ peek: [peek: Peek]; openWorktree: [worktree: SessionWorktree]; pin: [kind: PinKind]; tab: [kind: PinKind]; locate: [kind: PinKind]; grab: [kind: PinKind, event: PointerEvent] }>();
+const emit = defineEmits<{ peek: [peek: Peek]; openWorktree: [worktree: SessionWorktree]; pin: [kind: PinKind]; tab: [kind: PinKind]; locate: [kind: PinKind]; unpin: [kind: PinKind]; grab: [kind: PinKind, event: PointerEvent] }>();
 
 const ADD_CHIP = cn(CHIP, 'w-7 justify-center px-0 max-sm:w-8 max-sm:px-0');
 const ROW = 'flex min-h-8 w-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1 text-left text-[13px] outline-none transition-colors hover:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring max-sm:min-h-11 max-sm:text-sm';
 const PINNED = 'bg-white/[0.1] text-foreground';
-const PIN_ICON = 'h-3 w-3 shrink-0 fill-current text-foreground/70';
 
 // One chip's list open at a time.
 const openChip = ref<string | null>(null);

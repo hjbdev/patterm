@@ -7,6 +7,8 @@
     tabindex="-1"
     class="pinned-tile group/tile absolute left-0 top-0 flex flex-col overflow-hidden rounded-xl border bg-background outline-none"
     :class="[focused ? 'border-white/30' : 'border-white/[0.06]', lifted && 'shadow-2xl shadow-black/70 ring-1 ring-white/20', entering && 'pinned-tile-enter', flashing && 'pinned-tile-flash']"
+    :role="maximised ? 'dialog' : undefined"
+    :aria-modal="maximised ? 'true' : undefined"
     :aria-label="tile.tabs.length > 1 ? `Pinned: ${tile.tabs.map((kind) => PIN_META[kind].title).join(', ')}` : `Pinned: ${PIN_META[tile.active].title}`"
     @pointerdown.capture="altGrab"
     @animationend.self="entered"
@@ -37,7 +39,7 @@
       </div>
       <span class="min-w-2 flex-1" />
       <span class="flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/tile:opacity-100 [@media(hover:none)]:opacity-100" @pointerdown.stop @dblclick.stop>
-        <button type="button" :class="ICON_BUTTON" :aria-label="maximised ? 'Restore' : 'Maximise'" :title="maximised ? 'Restore (Alt+F)' : 'Maximise (Alt+F)'" @click="emit('maximise')"><component :is="maximised ? Minimize2 : Maximize2" class="h-3.5 w-3.5" /></button>
+        <button type="button" :class="ICON_BUTTON" :aria-label="maximised ? 'Exit full screen' : 'Full screen'" :title="maximised ? 'Exit full screen (Esc)' : 'Full screen (Alt+F)'" @click="emit('maximise')"><component :is="maximised ? Minimize2 : Maximize2" class="h-3.5 w-3.5" /></button>
         <button type="button" :class="ICON_BUTTON" :aria-label="`Unpin ${PIN_META[tile.active].title}`" title="Unpin (Alt+Q)" @click="emit('close', tile.active)"><PinOff class="h-3.5 w-3.5" /></button>
       </span>
     </header>
