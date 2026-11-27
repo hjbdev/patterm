@@ -106,6 +106,7 @@
                     <template v-if="item.groupSummary?.count">
                       <span class="shrink-0 text-muted-foreground"><ShimmerText v-if="item.groupRunning" text="Using" /><template v-else>Used</template></span>
                       <span class="min-w-0 truncate font-[440] text-foreground" :title="item.groupSummary.label"><template v-for="(tool, index) in item.groupSummary.tools" :key="tool.title">{{ index ? ', ' : '' }}<template v-if="tool.count > 1"><OdometerNumber :value="tool.count" />{{ ' ' }}</template>{{ tool.base }}<span v-if="tool.names" class="transcript-tool-names">{{ ' ' }}{{ tool.names }}</span></template></span>
+                      <span v-if="item.groupSummary.failed" class="shrink-0 text-destructive">· <OdometerNumber :value="item.groupSummary.failed" /> failed</span>
                     </template>
                     <template v-else>
                       <span class="shrink-0 font-[440] text-foreground"><ShimmerText v-if="item.groupRunning" text="Thinking" /><template v-else>Thought</template></span>

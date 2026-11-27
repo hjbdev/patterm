@@ -59,16 +59,16 @@ function tool(id, name = 'bash', extra = {}) {
     toolInputSummary: '{"command":"git status"}', ...extra });
 }
 
-test('history and live chat use the same tool grouping; failed tools stay visible', () => {
+test('history and live chat use the same tool grouping; failed tools stay in the group', () => {
   const { history } = mount();
   history.messages.value = [tool('shell'), tool('read-a', 'read', { toolInputSummary: '{"path":"a.ts"}', toolStatus: 'completed' }),
     tool('read-b', 'grep', { toolInputSummary: '{"pattern":"foo"}', toolStatus: 'completed' }),
     tool('failed', 'read', { toolStatus: 'failed' }), tool('patch', 'apply_patch')];
   const rows = groupTranscriptMessages(history.transcriptMessages.value);
   assert.deepEqual(rows.map((row) => [row.kind, row.id]), [
-    ['tools', 'tools:shell'], ['message', 'failed'], ['tools', 'tools:patch']
+    ['tools', 'tools:shell']
   ]);
-  assert.deepEqual(rows[0].messages.map((message) => message.id), ['shell', 'read-a', 'read-b']);
+  assert.deepEqual(rows[0].messages.map((message) => message.id), ['shell', 'read-a', 'read-b', 'failed', 'patch']);
   assert.equal(history.transcriptMessages.value[3].tool.status, 'failed');
 });
 

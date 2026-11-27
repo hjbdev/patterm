@@ -1321,8 +1321,9 @@ export function nestSubagentMessages(messages: TranscriptMessage[]): TranscriptM
 }
 
 // Tool calls and the thinking between them collapse into one compact row,
-// even a single call. Order is kept, failures and subagents break the group
-// and stay visible, and a lone thought stays a normal row. The group id
+// even a single call. Order is kept, failed calls stay in the group (its
+// header counts them), subagents break the group so their nested transcript
+// stays visible, and a lone thought stays a normal row. The group id
 // follows its first member so live appends keep the row, its expansion, and
 // its counters stable.
 export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptRow[] {
@@ -1345,9 +1346,7 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
     const tool = message.tool;
     if (message.kind === 'tool' && isQuietMemoryRead(tool)) continue;
     // A subagent row keeps its own row so its nested transcript stays visible.
-    // An html_render call is a step like any other, rejected or not: its page
-    // appears only where the reply places it.
-    if (message.kind === 'reasoning' || (message.kind === 'tool' && tool && (tool.status !== 'failed' || isFigureTool(tool)) && !message.children?.length)) {
+    if (message.kind === 'reasoning' || (message.kind === 'tool' && tool && !message.children?.length)) {
       group.push(message);
       continue;
     }
@@ -1454,12 +1453,15 @@ export function transcriptMessageKey(message: TranscriptMessage): string {
 // group are not counted. Skills and MCP calls share a title, so the summary
 // names which ones ran: "7 Bash, 2 Skill (simplify, run), MCP (notify_user)".
 // Each tool's names are also returned apart, so the transcript can hide them.
-export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { count: number; tools: Array<{ title: string; base: string; names: string; count: number }>; label: string } {
+// Failed calls count towards their tool and are also counted on their own.
+export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { count: number; failed: number; tools: Array<{ title: string; base: string; names: string; count: number }>; label: string } {
   const tools = new Map<string, { count: number; names: Set<string> }>();
   let count = 0;
+  let failed = 0;
   for (const message of messages) {
     if (!message.tool) continue;
     count += 1;
+    if (message.tool.status === 'failed') failed += 1;
     const entry = tools.get(message.tool.title) ?? { count: 0, names: new Set<string>() };
     tools.set(message.tool.title, entry);
     entry.count += 1;
@@ -1470,7 +1472,7 @@ export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { cou
     const names = entry.names.size ? `(${[...entry.names].join(', ')})` : '';
     return { title: names ? `${title} ${names}` : title, base: title, names, count: entry.count };
   });
-  return { count, tools: named, label: named.map((tool) => tool.count > 1 ? `${tool.count} ${tool.title}` : tool.title).join(', ') };
+  return { count, failed, tools: named, label: named.map((tool) => tool.count > 1 ? `${tool.count} ${tool.title}` : tool.title).join(', ') };
 }
 
 function groupName(tool: TranscriptTool): string | undefined {

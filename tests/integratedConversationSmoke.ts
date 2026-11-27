@@ -13,6 +13,7 @@ import {
   groupTranscriptMessages,
   transcriptMessageOrigin,
   transcriptRowIndexForMessage,
+  transcriptToolGroupSummary,
   isSessionUnavailableError,
   normaliseConversation,
   normaliseForms,
@@ -312,8 +313,8 @@ assert.match(multiGitFile.patch ?? '', /diff --git a\/a\.ts/);
 assert.match(multiGitFile.patch ?? '', /diff --git a\/b\.ts/, 'git-format patches keep their filenames when combined');
 assert.deepEqual(multiGitFile.changes, { additions: 2, deletions: 2 });
 
-// Consecutive tool calls collapse without reordering; failures stay visible
-// as their own rows.
+// Consecutive tool calls collapse without reordering; failures stay in the
+// group, which counts them.
 const grouped = groupTranscriptMessages([
   { id: 'u1', role: 'user', kind: 'text', text: 'go' },
   { id: 'r1', role: 'assistant', kind: 'tool', text: 'a', tool: { name: 'read', family: 'read', status: 'completed', title: 'Read', target: '/a' } },
@@ -321,12 +322,12 @@ const grouped = groupTranscriptMessages([
   { id: 'r3', role: 'assistant', kind: 'tool', text: 'failed', tool: { name: 'read', family: 'read', status: 'failed', title: 'Read', target: '/b' } },
   { id: 'a1', role: 'assistant', kind: 'text', text: 'done' }
 ]);
-assert.deepEqual(grouped.map((row) => row.kind), ['message', 'tools', 'message', 'message']);
+assert.deepEqual(grouped.map((row) => row.kind), ['message', 'tools', 'message']);
 const exploration = grouped[1]!;
 assert.equal(exploration.kind, 'tools');
-assert.deepEqual(exploration.kind === 'tools' ? exploration.messages.map((message) => message.id) : [], ['r1', 'r2'], 'order is kept and the failure is not swallowed');
-assert.deepEqual(exploration.kind === 'tools' ? exploration.targets : [], ['/a', 'needle']);
-assert.equal(grouped[2]!.kind === 'message' ? grouped[2]!.message.id : '', 'r3', 'the failed call stays its own row');
+assert.deepEqual(exploration.kind === 'tools' ? exploration.messages.map((message) => message.id) : [], ['r1', 'r2', 'r3'], 'order is kept and the failed call stays in the group');
+assert.deepEqual(exploration.kind === 'tools' ? exploration.targets : [], ['/a', 'needle', '/b']);
+assert.equal(exploration.kind === 'tools' ? transcriptToolGroupSummary(exploration.messages).failed : 0, 1, 'the group counts its failed call');
 
 // Attachment descriptors become safe chips; no data payloads or server paths
 // are turned into previews.
