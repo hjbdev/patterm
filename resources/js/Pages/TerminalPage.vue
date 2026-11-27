@@ -31,6 +31,7 @@
           @pin="panels.pin"
           @tab="panels.pinAsTab"
           @locate="panels.locate"
+          @unpin="panels.unpin"
           @grab="(kind, event) => zone?.grabChip(kind, event)"
         />
         <div class="relative min-h-0 flex-1">
@@ -247,6 +248,8 @@ function returnFocus(event: Event) {
 }
 function openWorktree(worktree: SessionWorktree) {
   worktreeOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // A full-screen panel would cover the diff.
+  panels.maximised.value = null;
   diffWorktree.value = worktree;
 }
 function closeWorktree() {

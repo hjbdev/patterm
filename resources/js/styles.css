@@ -584,8 +584,10 @@ button.mention-glow:hover {
   100% { box-shadow: 0 0 0 8px rgb(255 255 255 / 0); }
 }
 .pinned-tile-flash { animation: pinned-tile-flash 0.9s ease-out; }
+.pinned-tile-fullscreen { animation: pinned-tile-fullscreen 0.22s var(--pinned-ease) both; box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.7); }
+@keyframes pinned-tile-fullscreen { from { opacity: 0; scale: 0.96; } }
 [data-pinned-resizing] .pinned-tile { transition: opacity 0.2s ease, border-color 0.15s ease; }
 @media (prefers-reduced-motion: reduce) {
   .pinned-tile { transition: opacity 0.2s ease, border-color 0.15s ease; }
-  .pinned-tile-enter, .pinned-tile-leave, .pinned-tile-flash { animation: none; }
+  .pinned-tile-enter, .pinned-tile-leave, .pinned-tile-flash, .pinned-tile-fullscreen { animation: none; }
 }

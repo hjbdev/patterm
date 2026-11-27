@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rest hold still until it drops. While panels are pinned,
   `Alt+H/J/K/L` or `Alt+arrows` move focus, `Alt+Shift` moves the
   panel, `Alt+-`/`Alt+=` grow and shrink it across, `Alt+Shift+-`/`Alt+Shift+=`
-  grow and shrink it up and down, `Alt+F` maximises, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
+  grow and shrink it up and down, `Alt+F` shows it full screen, `Alt+G` groups, `Alt+[`/`Alt+]` cycle tabs
   and `Alt+Q` unpins. `Alt`+drag moves a panel from anywhere on it. Each
   agent keeps its own layout.
 - `Ctrl+N` (`Cmd+N` on macOS) opens the New conversation composer from anywhere
@@ -322,6 +322,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A pinned chip's pin icon now unpins its panel, so the agent's browser and
+  other chips that jump to their tile can be unpinned from the header too.
+- A pinned panel's full-screen button (`Alt+F`) now opens it over the whole
+  page, like a dialog, instead of only filling the pinned area. `Esc` or a
+  click outside restores it.
 - Opening one of the assistant's notifications opens it beside your projects,
   like other bots, instead of the old standalone assistant page.
 - An agent on a paired host can reach an agent or process that another host's

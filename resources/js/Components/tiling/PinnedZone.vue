@@ -25,12 +25,14 @@
     </div>
     <section ref="zone" aria-label="Pinned panels" class="relative min-h-0 shrink-0" :style="{ width: `${zoneWidth}px` }" :data-pinned-resizing="resizing || zoneResize ? '' : undefined">
       <template v-if="size.w">
+        <!-- A full-screen tile sits over the whole page; clicking around it restores it. -->
+        <div v-if="maximised" class="fixed inset-0 z-50 bg-black/70 duration-200 animate-in fade-in-0" aria-hidden="true" @click="toggleMaximise(maximised)" />
         <PinnedTile
           v-for="entry in rendered"
           :key="entry.tile.id"
-          :class="entry.leaving && 'pinned-tile-leave'"
+          :class="[entry.leaving && 'pinned-tile-leave', !entry.leaving && maximised === entry.tile.id && 'pinned-tile-fullscreen']"
           :enter="!spawned.has(entry.tile.id)"
-          :style="entry.leaving ? rectStyle(entry.leaving) : tileStyle(entry.tile)"
+          :style="entry.leaving ? (entry.full ? FULLSCREEN : rectStyle(entry.leaving)) : tileStyle(entry.tile)"
           :tile="entry.tile"
           :focused="!entry.leaving && focus === entry.tile.id"
           :maximised="maximised === entry.tile.id"
@@ -46,7 +48,7 @@
         >
           <template #default="{ kind }"><slot name="panel" :kind="kind" :tile="entry.tile" /></template>
         </PinnedTile>
-        <template v-if="!started && !maximised">
+        <template v-if="!started">
           <div
             v-for="gutter in shownGeometry.gutters"
             :key="gutter.kind === 'column' ? `${gutter.left}|${gutter.right}` : `${gutter.above}|${gutter.below}`"
@@ -318,16 +320,47 @@ function tileStyle(tile: Tile): Record<string, string | number> {
   }
   const spawn = spawning.get(tile.id);
   if (spawn) return { ...rectStyle(spawn), transition: 'none', zIndex: 30 };
+  if (maximised.value === tile.id) return FULLSCREEN;
   const origin = settling.get(tile.id);
   const extra: Record<string, string | number> = origin ? { transformOrigin: origin, zIndex: 30 } : {};
-  if (maximised.value === tile.id) return { ...rectStyle({ x: 0, y: 0, w: size.w, h: size.h }), ...extra, zIndex: 20 };
   const rect = shownGeometry.value.rects.get(tile.id) ?? { x: 0, y: 0, w: size.w, h: size.h };
-  if (maximised.value) return { ...rectStyle(rect), opacity: 0, scale: 0.96, pointerEvents: 'none' };
   return { ...rectStyle(rect), ...extra };
 }
+// Full screen, a tile leaves the layout for the page, as a dialog would. It
+// stays where it is in the DOM, so what it shows isn't mounted again.
+const FULLSCREEN: Record<string, string | number> = {
+  position: 'fixed', translate: 'none', inset: 'clamp(0.5rem, 2vw, 1.5rem)', width: 'auto', height: 'auto', zIndex: 50, transition: 'none'
+};
+// Escape restores it, unless what has focus inside it used the key.
+function escapeFullScreen(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.defaultPrevented || !maximised.value) return;
+  event.preventDefault();
+  toggleMaximise(maximised.value);
+}
+// Like a dialog, it takes keyboard focus as it opens, so keys meant for it
+// don't reach what it covers, and hands focus back to where it was as it closes.
+let returnFocus: HTMLElement | null = null;
+watch(maximised, (tileId, before) => {
+  window.removeEventListener('keydown', escapeFullScreen);
+  if (!tileId) {
+    const tile = before ? tileElement(before) : null;
+    if (returnFocus?.isConnected && (!tile || tile.contains(document.activeElement))) returnFocus.focus();
+    returnFocus = null;
+    return;
+  }
+  window.addEventListener('keydown', escapeFullScreen);
+  if (!before) returnFocus = document.activeElement instanceof HTMLElement && !document.activeElement.closest('[data-tile-id]') ? document.activeElement : null;
+  void nextTick(() => {
+    const tile = tileElement(tileId);
+    if (tile && !tile.contains(document.activeElement)) tile.focus();
+  });
+}, { immediate: true });
+// Which tile was full screen as the layout changed: closing it clears that next.
+let fullAtChange: string | null = null;
+watch(columns, () => { fullAtChange = maximised.value; }, { flush: 'sync' });
 
 // Unpinned tiles fade where they were, without unmounting until they've gone.
-const leaving = shallowRef<{ tile: Tile; rect: Rect }[]>([]);
+const leaving = shallowRef<{ tile: Tile; rect: Rect; full: boolean }[]>([]);
 const skipLeave = new Set<string>();
 let lastEpoch = epoch.value;
 watch(columns, (next, before) => {
@@ -339,7 +372,7 @@ watch(columns, (next, before) => {
   const gone = before.flatMap((column) => column.tiles).filter((tile) => !kept.has(tile.id) && !skipLeave.has(tile.id));
   skipLeave.clear();
   if (!gone.length) return;
-  const entries = gone.map((tile) => ({ tile, rect: maximised.value === tile.id ? { x: 0, y: 0, w: size.w, h: size.h } : rects.get(tile.id)! })).filter((entry) => entry.rect);
+  const entries = gone.map((tile) => ({ tile, rect: rects.get(tile.id) ?? { x: 0, y: 0, w: size.w, h: size.h }, full: fullAtChange === tile.id }));
   leaving.value = [...leaving.value, ...entries];
   setTimeout(() => { leaving.value = leaving.value.filter((entry) => !entries.includes(entry)); }, 200);
 });
@@ -350,8 +383,8 @@ const order = new Map<string, number>();
 let nextOrder = 0;
 const rendered = computed(() => {
   const entries = [
-    ...shownTiles.value.map((tile) => ({ tile, leaving: null as Rect | null })),
-    ...leaving.value.filter((entry) => !tiles.value.some((tile) => tile.id === entry.tile.id)).map((entry) => ({ tile: entry.tile, leaving: entry.rect }))
+    ...shownTiles.value.map((tile) => ({ tile, leaving: null as Rect | null, full: false })),
+    ...leaving.value.filter((entry) => !tiles.value.some((tile) => tile.id === entry.tile.id)).map((entry) => ({ tile: entry.tile, leaving: entry.rect, full: entry.full }))
   ];
   const present = new Set(entries.map((entry) => entry.tile.id));
   for (const id of order.keys()) if (!present.has(id)) order.delete(id);
@@ -459,6 +492,7 @@ function endZoneResize(): void {
 
 onBeforeUnmount(() => {
   stopDrag();
+  window.removeEventListener('keydown', escapeFullScreen);
   observer?.disconnect();
   clearTimeout(settleTimer);
   if (gutterFrame) cancelAnimationFrame(gutterFrame);
