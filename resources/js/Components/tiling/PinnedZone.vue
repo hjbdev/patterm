@@ -337,13 +337,27 @@ function escapeFullScreen(event: KeyboardEvent): void {
   event.preventDefault();
   toggleMaximise(maximised.value);
 }
+// Like a dialog, it holds keyboard focus: focus that moves to the page under
+// it comes back. Popovers open from it sit outside the app root, so keep theirs.
+function holdFocus(event: FocusEvent): void {
+  const tile = maximised.value ? tileElement(maximised.value) : null;
+  const target = event.target instanceof Node ? event.target : null;
+  if (tile && target && !tile.contains(target) && document.getElementById('app')?.contains(target)) tile.focus();
+}
 watch(maximised, (tileId) => {
-  if (tileId) window.addEventListener('keydown', escapeFullScreen);
-  else window.removeEventListener('keydown', escapeFullScreen);
-});
-// Which tile was full screen just before a change, as closing it clears that first.
-let wasMaximised: string | null = null;
-watch(maximised, (_, before) => { wasMaximised = before ?? null; }, { flush: 'sync' });
+  window.removeEventListener('keydown', escapeFullScreen);
+  document.removeEventListener('focusin', holdFocus);
+  if (!tileId) return;
+  window.addEventListener('keydown', escapeFullScreen);
+  document.addEventListener('focusin', holdFocus);
+  void nextTick(() => {
+    const tile = tileElement(tileId);
+    if (tile && !tile.contains(document.activeElement)) tile.focus();
+  });
+}, { immediate: true });
+// Which tile was full screen as the layout changed: closing it clears that next.
+let fullAtChange: string | null = null;
+watch(columns, () => { fullAtChange = maximised.value; }, { flush: 'sync' });
 
 // Unpinned tiles fade where they were, without unmounting until they've gone.
 const leaving = shallowRef<{ tile: Tile; rect: Rect; full: boolean }[]>([]);
@@ -358,7 +372,7 @@ watch(columns, (next, before) => {
   const gone = before.flatMap((column) => column.tiles).filter((tile) => !kept.has(tile.id) && !skipLeave.has(tile.id));
   skipLeave.clear();
   if (!gone.length) return;
-  const entries = gone.map((tile) => ({ tile, rect: rects.get(tile.id) ?? { x: 0, y: 0, w: size.w, h: size.h }, full: maximised.value === tile.id || wasMaximised === tile.id }));
+  const entries = gone.map((tile) => ({ tile, rect: rects.get(tile.id) ?? { x: 0, y: 0, w: size.w, h: size.h }, full: fullAtChange === tile.id }));
   leaving.value = [...leaving.value, ...entries];
   setTimeout(() => { leaving.value = leaving.value.filter((entry) => !entries.includes(entry)); }, 200);
 });
@@ -479,6 +493,7 @@ function endZoneResize(): void {
 onBeforeUnmount(() => {
   stopDrag();
   window.removeEventListener('keydown', escapeFullScreen);
+  document.removeEventListener('focusin', holdFocus);
   observer?.disconnect();
   clearTimeout(settleTimer);
   if (gutterFrame) cancelAnimationFrame(gutterFrame);
