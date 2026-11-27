@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A failed tool call stays in its group instead of splitting the run of calls
+  around it. The group's header counts the failures, such as "Used 22 Bash ·
+  1 failed", and the call shows in red once the group is opened.
 - The Personal project lists while you have no other projects, even with it
   turned off in Settings › Appearance, so bots always open beside a project.
 - Each bot's settings are now a page of their own in Settings › Bots, laid
