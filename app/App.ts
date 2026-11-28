@@ -589,8 +589,9 @@ async function createApplicationResources(
     installer: new ChromeInstaller(path.join(browserDirectory, 'chrome'), () => notifyChanged(['browser'])),
     onChanged: () => notifyChanged(['browser']),
     raiseHelp: (processId, reason) => raiseNotification({ processId, source: 'mcp', kind: 'attention', urgency: 'high', title: 'Needs you in its browser', body: reason, dedupeKey: 'browser-help' }),
-    resolveHelp: (processId) => { notificationService.resolve({ process_id: processId, kinds: ['attention'] }); },
-    messageAgent: (processId, text) => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated),
+    resolveHelp: (processId) => { notificationService.resolve({ process_id: processId, dedupe_key: 'browser-help' }); },
+    // Answering the browser request leaves the agent's other requests open.
+    messageAgent: (processId, text) => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true, preserve_attention: true }, integrated),
     isLive: (sessionId) => Boolean(database.connection.prepare('select 1 from sessions where id = ? and exited_at is null').get(sessionId)),
     env: resolvedEnv
   });

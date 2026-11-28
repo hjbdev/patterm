@@ -242,6 +242,12 @@ async function liveChecks(): Promise<void> {
     await service.finishHelp('session_live');
     assert.equal(service.state('session_live').help, null);
     assert.match(messages[0] ?? '', /^process_live:\[browser\] The user finished in your browser\./);
+    await assert.rejects(service.declineHelp('session_live'), /not asking/);
+    await service.requestHelp('session_live', 'process_live', 'Sign in to the bank');
+    await service.declineHelp('session_live');
+    assert.equal(service.state('session_live').help, null);
+    assert.equal(helps.at(-1), 'resolved:process_live');
+    assert.match(messages[1] ?? '', /^process_live:\[browser\] The user declined your request for help \("Sign in to the bank"\)\./);
 
     // An ended session's browser stops and its profile goes.
     live = false;

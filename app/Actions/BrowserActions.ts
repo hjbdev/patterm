@@ -7,7 +7,7 @@ import type { DatabaseService } from '../Services/DatabaseService';
 // ones change what every viewer sees, so a browser client sends them over
 // its socket as the agent's controller.
 export const BROWSER_VIEW_TOOLS = ['browser_state', 'browser_frame'] as const;
-export const BROWSER_CONTROL_TOOLS = ['browser_input', 'browser_navigate', 'browser_select_tab', 'browser_help_done'] as const;
+export const BROWSER_CONTROL_TOOLS = ['browser_input', 'browser_navigate', 'browser_select_tab', 'browser_help_done', 'browser_help_decline'] as const;
 
 const id = z.string().min(1).max(200);
 const processInput = z.object({ process_id: id }).strict();
@@ -49,7 +49,7 @@ export const BROWSER_INSTRUCTIONS = [
   'browser_open starts your own Chrome, which Patterm runs for this session, and returns its CDP URL. Drive it with code over CDP.',
   'Prefer patchright-core, a Playwright fork that avoids the CDP traces stock Playwright leaves: import { chromium } from the `patchright` path browser_open returns, then `const browser = await chromium.connectOverCDP(cdp_url)` and use `browser.contexts()[0]`. Raw CDP and other clients work too.',
   'The browser keeps its tabs, cookies and sign-ins between your scripts, so each script can connect, act, and exit. Leave the browser running; Patterm stops it when your session ends.',
-  'Call browser_request_help when a page needs a person, such as a CAPTCHA, a sign-in, or two-factor approval. The user sees your browser beside your conversation and takes over; you get a message when they finish. Don\'t try to solve CAPTCHAs yourself.'
+  'Call browser_request_help when a page needs a person, such as a CAPTCHA, a sign-in, or two-factor approval. The user sees your browser beside your conversation and takes over; you get a message when they finish or decline. Don\'t try to solve CAPTCHAs yourself.'
 ];
 
 export class BrowserActions {
@@ -63,7 +63,7 @@ export class BrowserActions {
   async requestHelp(raw: unknown, context: McpCallContext) {
     const agent = this.agent(context);
     await this.browsers.requestHelp(agent.sessionId, agent.processId, helpInput.parse(raw).reason);
-    return { ok: true, message: 'The user has been asked to help in your browser. You will get a message when they finish; carry on with other work meanwhile, or stop and wait.' };
+    return { ok: true, message: 'The user has been asked to help in your browser. You will get a message when they finish or decline; carry on with other work meanwhile, or stop and wait.' };
   }
 
   state(raw: unknown) {
@@ -99,6 +99,12 @@ export class BrowserActions {
     return { ok: true };
   }
 
+  async helpDecline(raw: unknown) {
+    const input = doneInput.parse(raw);
+    await this.browsers.declineHelp(this.session(input.process_id).sessionId, input.note);
+    return { ok: true };
+  }
+
   private agent(context: McpCallContext): { sessionId: string; processId: string } {
     if (context.remote) throw new Error('Browsers belong to agents on their own host');
     const row = context.identity
@@ -128,7 +134,7 @@ export function registerBrowserTools(registry: McpToolRegistry, actions: Browser
   registry.register(
     {
       name: 'browser_request_help', namespace: 'browser', changes: ['browser'],
-      description: 'Ask the user to take over your browser, such as for a CAPTCHA or a sign-in. Returns at once; a message arrives when they finish.',
+      description: 'Ask the user to take over your browser, such as for a CAPTCHA or a sign-in. Returns at once; a message arrives when they finish or decline.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 500, description: 'What the user should do, such as "Solve the CAPTCHA on the sign-in page".' } } }
     },
     (args, context) => actions.requestHelp(args, context)
@@ -143,4 +149,5 @@ export function registerBrowserTools(registry: McpToolRegistry, actions: Browser
   ui('browser_navigate', 'Open a page in an agent\'s browser.', (args) => actions.navigate(args), ['process_id', 'url']);
   ui('browser_select_tab', 'Watch another tab of an agent\'s browser.', (args) => actions.selectTab(args), ['process_id', 'target_id']);
   ui('browser_help_done', 'Tell the agent the user finished in its browser.', (args) => actions.helpDone(args), ['process_id']);
+  ui('browser_help_decline', 'Tell the agent the user declined its request for help in its browser.', (args) => actions.helpDecline(args), ['process_id']);
 }

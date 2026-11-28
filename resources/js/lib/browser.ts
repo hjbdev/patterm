@@ -48,7 +48,7 @@ export function useBrowserState(processId: () => string | null | undefined) {
 
 // Acting in a browser changes what every viewer sees, so a browser client
 // sends it over its socket as the agent's controller.
-export function browserControl(tool: 'browser_input' | 'browser_navigate' | 'browser_select_tab' | 'browser_help_done', args: { process_id: string } & Record<string, unknown>): Promise<unknown> {
+export function browserControl(tool: 'browser_input' | 'browser_navigate' | 'browser_select_tab' | 'browser_help_done' | 'browser_help_decline', args: { process_id: string } & Record<string, unknown>): Promise<unknown> {
   return window.patterm.integratedCall ? window.patterm.integratedCall(tool, args) : window.patterm.call(tool, args);
 }
 
