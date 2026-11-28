@@ -194,7 +194,11 @@ export class NotificationService {
       const since = new Date(this.now() - RATE_WINDOW_MS).toISOString();
       const recent = db.prepare(`select id from notifications where process_id = ? and source = 'mcp' and created_at >= ? order by created_at desc`)
         .all(process.id, since) as Array<{ id: string }>;
-      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated', held, mutedSubagent) };
+      if (recent.length >= RATE_LIMIT) {
+        // The reused notice now shows this one, so it resolves like this one.
+        db.prepare(`update notifications set kind = ?, dedupe_key = ? where id = ?`).run(input.kind, dedupeKey, recent[0]!.id);
+        return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated', held, mutedSubagent) };
+      }
     }
 
     const id = `notification_${randomUUID()}`;
