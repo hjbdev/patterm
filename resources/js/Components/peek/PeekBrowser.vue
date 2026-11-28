@@ -22,7 +22,8 @@
     </header>
     <div v-if="state?.help" role="status" class="mx-3 mb-2 flex items-center gap-3 rounded-md bg-white/[0.06] py-1.5 pl-3 pr-1.5 text-[12.5px]">
       <span class="min-w-0 flex-1"><span class="text-muted-foreground">Needs you: </span>{{ state.help.reason }}</span>
-      <Button size="sm" class="h-7 shrink-0 px-3 text-xs" :disabled="finishing" @click="finish">Done</Button>
+      <Button variant="ghost" size="sm" class="h-7 shrink-0 px-3 text-xs text-muted-foreground hover:text-foreground" :disabled="finishing" @click="finish('browser_help_decline')">Decline</Button>
+      <Button size="sm" class="h-7 shrink-0 px-3 text-xs" :disabled="finishing" @click="finish('browser_help_done')">Done</Button>
     </div>
     <div class="relative flex min-h-0 flex-1 items-start justify-center overflow-hidden">
       <canvas
@@ -106,9 +107,9 @@ function go(): void {
 function selectTab(targetId: string): void {
   void send('browser_select_tab', { target_id: targetId });
 }
-async function finish(): Promise<void> {
+async function finish(tool: 'browser_help_done' | 'browser_help_decline'): Promise<void> {
   finishing.value = true;
-  try { await send('browser_help_done'); } finally { finishing.value = false; }
+  try { await send(tool); } finally { finishing.value = false; }
 }
 
 // Frames arrive one at a time: each request waits for the next frame, so a

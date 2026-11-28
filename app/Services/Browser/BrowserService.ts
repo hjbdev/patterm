@@ -311,6 +311,18 @@ export class BrowserService {
     await this.options.messageAgent(browser.processId, `[browser] ${lead}${note ? ` ${note}` : ''} Check its current state before you carry on.`);
   }
 
+  // The user won't do what the agent asked for in its browser.
+  async declineHelp(sessionId: string, note?: string): Promise<void> {
+    const browser = this.require(sessionId);
+    const asked = browser.help;
+    if (!asked) throw new Error('This agent is not asking for help in its browser');
+    browser.lastActivityAt = Date.now();
+    browser.help = null;
+    this.options.resolveHelp(browser.processId);
+    this.options.onChanged();
+    await this.options.messageAgent(browser.processId, `[browser] The user declined your request for help ("${asked.reason}").${note ? ` ${note}` : ''} Don't ask again for the same thing; carry on another way, or say what you're blocked on.`);
+  }
+
   async stop(sessionId: string, options: { removeProfile?: boolean } = {}): Promise<void> {
     const launching = this.launching.get(sessionId);
     if (launching) await launching.catch(() => undefined);

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Decline an agent's request for help in its browser. The "Needs you" banner
+  has a Decline button beside Done: it clears the request and its notification,
+  and tells the agent not to ask again for the same thing.
 - A Get started checklist for new installs: install an agent, sign in to it,
   add a project folder and start an agent. Each step ticks itself. Install
   links go to each agent's official page, and sign-in is checked with the
